@@ -1169,6 +1169,49 @@ TEST_F(HostQueueCommandBufferTest,
 }
 
 TEST_F(HostQueueCommandBufferTest,
+       AutoCommandBufferModeFallsBackToAqlForLargeReservedQueueSet) {
+  iree_hal_amdgpu_aql_queue_execution_mode_t execution_mode;
+  IREE_ASSERT_OK(iree_hal_amdgpu_query_aql_queue_execution_mode(
+      &libhsa_, topology_.gpu_agents[0], &execution_mode));
+  if (execution_mode != IREE_HAL_AMDGPU_AQL_QUEUE_EXECUTION_MODE_NATIVE) {
+    GTEST_SKIP() << "fixed-mask queues require native GPU-consumed AQL";
+  }
+
+  iree_hal_amdgpu_logical_device_options_t options;
+  iree_hal_amdgpu_logical_device_options_initialize(&options);
+  options.command_buffer_mode = IREE_HAL_AMDGPU_COMMAND_BUFFER_MODE_AUTO;
+  options.host_queues.experimental_execution_queue_count = 64;
+  options.preallocate_pools = 0;
+
+  iree_hal_amdgpu_topology_t single_gpu_topology;
+  iree_hal_amdgpu_topology_initialize(&single_gpu_topology);
+  IREE_ASSERT_OK(iree_hal_amdgpu_topology_insert_gpu_agent(
+      &single_gpu_topology, &libhsa_, topology_.gpu_agents[0],
+      topology_.cpu_agents[topology_.gpu_cpu_map[0]]));
+  single_gpu_topology.gpu_agent_queue_count =
+      IREE_HAL_AMDGPU_DEFAULT_GPU_AGENT_QUEUE_COUNT;
+
+  TestLogicalDevice test_device;
+  IREE_ASSERT_OK(test_device.Initialize(&options, &libhsa_,
+                                        &single_gpu_topology, host_allocator_));
+
+  iree_hal_amdgpu_physical_device_t* physical_device =
+      test_device.logical_device()->physical_devices[0];
+  ASSERT_GT(physical_device->host_queue_capacity,
+            IREE_HAL_AMDGPU_PM4_PHYSICAL_QUEUE_CAPACITY);
+  ASSERT_EQ(physical_device->host_queue_ordinary_count, 1u);
+
+  Ref<iree_hal_command_buffer_t> command_buffer;
+  IREE_ASSERT_OK(iree_hal_command_buffer_create(
+      test_device.base_device(), iree_hal_queue_family(test_device.queue()),
+      IREE_HAL_COMMAND_BUFFER_MODE_DEFAULT, IREE_HAL_COMMAND_CATEGORY_DISPATCH,
+      /*binding_capacity=*/0, command_buffer.out()));
+  EXPECT_TRUE(iree_hal_amdgpu_aql_command_buffer_isa(command_buffer));
+  EXPECT_FALSE(iree_hal_amdgpu_pm4_command_buffer_isa(command_buffer));
+  iree_hal_amdgpu_topology_deinitialize(&single_gpu_topology);
+}
+
+TEST_F(HostQueueCommandBufferTest,
        Pm4DispatchDirectUsesThreadDimensionsForMultiWorkgroupDispatch) {
   constexpr uint32_t kWorkgroupCount = 32u;
 

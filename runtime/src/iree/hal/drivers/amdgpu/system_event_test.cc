@@ -440,6 +440,42 @@ TEST_F(SystemEventTest, MatchedEventFailsPublishedQueues) {
   iree_hal_amdgpu_system_event_unregister_device(registration);
 }
 
+// The ordinary queue prefix is not limited by the private queue mask's width,
+// while caller-selected private queues may leave holes after their fixed
+// offset. Fault delivery visits both representations exactly and never touches
+// storage that does not hold a live queue.
+TEST_F(SystemEventTest, PublicationTargetsOrdinaryPrefixAndPrivateMask) {
+  const uint64_t agent_handles[] = {kAgentHandleA};
+  FakeLogicalDevice device;
+  device.Initialize(agent_handles, IREE_ARRAYSIZE(agent_handles));
+  constexpr iree_host_size_t kOrdinaryQueueCount = 70;
+  constexpr iree_host_size_t kPrivateQueueOffset = 72;
+  FakeHostQueues queues(76);
+  iree_hal_amdgpu_system_event_registration_t* registration = Register(device);
+  iree_hal_amdgpu_system_event_agent_target_t* target =
+      iree_hal_amdgpu_system_event_registration_lookup_agent(
+          registration, MakeAgent(kAgentHandleA));
+  constexpr uint64_t kPrivateQueueMask =
+      (UINT64_C(1) << 0) | (UINT64_C(1) << 3);
+  iree_hal_amdgpu_system_event_publish_queue_target_mask(
+      target, queues.queues(), kOrdinaryQueueCount, kPrivateQueueOffset,
+      kPrivateQueueMask);
+
+  EXPECT_EQ(DispatchMemoryFault(kAgentHandleA, kFaultAddress),
+            HSA_STATUS_SUCCESS);
+  for (iree_host_size_t i = 0; i < kOrdinaryQueueCount; ++i) {
+    EXPECT_EQ(queues.ErrorStatusCode(i), IREE_STATUS_ABORTED);
+  }
+  EXPECT_EQ(queues.ErrorStatusCode(70), IREE_STATUS_OK);
+  EXPECT_EQ(queues.ErrorStatusCode(71), IREE_STATUS_OK);
+  EXPECT_EQ(queues.ErrorStatusCode(72), IREE_STATUS_ABORTED);
+  EXPECT_EQ(queues.ErrorStatusCode(73), IREE_STATUS_OK);
+  EXPECT_EQ(queues.ErrorStatusCode(74), IREE_STATUS_OK);
+  EXPECT_EQ(queues.ErrorStatusCode(75), IREE_STATUS_ABORTED);
+
+  iree_hal_amdgpu_system_event_unregister_device(registration);
+}
+
 // A registration created before frontier assignment has no queue targets. It
 // still claims the event, because the device's sticky status can observe it.
 TEST_F(SystemEventTest, UnpublishedRegistrationClaimsWithoutFailingQueues) {

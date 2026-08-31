@@ -174,13 +174,30 @@ iree_hal_amdgpu_system_event_registration_lookup_agent(
 // Publishes the first |live_queue_count| entries of |host_queues| as the
 // failure targets for |target|'s agent. No-op when |target| is NULL.
 //
-// Called as the last step of physical-device frontier assignment, so a
-// partially assigned physical device never has published targets. Takes the
+// Called as the last step of physical-device frontier assignment. A partially
+// assigned physical device is never published, and a callback cannot observe
+// an uninitialized queue. Private queue additions use the form below. Takes the
 // registry mutex internally; the caller must not hold it.
 void iree_hal_amdgpu_system_event_publish_queue_targets(
     iree_hal_amdgpu_system_event_agent_target_t* target,
     iree_hal_amdgpu_host_queue_t* host_queues,
     iree_host_size_t live_queue_count);
+
+// Publishes the first |ordinary_queue_count| entries of |host_queues| and the
+// private entries selected by |private_queue_mask| as failure targets for
+// |target|'s agent. Bit i of the mask selects
+// |host_queues[private_queue_offset + i]|. The ordinary prefix is represented
+// separately so it is not limited to 64 queues; only the private range is
+// limited by the mask. Every selected private entry must exist and be fully
+// initialized, and |ordinary_queue_count| must not exceed
+// |private_queue_offset|. No-op when |target| is NULL.
+//
+// Takes the registry mutex internally; the caller must not hold it.
+void iree_hal_amdgpu_system_event_publish_queue_target_mask(
+    iree_hal_amdgpu_system_event_agent_target_t* target,
+    iree_hal_amdgpu_host_queue_t* host_queues,
+    iree_host_size_t ordinary_queue_count,
+    iree_host_size_t private_queue_offset, uint64_t private_queue_mask);
 
 // Retires queue failure delivery for |target|'s agent. Idempotent, and a no-op
 // when |target| is NULL. Returns once no callback can be inside |target|'s
