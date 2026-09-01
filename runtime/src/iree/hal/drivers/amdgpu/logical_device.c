@@ -2999,7 +2999,9 @@ static iree_status_t iree_hal_amdgpu_logical_device_query_queue_pool_backend(
 }
 
 typedef struct iree_hal_amdgpu_execution_queue_native_topology_t {
+  // Number of native mask bits in each representable group.
   uint32_t mask_alignment;
+  // Number of hardware partitions interleaved across native mask bits.
   uint32_t mask_partition_count;
 } iree_hal_amdgpu_execution_queue_native_topology_t;
 
