@@ -269,7 +269,7 @@ TEST(AmdgpuExperimentalApiBoundaryTest, RejectsNonNativeDevice) {
   const uint32_t mask = 1;
   iree_hal_queue_t* queue = reinterpret_cast<iree_hal_queue_t*>(uintptr_t{1});
   iree_hal_amdgpu_experimental_execution_queue_topology_t topology = {
-      .first_private_physical_queue_ordinal = 1,
+      /*.first_private_physical_queue_ordinal=*/1,
   };
   IREE_EXPECT_STATUS_IS(IREE_STATUS_FAILED_PRECONDITION,
                         iree_hal_amdgpu_experimental_execution_queue_query(
@@ -480,9 +480,9 @@ TEST_F(AmdgpuExperimentalApiTest,
   iree_hal_amdgpu_physical_device_t* physical_device =
       logical_device->physical_devices[0];
   const iree_hal_amdgpu_gfxip_version_t gfx10_version = {
-      .major = 10,
-      .minor = 0,
-      .stepping = 0,
+      /*.major=*/10,
+      /*.minor=*/0,
+      /*.stepping=*/0,
   };
   ScopedAgentTargetVersionOverride target_override(physical_device,
                                                    gfx10_version);
@@ -558,20 +558,20 @@ TEST_F(AmdgpuExperimentalApiTest,
   iree_hal_amdgpu_physical_device_t* physical_device =
       logical_device->physical_devices[0];
   const iree_hal_amdgpu_gfxip_version_t undefined_version = {
-      .major = 13,
-      .minor = 0,
-      .stepping = 0,
+      /*.major=*/13,
+      /*.minor=*/0,
+      /*.stepping=*/0,
   };
   ScopedAgentTargetVersionOverride target_override(physical_device,
                                                    undefined_version);
   ScopedQueueCreateProbe queue_create_probe(logical_device);
 
   iree_hal_amdgpu_experimental_execution_queue_topology_t queue_topology = {
-      .first_private_physical_queue_ordinal = 1,
-      .private_physical_queue_count = 1,
-      .native_compute_unit_count = 1,
-      .native_compute_unit_mask_alignment = 1,
-      .native_compute_unit_mask_partition_count = 1,
+      /*.first_private_physical_queue_ordinal=*/1,
+      /*.private_physical_queue_count=*/1,
+      /*.native_compute_unit_count=*/1,
+      /*.native_compute_unit_mask_alignment=*/1,
+      /*.native_compute_unit_mask_partition_count=*/1,
   };
   IREE_EXPECT_STATUS_IS(IREE_STATUS_UNIMPLEMENTED,
                         iree_hal_amdgpu_experimental_execution_queue_query(
