@@ -152,7 +152,7 @@ class SpecificationTest(unittest.TestCase):
                 len(NUMERIC_TABLES),
                 sum(len(table.values) for table in NUMERIC_TABLES),
             ),
-            (10, 150, 15, 147, tuple(range(1, 14)), 58, 9, 30),
+            (11, 168, 16, 163, tuple(range(1, 14)), 58, 9, 30),
         )
 
     def test_layout_rejects_implicit_alignment_padding(self) -> None:
