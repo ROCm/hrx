@@ -14,6 +14,10 @@ from iree.vm.bytecode.spec import isa, module, schema
 from iree.vm.bytecode.spec.isa.core import INTEGER_INSTRUCTIONS
 from iree.vm.bytecode.spec.isa.core import rules as isa_rules
 from iree.vm.bytecode.spec.isa.core.control import BranchCondition
+from iree.vm.bytecode.spec.isa.core.float import (
+    FLOAT_MATH_F32_SELECTOR,
+    FLOAT_MATH_F64_SELECTOR,
+)
 from iree.vm.bytecode.spec.module import rules as module_rules
 from iree.vm.bytecode.spec.module.container import MODULE_FORMAT
 from iree.vm.bytecode.spec.module.numeric import NUMERIC_TABLES
@@ -148,7 +152,7 @@ class SpecificationTest(unittest.TestCase):
                 len(NUMERIC_TABLES),
                 sum(len(table.values) for table in NUMERIC_TABLES),
             ),
-            (8, 116, 3, 30, tuple(range(1, 14)), 58, 9, 30),
+            (10, 150, 15, 147, tuple(range(1, 14)), 58, 9, 30),
         )
 
     def test_layout_rejects_implicit_alignment_padding(self) -> None:
@@ -184,6 +188,36 @@ class SpecificationTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "duplicate opcode"):
             _specification(instructions=(INTEGER_INSTRUCTIONS[0], duplicate))
+
+    def test_float_math_selector_abi_is_frozen(self) -> None:
+        common_values = (
+            ("ceil", 0),
+            ("floor", 1),
+            ("round_even", 2),
+            ("trunc", 3),
+            ("sign", 4),
+        )
+        self.assertEqual(
+            tuple(
+                (value.name, value.value) for value in FLOAT_MATH_F64_SELECTOR.values
+            ),
+            common_values,
+        )
+        self.assertEqual(
+            tuple(
+                (value.name, value.value) for value in FLOAT_MATH_F32_SELECTOR.values
+            ),
+            common_values
+            + (
+                ("exp2.approx", 5),
+                ("log2.approx", 6),
+                ("reciprocal.approx", 7),
+                ("rsqrt.approx", 8),
+                ("sqrt.approx", 9),
+                ("sin_turns.approx", 10),
+                ("cos_turns.approx", 11),
+            ),
+        )
 
     def test_control_contracts_reject_inconsistent_declarations(self) -> None:
         branch = _instruction("control.branch.s16")
