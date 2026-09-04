@@ -356,6 +356,66 @@ static const loom_target_legalizer_rule_t kVectorLegalizerRules[] = {
         .root_kind = LOOM_OP_VECTOR_FROM_ELEMENTS,
         .legalize = loom_vector_legalize_from_elements,
     },
+#define LOOM_VECTOR_SCALARIZATION_ROW(vector_op, scalar_op, flags, \
+                                      seed_operand_index)          \
+  {                                                                \
+      .root_kind = vector_op,                                      \
+      .legalize = loom_vector_legalize_descriptor,                 \
+  },
+#include "loom/ops/vector/scalarization_rows.inl"
+#undef LOOM_VECTOR_SCALARIZATION_ROW
+    {
+        .root_kind = LOOM_OP_VECTOR_SELECT,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_ENCODE,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_IOTA,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_MASK_RANGE,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_BROADCAST,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_INSERT,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_SLICE,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_CONCAT,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_TRANSPOSE,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_SHUFFLE,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_INTERLEAVE,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_DEINTERLEAVE,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_BITCAST,
+        .legalize = loom_vector_legalize_descriptor,
+    },
     {
         .root_kind = LOOM_OP_VECTOR_REDUCE,
         .legalize = loom_vector_legalize_reduce,
@@ -363,14 +423,6 @@ static const loom_target_legalizer_rule_t kVectorLegalizerRules[] = {
     {
         .root_kind = LOOM_OP_VECTOR_REDUCE_AXES,
         .legalize = loom_vector_legalize_reduce_axes,
-    },
-    {
-        .root_kind = LOOM_OP_VECTOR_BITFIELD_EXTRACTU,
-        .legalize = loom_vector_legalize_descriptor,
-    },
-    {
-        .root_kind = LOOM_OP_VECTOR_BITFIELD_EXTRACTS,
-        .legalize = loom_vector_legalize_descriptor,
     },
     {
         .root_kind = LOOM_OP_VECTOR_BITFIELD_INSERT,
@@ -386,18 +438,6 @@ static const loom_target_legalizer_rule_t kVectorLegalizerRules[] = {
     },
     {
         .root_kind = LOOM_OP_VECTOR_BITUNPACKS,
-        .legalize = loom_vector_legalize_descriptor,
-    },
-    {
-        .root_kind = LOOM_OP_VECTOR_SHLI,
-        .legalize = loom_vector_legalize_descriptor,
-    },
-    {
-        .root_kind = LOOM_OP_VECTOR_SHRSI,
-        .legalize = loom_vector_legalize_descriptor,
-    },
-    {
-        .root_kind = LOOM_OP_VECTOR_SHRUI,
         .legalize = loom_vector_legalize_descriptor,
     },
     {
@@ -422,6 +462,14 @@ static const loom_target_legalizer_rule_t kVectorLegalizerRules[] = {
     },
     {
         .root_kind = LOOM_OP_VECTOR_DOT4F8,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_TABLE_LOOKUP,
+        .legalize = loom_vector_legalize_descriptor,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_TABLE_QUANTIZE,
         .legalize = loom_vector_legalize_descriptor,
     },
     {
