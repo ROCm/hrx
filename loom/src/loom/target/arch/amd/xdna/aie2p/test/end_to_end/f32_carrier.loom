@@ -27,6 +27,8 @@ func.def target(@core_target) @add_f32x4(%lhs: buffer, %rhs: buffer, %output: bu
   %lhs_value = vector.load %lhs_view[0] : view<4xf32> -> vector<4xf32>
   %rhs_value = vector.load %rhs_view[0] : view<4xf32> -> vector<4xf32>
   %sum = vector.addf %lhs_value, %rhs_value : vector<4xf32>
-  vector.store %sum, %output_view[0] : vector<4xf32>, view<4xf32>
+  %mask = vector.cmpf olt, %lhs_value, %rhs_value : vector<4xf32> -> vector<4xi1>
+  %selected = vector.select %mask, %sum, %rhs_value : vector<4xf32>
+  vector.store %selected, %output_view[0] : vector<4xf32>, view<4xf32>
   func.return
 }
