@@ -106,6 +106,27 @@ static iree_status_t loom_vector_legalize_descriptor(
   return iree_ok_status();
 }
 
+// Keeps the fixed-arity rank-one constructor form terminal. The generic
+// from-elements legalization produces a splat followed by static inserts;
+// scalarizing those inserts would reconstruct from-elements and form a rewrite
+// cycle. Higher-rank inserts may still scalarize to the higher-rank
+// from-elements normal form retained by loom_vector_legalize_from_elements.
+static iree_status_t loom_vector_legalize_insert(
+    const loom_target_legalizer_entry_t* entry,
+    loom_target_legalization_context_t* context, loom_op_t* op,
+    loom_target_legalizer_result_t* out_result) {
+  const loom_type_t result_type =
+      loom_module_value_type(context->module, loom_vector_insert_result(op));
+  if (loom_type_is_all_static(result_type) &&
+      loom_type_rank(result_type) == 1) {
+    *out_result = (loom_target_legalizer_result_t){
+        .action = LOOM_TARGET_LEGALIZER_ACTION_NO_COMMENT,
+    };
+    return iree_ok_status();
+  }
+  return loom_vector_legalize_descriptor(entry, context, op, out_result);
+}
+
 // Expands a variadic vector constructor into the fixed-arity structural ops
 // that targets commonly select for linear register vectors. Splatting the first
 // lane provides a defined seed without requiring a target-level poison or zero
@@ -386,7 +407,7 @@ static const loom_target_legalizer_rule_t kVectorLegalizerRules[] = {
     },
     {
         .root_kind = LOOM_OP_VECTOR_INSERT,
-        .legalize = loom_vector_legalize_descriptor,
+        .legalize = loom_vector_legalize_insert,
     },
     {
         .root_kind = LOOM_OP_VECTOR_SLICE,

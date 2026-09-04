@@ -540,3 +540,24 @@ func.def target(@test_target) @preserves_multidimensional_constructor(%e0: i32, 
   %result = vector.from_elements %e0, %e1, %e2, %e3 : vector<2x2xi32>
   func.return %result : vector<2x2xi32>
 }
+
+// ====
+// RUN: pass target-legalize{mode=eager,policy=reference-only},dce
+
+test.target<low_core> @test_target
+
+func.def target(@test_target) @normalizes_linear_constructor_once(%e0: i1, %e1: i1, %e2: i1, %e3: i1) -> (vector<4xi1>) {
+  %result = vector.from_elements %e0, %e1, %e2, %e3 : vector<4xi1>
+  func.return %result : vector<4xi1>
+}
+
+// ----
+test.target<low_core> @test_target
+
+func.def target(@test_target) @normalizes_linear_constructor_once(%e0: i1, %e1: i1, %e2: i1, %e3: i1) -> (vector<4xi1>) {
+  %6 = vector.splat %e0 : vector<4xi1>
+  %7 = vector.insert %e1 into %6[1] : i1, vector<4xi1>
+  %8 = vector.insert %e2 into %7[2] : i1, vector<4xi1>
+  %result = vector.insert %e3 into %8[3] : i1, vector<4xi1>
+  func.return %result : vector<4xi1>
+}
