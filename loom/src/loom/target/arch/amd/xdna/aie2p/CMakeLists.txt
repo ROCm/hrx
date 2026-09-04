@@ -422,6 +422,7 @@ loom_check_test_suite(
     "test/source_low/index_conversion.loom-test"
     "test/source_low/matrix_multiply.loom-test"
     "test/source_low/memory_scalar_addressing.loom-test"
+    "test/source_low/numeric_f32.loom-test"
     "test/source_low/numeric_index.loom-test"
     "test/source_low/numeric_scalar_i32.loom-test"
     "test/source_low/packed_dot_integer.loom-test"
@@ -451,6 +452,7 @@ iree_execution_test_suite(
   TOOLS
     "loom-compile=loom::tools::loom-compile"
   DATA
+    "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/f32_carrier.loom"
     "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/split_k.loom"
   LABELS
     "hostonly"
@@ -603,6 +605,18 @@ loom_cc_library(
     loom::target::reporting::low
     loom::target::reporting::report
   PUBLIC
+)
+
+loom_cc_test(
+  NAME
+    provider_test
+  SRCS
+    "provider_test.cc"
+  DEPS
+    ::provider
+    iree::testing::gtest
+    iree::testing::gtest_main
+    loom::target::provider
 )
 
 loom_cc_test(

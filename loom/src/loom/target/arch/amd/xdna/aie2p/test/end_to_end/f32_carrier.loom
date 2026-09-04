@@ -1,0 +1,32 @@
+aie2p.target<array> @array_target
+
+aie2p.target<core> @core_target
+
+pipeline.def<kernel> public retain target(@array_target) @f32_carrier_array() launch(%lhs: buffer, %rhs: buffer, %output: buffer) {
+  %worker_lanes = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %worker_lanes : index -> group
+
+  %lhs_view = buffer.view %lhs[%base] : buffer -> view<4xf32>
+  %rhs_view = buffer.view %rhs[%base] : buffer -> view<4xf32>
+  %output_view = buffer.view %output[%base] : buffer -> view<4xf32>
+
+  %lhs_tile = pipeline.read %lhs_view on %workers : view<4xf32>, group -> pipeline.flow<tile<4xf32>>
+  %rhs_tile = pipeline.read %rhs_view on %workers : view<4xf32>, group -> pipeline.flow<tile<4xf32>>
+  %result = pipeline.stage @add_f32x4 on %workers(%lhs_tile, %rhs_tile) : (group, pipeline.flow<tile<4xf32>>, pipeline.flow<tile<4xf32>>) -> (pipeline.flow<tile<4xf32>>)
+  pipeline.write %result to %output_view : pipeline.flow<tile<4xf32>>, view<4xf32>
+  pipeline.return
+}
+
+func.def target(@core_target) @add_f32x4(%lhs: buffer, %rhs: buffer, %output: buffer) {
+  %lhs_aligned, %rhs_aligned, %output_aligned = buffer.assume.alignment %lhs, %rhs, %output {minimum_alignment = 16} : buffer, buffer, buffer
+  %base = index.constant 0 : offset
+  %lhs_view = buffer.view %lhs_aligned[%base] : buffer -> view<4xf32>
+  %rhs_view = buffer.view %rhs_aligned[%base] : buffer -> view<4xf32>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<4xf32>
+  %lhs_value = vector.load %lhs_view[0] : view<4xf32> -> vector<4xf32>
+  %rhs_value = vector.load %rhs_view[0] : view<4xf32> -> vector<4xf32>
+  %sum = vector.addf %lhs_value, %rhs_value : vector<4xf32>
+  vector.store %sum, %output_view[0] : vector<4xf32>, view<4xf32>
+  func.return
+}
