@@ -581,6 +581,73 @@ TEST_F(LowLowerPassTest, CopiedPerLaneOperandPreservesAggregateWidth) {
   EXPECT_EQ(copied_slice_count, 4u);
 }
 
+TEST_F(LowLowerPassTest, SetupValueFeedsPerLaneSequence) {
+  ModulePtr module =
+      Parse(IREE_SV("test.target<low_core> @test_target\n"
+                    "func.def target(@test_target) @multiply("
+                    "%lhs: vector<2xi32>, %rhs: vector<2xi32>) "
+                    "-> (vector<2xi32>) {\n"
+                    "  %result = vector.muli %lhs, %rhs : vector<2xi32>\n"
+                    "  func.return %result : vector<2xi32>\n"
+                    "}\n"));
+
+  IREE_ASSERT_OK(RunSourceToLow(&policy_registry_, module.get()));
+  const loom_symbol_ref_t function_ref =
+      FindSymbolRef(module.get(), IREE_SV("multiply"));
+  loom_op_t* function_op =
+      module->symbols.entries[function_ref.symbol_id].defining_op;
+  ASSERT_TRUE(loom_low_func_def_isa(function_op));
+  const loom_block_t* entry = loom_region_entry_block(
+      loom_func_like_body(loom_func_like_cast(module.get(), function_op)));
+  ASSERT_NE(entry, nullptr);
+
+  const loom_low_descriptor_set_t* descriptor_set =
+      loom_test_low_core_descriptor_set();
+  const uint32_t multiply_ordinal = loom_low_descriptor_set_lookup_descriptor(
+      descriptor_set, IREE_SV("test.mul.i32"));
+  const uint32_t add_ordinal = loom_low_descriptor_set_lookup_descriptor(
+      descriptor_set, IREE_SV("test.add.i32"));
+  const uint32_t constant_ordinal = loom_low_descriptor_set_lookup_descriptor(
+      descriptor_set, IREE_SV("test.const.i32"));
+  ASSERT_NE(multiply_ordinal, LOOM_LOW_DESCRIPTOR_ORDINAL_NONE);
+  ASSERT_NE(add_ordinal, LOOM_LOW_DESCRIPTOR_ORDINAL_NONE);
+  ASSERT_NE(constant_ordinal, LOOM_LOW_DESCRIPTOR_ORDINAL_NONE);
+
+  loom_value_id_t setup_value = LOOM_VALUE_ID_INVALID;
+  uint32_t constant_count = 0;
+  uint32_t slice_count = 0;
+  uint32_t multiply_count = 0;
+  uint32_t add_count = 0;
+  uint32_t concat_count = 0;
+  for (const loom_op_t* op = entry->first_op; op != nullptr; op = op->next_op) {
+    if (loom_low_const_isa(op)) {
+      ++constant_count;
+      EXPECT_EQ(loom_low_const_descriptor(op), constant_ordinal);
+      setup_value = loom_low_const_result(op);
+    } else if (loom_low_slice_isa(op)) {
+      ++slice_count;
+    } else if (loom_low_concat_isa(op)) {
+      ++concat_count;
+    } else if (loom_low_op_isa(op)) {
+      const uint32_t descriptor_ordinal = loom_low_op_descriptor(op);
+      if (descriptor_ordinal == multiply_ordinal) {
+        ++multiply_count;
+      } else if (descriptor_ordinal == add_ordinal) {
+        ++add_count;
+        ASSERT_NE(setup_value, LOOM_VALUE_ID_INVALID);
+        const loom_value_slice_t operands = loom_low_op_operands(op);
+        ASSERT_EQ(operands.count, 2u);
+        EXPECT_EQ(operands.values[1], setup_value);
+      }
+    }
+  }
+  EXPECT_EQ(constant_count, 1u);
+  EXPECT_EQ(slice_count, 4u);
+  EXPECT_EQ(multiply_count, 2u);
+  EXPECT_EQ(add_count, 2u);
+  EXPECT_EQ(concat_count, 1u);
+}
+
 TEST_F(LowLowerPassTest,
        InvocationBoundTargetlessFunctionRunsLowPassesWithoutWitness) {
   ModulePtr module = Parse(IREE_SV(
