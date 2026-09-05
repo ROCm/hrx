@@ -22,6 +22,7 @@
 #include "loom/target/arch/amdgpu/lower/encoding/vector_conversion.h"
 #include "loom/target/arch/amdgpu/lower/kinds.h"
 #include "loom/target/arch/amdgpu/lower/memory.h"
+#include "loom/target/arch/amdgpu/lower/structural.h"
 #include "loom/target/arch/amdgpu/lower/value/vector_transform.h"
 #include "loom/target/arch/amdgpu/refs/target_refs.h"
 #include "loom/target/arch/amdgpu/target_info_defs.h"
@@ -128,6 +129,25 @@ static iree_status_t loom_amdgpu_retain_native_vector_op(
   };
   if (!loom_amdgpu_legalizer_descriptor_set_is_amdgpu(
           context->descriptor_set)) {
+    return iree_ok_status();
+  }
+  *out_result = (loom_target_legalizer_result_t){
+      .action = LOOM_TARGET_LEGALIZER_ACTION_DEFER,
+  };
+  return iree_ok_status();
+}
+
+static iree_status_t loom_amdgpu_retain_native_vector_structural_op(
+    const loom_target_legalizer_entry_t* entry,
+    loom_target_legalization_context_t* context, loom_op_t* op,
+    loom_target_legalizer_result_t* out_result) {
+  (void)entry;
+  *out_result = (loom_target_legalizer_result_t){
+      .action = LOOM_TARGET_LEGALIZER_ACTION_NO_COMMENT,
+  };
+  if (!loom_amdgpu_legalizer_descriptor_set_is_amdgpu(
+          context->descriptor_set) ||
+      !loom_amdgpu_vector_structural_can_lower(context->module, op)) {
     return iree_ok_status();
   }
   *out_result = (loom_target_legalizer_result_t){
@@ -488,6 +508,34 @@ static const loom_target_legalizer_rule_t kAmdgpuLegalizerRules[] = {
     {
         .root_kind = LOOM_OP_VECTOR_REDUCE,
         .legalize = loom_amdgpu_legalize_oversized_vector_reduce,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_BITCAST,
+        .legalize = loom_amdgpu_retain_native_vector_structural_op,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_CONCAT,
+        .legalize = loom_amdgpu_retain_native_vector_structural_op,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_DEINTERLEAVE,
+        .legalize = loom_amdgpu_retain_native_vector_structural_op,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_INTERLEAVE,
+        .legalize = loom_amdgpu_retain_native_vector_structural_op,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_SHUFFLE,
+        .legalize = loom_amdgpu_retain_native_vector_structural_op,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_TRANSPOSE,
+        .legalize = loom_amdgpu_retain_native_vector_structural_op,
+    },
+    {
+        .root_kind = LOOM_OP_VECTOR_SLICE,
+        .legalize = loom_amdgpu_retain_native_vector_structural_op,
     },
     {
         .root_kind = LOOM_OP_VECTOR_BITFIELD_EXTRACTU,

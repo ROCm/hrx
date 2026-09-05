@@ -534,6 +534,45 @@ static bool loom_amdgpu_vector_slice_plan_from_op(
   return true;
 }
 
+bool loom_amdgpu_vector_structural_can_lower(const loom_module_t* module,
+                                             const loom_op_t* source_op) {
+  switch (source_op->kind) {
+    case LOOM_OP_VECTOR_BITCAST: {
+      loom_amdgpu_vector_bitcast_plan_t plan;
+      return loom_amdgpu_vector_bitcast_plan_from_op(module, source_op, &plan);
+    }
+    case LOOM_OP_VECTOR_CONCAT: {
+      loom_amdgpu_vector_register_map_plan_t plan = {0};
+      return loom_amdgpu_vector_concat_plan_from_op(module, source_op, &plan);
+    }
+    case LOOM_OP_VECTOR_DEINTERLEAVE: {
+      loom_amdgpu_vector_deinterleave_plan_t plan = {0};
+      return loom_amdgpu_vector_deinterleave_plan_from_op(module, source_op,
+                                                          &plan);
+    }
+    case LOOM_OP_VECTOR_INTERLEAVE: {
+      loom_amdgpu_vector_interleave_plan_t plan = {0};
+      return loom_amdgpu_vector_interleave_plan_from_op(module, source_op,
+                                                        &plan);
+    }
+    case LOOM_OP_VECTOR_SHUFFLE: {
+      loom_amdgpu_vector_register_map_plan_t plan = {0};
+      return loom_amdgpu_vector_shuffle_plan_from_op(module, source_op, &plan);
+    }
+    case LOOM_OP_VECTOR_TRANSPOSE: {
+      loom_amdgpu_vector_register_map_plan_t plan = {0};
+      return loom_amdgpu_vector_transpose_plan_from_op(module, source_op,
+                                                       &plan);
+    }
+    case LOOM_OP_VECTOR_SLICE: {
+      loom_amdgpu_vector_slice_plan_t plan = {0};
+      return loom_amdgpu_vector_slice_plan_from_op(module, source_op, &plan);
+    }
+    default:
+      return false;
+  }
+}
+
 iree_status_t loom_amdgpu_select_vector_bitcast_plan(
     loom_low_lower_context_t* context, const loom_op_t* source_op,
     loom_amdgpu_vector_bitcast_plan_t* out_plan, bool* out_selected) {
@@ -1005,67 +1044,35 @@ iree_status_t loom_amdgpu_low_legality_verify_vector_structural(
   *out_handled = true;
 
   const loom_module_t* module = loom_target_low_legality_module(context);
+  iree_string_view_t constraint_key = iree_string_view_empty();
   switch (op->kind) {
-    case LOOM_OP_VECTOR_BITCAST: {
-      loom_amdgpu_vector_bitcast_plan_t plan;
-      if (loom_amdgpu_vector_bitcast_plan_from_op(module, op, &plan)) {
-        return iree_ok_status();
-      }
-      return loom_amdgpu_low_legality_reject(context, op,
-                                             IREE_SV("bitcast.storage"));
-    }
-    case LOOM_OP_VECTOR_CONCAT: {
-      loom_amdgpu_vector_register_map_plan_t unused_plan = {0};
-      if (loom_amdgpu_vector_concat_plan_from_op(module, op, &unused_plan)) {
-        return iree_ok_status();
-      }
-      return loom_amdgpu_low_legality_reject(
-          context, op, IREE_SV("concat.register_storage"));
-    }
-    case LOOM_OP_VECTOR_DEINTERLEAVE: {
-      loom_amdgpu_vector_deinterleave_plan_t unused_plan = {0};
-      if (loom_amdgpu_vector_deinterleave_plan_from_op(module, op,
-                                                       &unused_plan)) {
-        return iree_ok_status();
-      }
-      return loom_amdgpu_low_legality_reject(
-          context, op, IREE_SV("deinterleave.rank1_even_odd_storage"));
-    }
-    case LOOM_OP_VECTOR_INTERLEAVE: {
-      loom_amdgpu_vector_interleave_plan_t unused_plan = {0};
-      if (loom_amdgpu_vector_interleave_plan_from_op(module, op,
-                                                     &unused_plan)) {
-        return iree_ok_status();
-      }
-      return loom_amdgpu_low_legality_reject(
-          context, op, IREE_SV("interleave.rank1_even_odd_storage"));
-    }
-    case LOOM_OP_VECTOR_SHUFFLE: {
-      loom_amdgpu_vector_register_map_plan_t unused_plan = {0};
-      if (loom_amdgpu_vector_shuffle_plan_from_op(module, op, &unused_plan)) {
-        return iree_ok_status();
-      }
-      return loom_amdgpu_low_legality_reject(context, op,
-                                             IREE_SV("shuffle.rank1_32bit"));
-    }
-    case LOOM_OP_VECTOR_TRANSPOSE: {
-      loom_amdgpu_vector_register_map_plan_t unused_plan = {0};
-      if (loom_amdgpu_vector_transpose_plan_from_op(module, op, &unused_plan)) {
-        return iree_ok_status();
-      }
-      return loom_amdgpu_low_legality_reject(context, op,
-                                             IREE_SV("transpose.static_32bit"));
-    }
-    case LOOM_OP_VECTOR_SLICE: {
-      loom_amdgpu_vector_slice_plan_t unused_plan = {0};
-      if (loom_amdgpu_vector_slice_plan_from_op(module, op, &unused_plan)) {
-        return iree_ok_status();
-      }
-      return loom_amdgpu_low_legality_reject(context, op,
-                                             IREE_SV("slice.shape"));
-    }
+    case LOOM_OP_VECTOR_BITCAST:
+      constraint_key = IREE_SV("bitcast.storage");
+      break;
+    case LOOM_OP_VECTOR_CONCAT:
+      constraint_key = IREE_SV("concat.register_storage");
+      break;
+    case LOOM_OP_VECTOR_DEINTERLEAVE:
+      constraint_key = IREE_SV("deinterleave.rank1_even_odd_storage");
+      break;
+    case LOOM_OP_VECTOR_INTERLEAVE:
+      constraint_key = IREE_SV("interleave.rank1_even_odd_storage");
+      break;
+    case LOOM_OP_VECTOR_SHUFFLE:
+      constraint_key = IREE_SV("shuffle.rank1_32bit");
+      break;
+    case LOOM_OP_VECTOR_TRANSPOSE:
+      constraint_key = IREE_SV("transpose.static_32bit");
+      break;
+    case LOOM_OP_VECTOR_SLICE:
+      constraint_key = IREE_SV("slice.shape");
+      break;
     default:
       *out_handled = false;
       return iree_ok_status();
   }
+  if (loom_amdgpu_vector_structural_can_lower(module, op)) {
+    return iree_ok_status();
+  }
+  return loom_amdgpu_low_legality_reject(context, op, constraint_key);
 }

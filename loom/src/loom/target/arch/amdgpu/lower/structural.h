@@ -17,6 +17,12 @@
 extern "C" {
 #endif
 
+// Returns true when |source_op| has an exact AMDGPU register-structural
+// lowering plan. This is shared by target legalization and final legality so
+// native retention cannot drift from the source-to-Low selector.
+bool loom_amdgpu_vector_structural_can_lower(const loom_module_t* module,
+                                             const loom_op_t* source_op);
+
 // Selects an AMDGPU vector.bitcast register reinterpretation plan.
 iree_status_t loom_amdgpu_select_vector_bitcast_plan(
     loom_low_lower_context_t* context, const loom_op_t* source_op,
