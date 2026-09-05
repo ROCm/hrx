@@ -126,6 +126,7 @@ loom_cc_test(
     "storage_test.cc"
   DEPS
     ::encoding
+    iree::base::internal
     iree::base::internal::arena
     iree::testing::gtest
     iree::testing::gtest_main
