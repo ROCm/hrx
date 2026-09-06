@@ -814,3 +814,65 @@ func.def public @nested_closure_caller(%input: tile<4xf32>) -> (tile<4xf32>) {
   } -> (tile<4xf32>)
   func.return %mapped : tile<4xf32>
 }
+
+// ====
+
+// RUN: pass inline-callables
+
+// A shared outer wrapper may contain a single-use middle helper whose own call
+// is carried outward before it executes. The middle transfer remains a logical
+// dependency of the outer wrapper so neither outer use can clone a partial
+// closure and retain a dangling leaf reference.
+func.def inline @shared_loop_leaf(%value: i32) -> (i32) {
+  %doubled = test.addi %value, %value : i32
+  func.return %doubled : i32
+}
+
+func.def inline @shared_loop_middle(%value: i32) -> (i32) {
+  %doubled = func.call @shared_loop_leaf(%value) : (i32) -> (i32)
+  func.return %doubled : i32
+}
+
+func.def inline @shared_loop_wrapper(%value: i32) -> (i32) {
+  %begin = index.constant 0 : index
+  %end = index.constant 2 : index
+  %step = index.constant 1 : index
+  %result = scf.for %iteration = [%begin to %end step %step](%accumulator = %value : i32) -> (i32) {
+    %next = func.call @shared_loop_middle(%accumulator) : (i32) -> (i32)
+    scf.yield %next : i32
+  }
+  func.return %result : i32
+}
+
+func.def public @clone_loop_wrapper(%value: i32) -> (i32) {
+  %result = func.call @shared_loop_wrapper(%value) : (i32) -> (i32)
+  func.return %result : i32
+}
+
+func.def public @consume_loop_wrapper(%value: i32) -> (i32) {
+  %result = func.call @shared_loop_wrapper(%value) : (i32) -> (i32)
+  func.return %result : i32
+}
+
+// ----
+func.def public @clone_loop_wrapper(%value: i32) -> (i32) {
+  %begin = index.constant 0 : index
+  %end = index.constant 2 : index
+  %step = index.constant 1 : index
+  %result = scf.for %iteration = [%begin to %end step %step](%accumulator = %value : i32) -> (i32) {
+    %doubled = test.addi %accumulator, %accumulator : i32
+    scf.yield %doubled : i32
+  }
+  func.return %result : i32
+}
+
+func.def public @consume_loop_wrapper(%value: i32) -> (i32) {
+  %begin = index.constant 0 : index
+  %end = index.constant 2 : index
+  %step = index.constant 1 : index
+  %result = scf.for %iteration = [%begin to %end step %step](%accumulator = %value : i32) -> (i32) {
+    %doubled = test.addi %accumulator, %accumulator : i32
+    scf.yield %doubled : i32
+  }
+  func.return %result : i32
+}

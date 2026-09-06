@@ -1223,6 +1223,8 @@ typedef struct loom_inline_execution_symbol_t {
   uint32_t last_clone_entry;
   // Unique consuming use targeting this symbol, when present.
   uint32_t transfer_entry;
+  // True after the consuming use moved this symbol's body into its caller.
+  bool transfer_executed;
 } loom_inline_execution_symbol_t;
 
 typedef struct loom_inline_execution_entry_t {
@@ -1247,16 +1249,46 @@ static void loom_inline_enqueue_ready_entry(
   }
 }
 
+// Completes one executed call edge and propagates closure completion through
+// wrappers that were already transferred outward. A transfer may move its body
+// before calls carried by that body execute, but its caller must continue to
+// observe the transfer as an outstanding edge until those calls complete.
+static void loom_inline_complete_execution_entry(
+    const loom_inline_state_t* state,
+    loom_inline_execution_symbol_t* execution_symbols,
+    loom_inline_execution_entry_t* execution_entries, uint32_t entry_index,
+    uint32_t* inout_linear_ready_count, uint32_t* inout_cfg_ready_count) {
+  while (entry_index != LOOM_INLINE_PLAN_ENTRY_INVALID) {
+    const loom_inline_plan_entry_t* entry = &state->entries[entry_index];
+    loom_inline_execution_symbol_t* source =
+        &execution_symbols[entry->source_symbol_id];
+    IREE_ASSERT_GT(source->remaining_outgoing_count, 0u);
+    if (--source->remaining_outgoing_count != 0) return;
+
+    for (uint32_t clone_index = source->first_clone_entry;
+         clone_index != LOOM_INLINE_PLAN_ENTRY_INVALID;
+         clone_index = execution_entries[clone_index].next_clone_entry) {
+      loom_inline_enqueue_ready_entry(state, execution_entries, clone_index,
+                                      inout_linear_ready_count,
+                                      inout_cfg_ready_count);
+    }
+    if (!source->transfer_executed) return;
+    entry_index = source->transfer_entry;
+  }
+}
+
 // Executes required edges without repeatedly cloning a growing callee closure.
 // A clone waits for the target's outgoing edges so it observes the complete
 // flattened body. The target's unique transfer waits for all clone uses, but
-// otherwise may move a single-use wrapper outward before flattening calls now
-// carried by that wrapper. Linear ready edges run before CFG edges so their
-// topology-preserving move can share one availability analysis and so a CFG
-// parent carries its linear producers when it moves. The ready stacks reverse
-// source occurrence order: sibling CFG calls therefore splice right to left,
-// moving each original operation tail at most once while tail-local splices
-// append blocks without shifting the accumulated caller CFG.
+// may move a single-use wrapper outward before flattening calls carried by that
+// wrapper. The transfer remains logically outstanding until those calls
+// complete, preventing an outer shared wrapper from cloning a partial closure.
+// Linear ready edges run before CFG edges so their topology-preserving move can
+// share one availability analysis and so a CFG parent carries its linear
+// producers when it moves. The ready stacks reverse source occurrence order:
+// sibling CFG calls therefore splice right to left, moving each original
+// operation tail at most once while tail-local splices append blocks without
+// shifting the accumulated caller CFG.
 static iree_status_t loom_inline_execute_plan(loom_inline_state_t* state) {
   uint32_t execution_count = 0;
   for (uint32_t entry_index = 0; entry_index < state->entry_count;
@@ -1383,18 +1415,10 @@ static iree_status_t loom_inline_execute_plan(loom_inline_state_t* state) {
       cfg_topology_changed = true;
     }
 
-    loom_inline_execution_symbol_t* source =
-        &execution_symbols[entry->source_symbol_id];
-    IREE_ASSERT_GT(source->remaining_outgoing_count, 0u);
-    if (--source->remaining_outgoing_count == 0) {
-      for (uint32_t clone_index = source->first_clone_entry;
-           clone_index != LOOM_INLINE_PLAN_ENTRY_INVALID;
-           clone_index = execution_entries[clone_index].next_clone_entry) {
-        loom_inline_enqueue_ready_entry(state, execution_entries, clone_index,
-                                        &linear_ready_count, &cfg_ready_count);
-      }
-    }
     if (entry->action == LOOM_INLINE_PLAN_ACTION_CLONE) {
+      loom_inline_complete_execution_entry(
+          state, execution_symbols, execution_entries, entry_index,
+          &linear_ready_count, &cfg_ready_count);
       loom_inline_execution_symbol_t* target =
           &execution_symbols[entry->target_symbol_id];
       IREE_ASSERT_GT(target->remaining_clone_count, 0u);
@@ -1404,6 +1428,16 @@ static iree_status_t loom_inline_execute_plan(loom_inline_state_t* state) {
               state, execution_entries, target->transfer_entry,
               &linear_ready_count, &cfg_ready_count);
         }
+      }
+    } else {
+      loom_inline_execution_symbol_t* target =
+          &execution_symbols[entry->target_symbol_id];
+      IREE_ASSERT_FALSE(target->transfer_executed);
+      target->transfer_executed = true;
+      if (target->remaining_outgoing_count == 0) {
+        loom_inline_complete_execution_entry(
+            state, execution_symbols, execution_entries, entry_index,
+            &linear_ready_count, &cfg_ready_count);
       }
     }
   }
