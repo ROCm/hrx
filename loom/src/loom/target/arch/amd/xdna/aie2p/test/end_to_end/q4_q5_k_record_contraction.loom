@@ -1,29 +1,92 @@
+config.decl @q4_q5_gate_up.input_size : %value: index where [range(%value, 1024, 32768), mul(%value, 512)]
+
 aie2p.target<array> @array_target
 
 aie2p.target<core> @core_target
 
-// Runs canonical GGML Q4_K and Q5_K record contractions on separate workers.
-// Both consume the same canonical pair of Q8_1_x4 activation records. Keeping
-// the two workers in one array proves that the format-specific side-plane path
-// composes with the shared scale, activation, contraction, and correction
-// machinery without materializing dequantized weights.
-pipeline.def<kernel> public retain target(@array_target) @q4_q5_k_record_array() launch(%q4_weight: buffer, %q5_weight: buffer, %activation: buffer, %q4_output: buffer, %q5_output: buffer) {
-  %worker_lanes = index.constant 1 : index
+// Computes one canonical GGML Q4_K gate/up SwiGLU projection. Each projection
+// lane owns one contiguous split-K range and publishes one F32 partial.
+// Explicit two-record channels let both reductions and the nonlinear output
+// stage overlap the next firing without materializing dequantized weights.
+pipeline.def<kernel> public retain target(@array_target) @q4_k_gate_up_array() launch(%gate_weight: buffer, %up_weight: buffer, %activation: buffer, %output: buffer) {
+  %input_size = config.get @q4_q5_gate_up.input_size : index
+  %compute_lanes = index.constant 2 : index
+  %reducer_lanes = index.constant 1 : index
+  %ring_capacity = index.constant 2 : index
+  %c128 = index.constant 128 : index
+  %c256 = index.constant 256 : index
   %base = index.constant 0 : offset
-  %q4_workers = group.create %worker_lanes : index -> group
-  %q5_workers = group.create %worker_lanes : index -> group
-  %q4_weight_view = buffer.view %q4_weight[%base] : buffer -> view<144xi8>
-  %q5_weight_view = buffer.view %q5_weight[%base] : buffer -> view<176xi8>
-  %activation_view = buffer.view %activation[%base] : buffer -> view<288xi8>
-  %q4_output_view = buffer.view %q4_output[%base] : buffer -> view<1xf32>
-  %q5_output_view = buffer.view %q5_output[%base] : buffer -> view<1xf32>
-  %q4_weight_tile = pipeline.read %q4_weight_view on %q4_workers : view<144xi8>, group -> pipeline.flow<tile<144xi8>>
-  %q5_weight_tile = pipeline.read %q5_weight_view on %q5_workers : view<176xi8>, group -> pipeline.flow<tile<176xi8>>
-  %q4_activation_tile = pipeline.read %activation_view on %q4_workers : view<288xi8>, group -> pipeline.flow<tile<288xi8>>
-  %q5_activation_tile = pipeline.read %activation_view on %q5_workers : view<288xi8>, group -> pipeline.flow<tile<288xi8>>
-  %q4_result = pipeline.stage @q4_k_record_contraction on %q4_workers(%q4_weight_tile, %q4_activation_tile) : (group, pipeline.flow<tile<144xi8>>, pipeline.flow<tile<288xi8>>) -> (pipeline.flow<tile<1xf32>>)
-  %q5_result = pipeline.stage @q5_k_record_contraction on %q5_workers(%q5_weight_tile, %q5_activation_tile) : (group, pipeline.flow<tile<176xi8>>, pipeline.flow<tile<288xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q4_record_count = index.div %input_size, %c256 : index
+  %q4_records_per_lane = index.div %q4_record_count, %compute_lanes : index
+  %q8_record_count = index.div %input_size, %c128 : index
+  %q8_records_per_lane = index.div %q8_record_count, %compute_lanes : index
+
+  %q4_gate_compute = group.create %compute_lanes : index -> group
+  %q4_up_compute = group.create %compute_lanes : index -> group
+  %q4_gate_reducer = group.create %reducer_lanes : index -> group
+  %q4_up_reducer = group.create %reducer_lanes : index -> group
+  %q4_output_stage = group.create %reducer_lanes : index -> group
+
+  %q4_gate_view = buffer.view %gate_weight[%base] : buffer -> view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>
+  %q4_up_view = buffer.view %up_weight[%base] : buffer -> view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>
+  %q4_gate_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%q8_records_per_lane]x144xi8>
+  %q4_up_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%q8_records_per_lane]x144xi8>
+  %q4_output_view = buffer.view %output[%base] : buffer -> view<1xf32>
+
+  %q4_gate_tiles = pipeline.scatter %q4_gate_view across %q4_gate_compute : view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>, group -> pipeline.flow<tile<[%q4_records_per_lane]x144xi8>>
+  %q4_up_tiles = pipeline.scatter %q4_up_view across %q4_up_compute : view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>, group -> pipeline.flow<tile<[%q4_records_per_lane]x144xi8>>
+  %q4_gate_activation_tiles = pipeline.scatter %q4_gate_activation_view across %q4_gate_compute : view<[%compute_lanes]x[%q8_records_per_lane]x144xi8>, group -> pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>
+  %q4_up_activation_tiles = pipeline.scatter %q4_up_activation_view across %q4_up_compute : view<[%compute_lanes]x[%q8_records_per_lane]x144xi8>, group -> pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>
+  %q4_gate_partials = pipeline.stage @q4_k_projection_branch on %q4_gate_compute(%q4_gate_tiles, %q4_gate_activation_tiles) : (group, pipeline.flow<tile<[%q4_records_per_lane]x144xi8>>, pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q4_up_partials = pipeline.stage @q4_k_projection_branch on %q4_up_compute(%q4_up_tiles, %q4_up_activation_tiles) : (group, pipeline.flow<tile<[%q4_records_per_lane]x144xi8>>, pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q4_gate_buffered = pipeline.buffer %q4_gate_partials capacity %ring_capacity : (pipeline.flow<tile<1xf32>>, index) -> pipeline.flow<tile<1xf32>>
+  %q4_up_buffered = pipeline.buffer %q4_up_partials capacity %ring_capacity : (pipeline.flow<tile<1xf32>>, index) -> pipeline.flow<tile<1xf32>>
+  %q4_gate = pipeline.reduce @sum_split_k from %q4_gate_compute(%q4_gate_buffered) to %q4_gate_reducer() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
+  %q4_up = pipeline.reduce @sum_split_k from %q4_up_compute(%q4_up_buffered) to %q4_up_reducer() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
+  %q4_result = pipeline.stage @gate_up_swiglu on %q4_output_stage(%q4_gate, %q4_up) : (group, pipeline.flow<tile<1xf32>>, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
   pipeline.write %q4_result to %q4_output_view : pipeline.flow<tile<1xf32>>, view<1xf32>
+  pipeline.return
+}
+
+// Computes the Q5_K companion with the same topology and canonical Q8_1_x4
+// activation representation. Keeping it as a distinct export lets the loader
+// select and retain exactly the array configuration named by a dispatch.
+pipeline.def<kernel> public retain target(@array_target) @q5_k_gate_up_array() launch(%gate_weight: buffer, %up_weight: buffer, %activation: buffer, %output: buffer) {
+  %input_size = config.get @q4_q5_gate_up.input_size : index
+  %compute_lanes = index.constant 2 : index
+  %reducer_lanes = index.constant 1 : index
+  %ring_capacity = index.constant 2 : index
+  %c128 = index.constant 128 : index
+  %c256 = index.constant 256 : index
+  %base = index.constant 0 : offset
+  %q5_record_count = index.div %input_size, %c256 : index
+  %q5_records_per_lane = index.div %q5_record_count, %compute_lanes : index
+  %q8_record_count = index.div %input_size, %c128 : index
+  %q8_records_per_lane = index.div %q8_record_count, %compute_lanes : index
+
+  %q5_gate_compute = group.create %compute_lanes : index -> group
+  %q5_up_compute = group.create %compute_lanes : index -> group
+  %q5_gate_reducer = group.create %reducer_lanes : index -> group
+  %q5_up_reducer = group.create %reducer_lanes : index -> group
+  %q5_output_stage = group.create %reducer_lanes : index -> group
+
+  %q5_gate_view = buffer.view %gate_weight[%base] : buffer -> view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>
+  %q5_up_view = buffer.view %up_weight[%base] : buffer -> view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>
+  %q5_gate_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%q8_records_per_lane]x144xi8>
+  %q5_up_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%q8_records_per_lane]x144xi8>
+  %q5_output_view = buffer.view %output[%base] : buffer -> view<1xf32>
+
+  %q5_gate_tiles = pipeline.scatter %q5_gate_view across %q5_gate_compute : view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>, group -> pipeline.flow<tile<[%q5_records_per_lane]x176xi8>>
+  %q5_up_tiles = pipeline.scatter %q5_up_view across %q5_up_compute : view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>, group -> pipeline.flow<tile<[%q5_records_per_lane]x176xi8>>
+  %q5_gate_activation_tiles = pipeline.scatter %q5_gate_activation_view across %q5_gate_compute : view<[%compute_lanes]x[%q8_records_per_lane]x144xi8>, group -> pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>
+  %q5_up_activation_tiles = pipeline.scatter %q5_up_activation_view across %q5_up_compute : view<[%compute_lanes]x[%q8_records_per_lane]x144xi8>, group -> pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>
+  %q5_gate_partials = pipeline.stage @q5_k_projection_branch on %q5_gate_compute(%q5_gate_tiles, %q5_gate_activation_tiles) : (group, pipeline.flow<tile<[%q5_records_per_lane]x176xi8>>, pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q5_up_partials = pipeline.stage @q5_k_projection_branch on %q5_up_compute(%q5_up_tiles, %q5_up_activation_tiles) : (group, pipeline.flow<tile<[%q5_records_per_lane]x176xi8>>, pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q5_gate_buffered = pipeline.buffer %q5_gate_partials capacity %ring_capacity : (pipeline.flow<tile<1xf32>>, index) -> pipeline.flow<tile<1xf32>>
+  %q5_up_buffered = pipeline.buffer %q5_up_partials capacity %ring_capacity : (pipeline.flow<tile<1xf32>>, index) -> pipeline.flow<tile<1xf32>>
+  %q5_gate = pipeline.reduce @sum_split_k from %q5_gate_compute(%q5_gate_buffered) to %q5_gate_reducer() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
+  %q5_up = pipeline.reduce @sum_split_k from %q5_up_compute(%q5_up_buffered) to %q5_up_reducer() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
+  %q5_result = pipeline.stage @gate_up_swiglu on %q5_output_stage(%q5_gate, %q5_up) : (group, pipeline.flow<tile<1xf32>>, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
   pipeline.write %q5_result to %q5_output_view : pipeline.flow<tile<1xf32>>, view<1xf32>
   pipeline.return
 }
@@ -63,11 +126,10 @@ func.def inline target(@core_target) @k_scale_minimum(%scale_word: i32, %minimum
 
 // Loads the two Q8_1 groups paired with adjacent K-quant groups. Two 144-byte
 // Q8_1_x4 records cover one 256-value K-quant record.
-func.def inline target(@core_target) @q8_1_x4_pair(%activation: buffer, %pair: index) -> (vector<32xi8>, vector<32xi8>, f32, f32, f32, f32) {
+func.def inline target(@core_target) @q8_1_x4_pair(%activation: buffer, %record_offset: offset, %pair: index) -> (vector<32xi8>, vector<32xi8>, f32, f32, f32, f32) {
   %activation_aligned = buffer.assume.alignment %activation {minimum_alignment = 64} : buffer
-  %base = index.constant 0 : offset
-  %word_view = buffer.view %activation_aligned[%base] : buffer -> view<72xi32>
-  %byte_view = buffer.view %activation_aligned[%base] : buffer -> view<288xi8>
+  %word_view = buffer.view %activation_aligned[%record_offset] : buffer -> view<72xi32>
+  %byte_view = buffer.view %activation_aligned[%record_offset] : buffer -> view<288xi8>
   %c0 = index.constant 0 : index
   %c2 = index.constant 2 : index
   %c16 = index.constant 16 : index
@@ -137,13 +199,16 @@ func.def inline target(@core_target) @k_pair_contraction(%low_weight: vector<32x
   func.return %dot, %correction : f32, f32
 }
 
-func.def target(@core_target) @q4_k_record_contraction(%weight: buffer, %activation: buffer, %output: buffer) {
-  %weight_aligned, %output_aligned = buffer.assume.alignment %weight, %output {minimum_alignment = 64} : buffer, buffer
-  %base = index.constant 0 : offset
-  %payload_offset = index.constant 16 : offset
-  %header_view = buffer.view %weight_aligned[%base] : buffer -> view<4xi32>
+// Computes one 64-value Q4_K/Q8_1 pair contribution. Keeping the pair as the
+// unit of iteration avoids nesting a record loop around the dynamic K loop;
+// the repeated 16-byte local header load is cheaper than carrying its decoded
+// state through another loop level on the small AIE2P scalar register file.
+func.def inline target(@core_target) @q4_k_pair_value(%weight: buffer, %weight_offset: offset, %activation: buffer, %activation_offset: offset, %pair: index) -> (f32) {
+  %weight_aligned = buffer.assume.alignment %weight {minimum_alignment = 64} : buffer
+  %payload_add = index.constant 16 : offset
+  %payload_offset = index.add %weight_offset, %payload_add : offset
+  %header_view = buffer.view %weight_aligned[%weight_offset] : buffer -> view<4xi32>
   %payload_view = buffer.view %weight_aligned[%payload_offset] : buffer -> view<128xi8>
-  %output_view = buffer.view %output_aligned[%base] : buffer -> view<1xf32>
   %header = vector.load %header_view[0] : view<4xi32> -> vector<4xi32>
   %header_halves = vector.bitcast %header : vector<4xi32> to vector<8xf16>
   %d_f16 = vector.extract %header_halves[0] : vector<8xf16> -> f16
@@ -153,46 +218,38 @@ func.def target(@core_target) @q4_k_record_contraction(%weight: buffer, %activat
   %scale_word = vector.extract %header[1] : vector<4xi32> -> i32
   %minimum_word = vector.extract %header[2] : vector<4xi32> -> i32
   %scale_minimum_word = vector.extract %header[3] : vector<4xi32> -> i32
-  %c0 = index.constant 0 : index
   %c1 = index.constant 1 : index
   %c2 = index.constant 2 : index
-  %c4 = index.constant 4 : index
   %c32 = index.constant 32 : index
-  %c0_f32 = scalar.constant 0.0 : f32
-  %dot, %correction = scf.for %pair = [%c0 to %c4 step %c1](%dot_iter = %c0_f32 : f32, %correction_iter = %c0_f32 : f32) -> (f32, f32) {
-    %bounded_pair = index.assume %pair [range(%pair, 0, 3)] : index
-    %low_group = index.mul %bounded_pair, %c2 : index
-    %high_group = index.add %low_group, %c1 : index
-    %low_scale, %low_minimum = func.call @k_scale_minimum(%scale_word, %minimum_word, %scale_minimum_word, %low_group) : (i32, i32, i32, index) -> (i32, i32)
-    %high_scale, %high_minimum = func.call @k_scale_minimum(%scale_word, %minimum_word, %scale_minimum_word, %high_group) : (i32, i32, i32, index) -> (i32, i32)
-    %weight_index0 = index.mul %bounded_pair, %c32 : index
-    %weight_index = index.assume %weight_index0 [range(%weight_index0, 0, 96)] : index
-    %packed_weight = vector.load %payload_view[%weight_index] : view<128xi8> -> vector<32xi8>
-    %unpacked_weight = vector.bitunpacku<4> %packed_weight : vector<32xi8> -> vector<64xi8>
-    %low_weight, %high_weight = vector.deinterleave<0> %unpacked_weight : vector<64xi8> -> vector<32xi8>, vector<32xi8>
-    %low_activation, %high_activation, %d0, %s0, %d1, %s1 = func.call @q8_1_x4_pair(%activation, %bounded_pair) : (buffer, index) -> (vector<32xi8>, vector<32xi8>, f32, f32, f32, f32)
-    %pair_dot, %pair_correction = func.call @k_pair_contraction(%low_weight, %high_weight, %low_scale, %low_minimum, %high_scale, %high_minimum, %low_activation, %high_activation, %d0, %s0, %d1, %s1) : (vector<32xi8>, vector<32xi8>, i32, i32, i32, i32, vector<32xi8>, vector<32xi8>, f32, f32, f32, f32) -> (f32, f32)
-    %dot_next = scalar.addf %dot_iter, %pair_dot : f32
-    %correction_next = scalar.addf %correction_iter, %pair_correction : f32
-    scf.yield %dot_next, %correction_next : f32, f32
-  }
-  %scaled_dot = scalar.mulf %d, %dot : f32
-  %scaled_correction = scalar.mulf %dmin, %correction : f32
+  %bounded_pair = index.assume %pair [range(%pair, 0, 3)] : index
+  %low_group = index.mul %bounded_pair, %c2 : index
+  %high_group = index.add %low_group, %c1 : index
+  %low_scale, %low_minimum = func.call @k_scale_minimum(%scale_word, %minimum_word, %scale_minimum_word, %low_group) : (i32, i32, i32, index) -> (i32, i32)
+  %high_scale, %high_minimum = func.call @k_scale_minimum(%scale_word, %minimum_word, %scale_minimum_word, %high_group) : (i32, i32, i32, index) -> (i32, i32)
+  %weight_index0 = index.mul %bounded_pair, %c32 : index
+  %weight_index = index.assume %weight_index0 [range(%weight_index0, 0, 96)] : index
+  %packed_weight = vector.load %payload_view[%weight_index] : view<128xi8> -> vector<32xi8>
+  %unpacked_weight = vector.bitunpacku<4> %packed_weight : vector<32xi8> -> vector<64xi8>
+  %low_weight, %high_weight = vector.deinterleave<0> %unpacked_weight : vector<64xi8> -> vector<32xi8>, vector<32xi8>
+  %low_activation, %high_activation, %d0, %s0, %d1, %s1 = func.call @q8_1_x4_pair(%activation, %activation_offset, %bounded_pair) : (buffer, offset, index) -> (vector<32xi8>, vector<32xi8>, f32, f32, f32, f32)
+  %pair_dot, %pair_correction = func.call @k_pair_contraction(%low_weight, %high_weight, %low_scale, %low_minimum, %high_scale, %high_minimum, %low_activation, %high_activation, %d0, %s0, %d1, %s1) : (vector<32xi8>, vector<32xi8>, i32, i32, i32, i32, vector<32xi8>, vector<32xi8>, f32, f32, f32, f32) -> (f32, f32)
+  %scaled_dot = scalar.mulf %d, %pair_dot : f32
+  %scaled_correction = scalar.mulf %dmin, %pair_correction : f32
   %result = scalar.subf %scaled_dot, %scaled_correction : f32
-  %result_vector = vector.splat %result : vector<1xf32>
-  vector.store %result_vector, %output_view[0] : vector<1xf32>, view<1xf32>
-  func.return
+  func.return %result : f32
 }
 
-func.def target(@core_target) @q5_k_record_contraction(%weight: buffer, %activation: buffer, %output: buffer) {
-  %weight_aligned, %output_aligned = buffer.assume.alignment %weight, %output {minimum_alignment = 64} : buffer, buffer
-  %base = index.constant 0 : offset
-  %high_plane_offset = index.constant 16 : offset
-  %payload_offset = index.constant 48 : offset
-  %header_view = buffer.view %weight_aligned[%base] : buffer -> view<4xi32>
+// Computes the matching Q5_K pair contribution, including its packed high-bit
+// plane, without materializing dequantized weights.
+func.def inline target(@core_target) @q5_k_pair_value(%weight: buffer, %weight_offset: offset, %activation: buffer, %activation_offset: offset, %pair: index) -> (f32) {
+  %weight_aligned = buffer.assume.alignment %weight {minimum_alignment = 64} : buffer
+  %high_plane_add = index.constant 16 : offset
+  %payload_add = index.constant 48 : offset
+  %high_plane_offset = index.add %weight_offset, %high_plane_add : offset
+  %payload_offset = index.add %weight_offset, %payload_add : offset
+  %header_view = buffer.view %weight_aligned[%weight_offset] : buffer -> view<4xi32>
   %high_plane_view = buffer.view %weight_aligned[%high_plane_offset] : buffer -> view<32xi8>
   %payload_view = buffer.view %weight_aligned[%payload_offset] : buffer -> view<128xi8>
-  %output_view = buffer.view %output_aligned[%base] : buffer -> view<1xf32>
   %header = vector.load %header_view[0] : view<4xi32> -> vector<4xi32>
   %header_halves = vector.bitcast %header : vector<4xi32> to vector<8xf16>
   %d_f16 = vector.extract %header_halves[0] : vector<8xf16> -> f16
@@ -204,53 +261,136 @@ func.def target(@core_target) @q5_k_record_contraction(%weight: buffer, %activat
   %scale_minimum_word = vector.extract %header[3] : vector<4xi32> -> i32
   %high_plane = vector.load %high_plane_view[0] : view<32xi8> -> vector<32xi8>
   %high_plane_carrier = vector.concat<0> %high_plane, %high_plane : vector<32xi8>, vector<32xi8> -> vector<64xi8>
-  %c0 = index.constant 0 : index
   %c1 = index.constant 1 : index
   %c2 = index.constant 2 : index
-  %c4 = index.constant 4 : index
   %c32 = index.constant 32 : index
   %c1_i32 = scalar.constant 1 : i32
-  %c0_f32 = scalar.constant 0.0 : f32
-  %dot, %correction = scf.for %pair = [%c0 to %c4 step %c1](%dot_iter = %c0_f32 : f32, %correction_iter = %c0_f32 : f32) -> (f32, f32) {
-    %bounded_pair = index.assume %pair [range(%pair, 0, 3)] : index
-    %low_group = index.mul %bounded_pair, %c2 : index
-    %high_group = index.add %low_group, %c1 : index
-    %low_scale, %low_minimum = func.call @k_scale_minimum(%scale_word, %minimum_word, %scale_minimum_word, %low_group) : (i32, i32, i32, index) -> (i32, i32)
-    %high_scale, %high_minimum = func.call @k_scale_minimum(%scale_word, %minimum_word, %scale_minimum_word, %high_group) : (i32, i32, i32, index) -> (i32, i32)
-    %weight_index0 = index.mul %bounded_pair, %c32 : index
-    %weight_index = index.assume %weight_index0 [range(%weight_index0, 0, 96)] : index
-    %packed_weight = vector.load %payload_view[%weight_index] : view<128xi8> -> vector<32xi8>
-    %unpacked_weight = vector.bitunpacku<4> %packed_weight : vector<32xi8> -> vector<64xi8>
-    %low_q4, %high_q4 = vector.deinterleave<0> %unpacked_weight : vector<64xi8> -> vector<32xi8>, vector<32xi8>
-    %low_group_i32 = index.cast %low_group : index to i32
-    %low_high_mask_i32 = scalar.shli %c1_i32, %low_group_i32 : i32
-    %high_high_mask_i32 = scalar.addi %low_high_mask_i32, %low_high_mask_i32 : i32
-    %low_high_mask_i8 = scalar.trunci %low_high_mask_i32 : i32 to i8
-    %high_high_mask_i8 = scalar.trunci %high_high_mask_i32 : i32 to i8
-    %low_high_mask_full = vector.splat %low_high_mask_i8 : vector<64xi8>
-    %high_high_mask_full = vector.splat %high_high_mask_i8 : vector<64xi8>
-    %low_high_mask_half = vector.slice %low_high_mask_full[0] : vector<64xi8> -> vector<32xi8>
-    %high_high_mask_half = vector.slice %high_high_mask_full[0] : vector<64xi8> -> vector<32xi8>
-    %high_mask = vector.concat<0> %low_high_mask_half, %high_high_mask_half : vector<32xi8>, vector<32xi8> -> vector<64xi8>
-    %masked_high_bits = vector.andi %high_plane_carrier, %high_mask : vector<64xi8>
-    %high_zero = vector.constant 0 : vector<64xi8>
-    %has_high_bit = vector.cmpi ne, %masked_high_bits, %high_zero : vector<64xi8> -> vector<64xi1>
-    %low_codes = vector.concat<0> %low_q4, %high_q4 : vector<32xi8>, vector<32xi8> -> vector<64xi8>
-    %high_bit_value = vector.constant 16 : vector<64xi8>
-    %high_candidates = vector.addi %low_codes, %high_bit_value : vector<64xi8>
-    %q5_codes = vector.select %has_high_bit, %high_candidates, %low_codes : vector<64xi8>
-    %low_weight = vector.slice %q5_codes[0] : vector<64xi8> -> vector<32xi8>
-    %high_weight = vector.slice %q5_codes[32] : vector<64xi8> -> vector<32xi8>
-    %low_activation, %high_activation, %d0, %s0, %d1, %s1 = func.call @q8_1_x4_pair(%activation, %bounded_pair) : (buffer, index) -> (vector<32xi8>, vector<32xi8>, f32, f32, f32, f32)
-    %pair_dot, %pair_correction = func.call @k_pair_contraction(%low_weight, %high_weight, %low_scale, %low_minimum, %high_scale, %high_minimum, %low_activation, %high_activation, %d0, %s0, %d1, %s1) : (vector<32xi8>, vector<32xi8>, i32, i32, i32, i32, vector<32xi8>, vector<32xi8>, f32, f32, f32, f32) -> (f32, f32)
-    %dot_next = scalar.addf %dot_iter, %pair_dot : f32
-    %correction_next = scalar.addf %correction_iter, %pair_correction : f32
-    scf.yield %dot_next, %correction_next : f32, f32
-  }
-  %scaled_dot = scalar.mulf %d, %dot : f32
-  %scaled_correction = scalar.mulf %dmin, %correction : f32
+  %bounded_pair = index.assume %pair [range(%pair, 0, 3)] : index
+  %low_group = index.mul %bounded_pair, %c2 : index
+  %high_group = index.add %low_group, %c1 : index
+  %low_scale, %low_minimum = func.call @k_scale_minimum(%scale_word, %minimum_word, %scale_minimum_word, %low_group) : (i32, i32, i32, index) -> (i32, i32)
+  %high_scale, %high_minimum = func.call @k_scale_minimum(%scale_word, %minimum_word, %scale_minimum_word, %high_group) : (i32, i32, i32, index) -> (i32, i32)
+  %weight_index0 = index.mul %bounded_pair, %c32 : index
+  %weight_index = index.assume %weight_index0 [range(%weight_index0, 0, 96)] : index
+  %packed_weight = vector.load %payload_view[%weight_index] : view<128xi8> -> vector<32xi8>
+  %unpacked_weight = vector.bitunpacku<4> %packed_weight : vector<32xi8> -> vector<64xi8>
+  %low_q4, %high_q4 = vector.deinterleave<0> %unpacked_weight : vector<64xi8> -> vector<32xi8>, vector<32xi8>
+  %low_group_i32 = index.cast %low_group : index to i32
+  %low_high_mask_i32 = scalar.shli %c1_i32, %low_group_i32 : i32
+  %high_high_mask_i32 = scalar.addi %low_high_mask_i32, %low_high_mask_i32 : i32
+  %low_high_mask_i8 = scalar.trunci %low_high_mask_i32 : i32 to i8
+  %high_high_mask_i8 = scalar.trunci %high_high_mask_i32 : i32 to i8
+  %low_high_mask_full = vector.splat %low_high_mask_i8 : vector<64xi8>
+  %high_high_mask_full = vector.splat %high_high_mask_i8 : vector<64xi8>
+  %low_high_mask_half = vector.slice %low_high_mask_full[0] : vector<64xi8> -> vector<32xi8>
+  %high_high_mask_half = vector.slice %high_high_mask_full[0] : vector<64xi8> -> vector<32xi8>
+  %high_mask = vector.concat<0> %low_high_mask_half, %high_high_mask_half : vector<32xi8>, vector<32xi8> -> vector<64xi8>
+  %masked_high_bits = vector.andi %high_plane_carrier, %high_mask : vector<64xi8>
+  %high_zero = vector.constant 0 : vector<64xi8>
+  %has_high_bit = vector.cmpi ne, %masked_high_bits, %high_zero : vector<64xi8> -> vector<64xi1>
+  %low_codes = vector.concat<0> %low_q4, %high_q4 : vector<32xi8>, vector<32xi8> -> vector<64xi8>
+  %high_bit_value = vector.constant 16 : vector<64xi8>
+  %high_candidates = vector.addi %low_codes, %high_bit_value : vector<64xi8>
+  %q5_codes = vector.select %has_high_bit, %high_candidates, %low_codes : vector<64xi8>
+  %low_weight = vector.slice %q5_codes[0] : vector<64xi8> -> vector<32xi8>
+  %high_weight = vector.slice %q5_codes[32] : vector<64xi8> -> vector<32xi8>
+  %low_activation, %high_activation, %d0, %s0, %d1, %s1 = func.call @q8_1_x4_pair(%activation, %activation_offset, %bounded_pair) : (buffer, offset, index) -> (vector<32xi8>, vector<32xi8>, f32, f32, f32, f32)
+  %pair_dot, %pair_correction = func.call @k_pair_contraction(%low_weight, %high_weight, %low_scale, %low_minimum, %high_scale, %high_minimum, %low_activation, %high_activation, %d0, %s0, %d1, %s1) : (vector<32xi8>, vector<32xi8>, i32, i32, i32, i32, vector<32xi8>, vector<32xi8>, f32, f32, f32, f32) -> (f32, f32)
+  %scaled_dot = scalar.mulf %d, %pair_dot : f32
+  %scaled_correction = scalar.mulf %dmin, %pair_correction : f32
   %result = scalar.subf %scaled_dot, %scaled_correction : f32
-  %result_vector = vector.splat %result : vector<1xf32>
-  vector.store %result_vector, %output_view[0] : vector<1xf32>, view<1xf32>
+  func.return %result : f32
+}
+
+// Accumulates one contiguous Q4_K split-K range. Gate and up instances reuse
+// this same tile program and differ only in the weight and output flows wired
+// by the array plan.
+func.def target(@core_target) @q4_k_projection_branch(%weight: buffer, %activation: buffer, %partial: buffer) {
+  %weight_aligned, %activation_aligned, %partial_aligned = buffer.assume.alignment %weight, %activation, %partial {minimum_alignment = 64} : buffer, buffer, buffer
+  %input_size = config.get @q4_q5_gate_up.input_size : index
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c4 = index.constant 4 : index
+  %c128 = index.constant 128 : index
+  %pair_count0 = index.div %input_size, %c128 : index
+  %pair_count = index.assume %pair_count0 [range(%pair_count0, 8, 256)] : index
+  %weight_record_bytes = index.constant 144 : offset
+  %activation_record_bytes = index.constant 288 : offset
+  %partial_base = index.constant 0 : offset
+  %c0_f32 = scalar.constant 0.0 : f32
+  %sum = scf.for %pair_index = [%c0 to %pair_count step %c1](%sum_iter = %c0_f32 : f32) -> (f32) {
+    %record = index.div %pair_index, %c4 : index
+    %pair0 = index.rem %pair_index, %c4 : index
+    %pair = index.assume %pair0 [range(%pair0, 0, 3)] : index
+    %weight_offset = index.scale %record, %weight_record_bytes : index, offset -> offset
+    %activation_offset = index.scale %record, %activation_record_bytes : index, offset -> offset
+    %value = func.call @q4_k_pair_value(%weight_aligned, %weight_offset, %activation_aligned, %activation_offset, %pair) : (buffer, offset, buffer, offset, index) -> (f32)
+    %sum_next = scalar.addf %sum_iter, %value : f32
+    scf.yield %sum_next : f32
+  }
+  %partial_view = buffer.view %partial_aligned[%partial_base] : buffer -> view<1xf32>
+  view.store %sum, %partial_view[0] : f32, view<1xf32>
+  func.return
+}
+
+// Accumulates the matching Q5_K split-K range with the same three-port
+// projection contract.
+func.def target(@core_target) @q5_k_projection_branch(%weight: buffer, %activation: buffer, %partial: buffer) {
+  %weight_aligned, %activation_aligned, %partial_aligned = buffer.assume.alignment %weight, %activation, %partial {minimum_alignment = 64} : buffer, buffer, buffer
+  %input_size = config.get @q4_q5_gate_up.input_size : index
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c4 = index.constant 4 : index
+  %c128 = index.constant 128 : index
+  %pair_count0 = index.div %input_size, %c128 : index
+  %pair_count = index.assume %pair_count0 [range(%pair_count0, 8, 256)] : index
+  %weight_record_bytes = index.constant 176 : offset
+  %activation_record_bytes = index.constant 288 : offset
+  %partial_base = index.constant 0 : offset
+  %c0_f32 = scalar.constant 0.0 : f32
+  %sum = scf.for %pair_index = [%c0 to %pair_count step %c1](%sum_iter = %c0_f32 : f32) -> (f32) {
+    %record = index.div %pair_index, %c4 : index
+    %pair0 = index.rem %pair_index, %c4 : index
+    %pair = index.assume %pair0 [range(%pair0, 0, 3)] : index
+    %weight_offset = index.scale %record, %weight_record_bytes : index, offset -> offset
+    %activation_offset = index.scale %record, %activation_record_bytes : index, offset -> offset
+    %value = func.call @q5_k_pair_value(%weight_aligned, %weight_offset, %activation_aligned, %activation_offset, %pair) : (buffer, offset, buffer, offset, index) -> (f32)
+    %sum_next = scalar.addf %sum_iter, %value : f32
+    scf.yield %sum_next : f32
+  }
+  %partial_view = buffer.view %partial_aligned[%partial_base] : buffer -> view<1xf32>
+  view.store %sum, %partial_view[0] : f32, view<1xf32>
+  func.return
+}
+
+// Reduces two split-K lane partials. The same leaf program serves all four
+// projection reductions in the array.
+func.def target(@core_target) @sum_split_k(%partial0: buffer, %partial1: buffer, %output: buffer) {
+  %partial0_aligned, %partial1_aligned, %output_aligned = buffer.assume.alignment %partial0, %partial1, %output {minimum_alignment = 64} : buffer, buffer, buffer
+  %base = index.constant 0 : offset
+  %partial0_view = buffer.view %partial0_aligned[%base] : buffer -> view<1xf32>
+  %partial1_view = buffer.view %partial1_aligned[%base] : buffer -> view<1xf32>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<1xf32>
+  %partial0_value = view.load %partial0_view[0] : view<1xf32> -> f32
+  %partial1_value = view.load %partial1_view[0] : view<1xf32> -> f32
+  %sum = scalar.addf %partial0_value, %partial1_value : f32
+  view.store %sum, %output_view[0] : f32, view<1xf32>
+  func.return
+}
+
+// Applies the gate nonlinearity after both projections have been reduced.
+// Approximate reciprocal and transcendental operations are explicit because
+// AIE2P expands F32 SiLU through its BF16 vector machinery.
+func.def target(@core_target) @gate_up_swiglu(%gate_input: buffer, %up_input: buffer, %output: buffer) {
+  %gate_aligned, %up_aligned, %output_aligned = buffer.assume.alignment %gate_input, %up_input, %output {minimum_alignment = 64} : buffer, buffer, buffer
+  %base = index.constant 0 : offset
+  %gate_view = buffer.view %gate_aligned[%base] : buffer -> view<1xf32>
+  %up_view = buffer.view %up_aligned[%base] : buffer -> view<1xf32>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<1xf32>
+  %gate = view.load %gate_view[0] : view<1xf32> -> f32
+  %up = view.load %up_view[0] : view<1xf32> -> f32
+  %activated_gate = scalar.siluf<arcp|afn> %gate : f32
+  %result = scalar.mulf %activated_gate, %up : f32
+  view.store %result, %output_view[0] : f32, view<1xf32>
   func.return
 }
