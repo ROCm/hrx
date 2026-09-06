@@ -2644,6 +2644,7 @@ class BuildFileFunctions(object):
         sanitizer_suppressions=None,
         tags=None,
         timeout=None,
+        size=None,
         target_compatible_with=None,
         **kwargs,
     ):
@@ -2664,7 +2665,7 @@ class BuildFileFunctions(object):
         resource_group_block = self._convert_string_arg_block(
             "RESOURCE_GROUP", resource_group, quote=False
         )
-        timeout_block = self._convert_timeout_arg_block("TIMEOUT", timeout)
+        timeout_block = self._convert_test_timeout_arg_block("TIMEOUT", timeout, size)
 
         tool_entries = []
         for tool_name, tool_target in sorted(tools.items()):
