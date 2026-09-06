@@ -93,6 +93,188 @@ low.func.def target<llvmir.generic.core>(@target) abi(object_function) @bf16x4_s
 
 llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
 
+func.def target(@target) @i8x64_slice_low_half(%values: vector<64xi8>) -> (vector<32xi8>) {
+  %low = vector.slice %values[0] : vector<64xi8> -> vector<32xi8>
+  func.return %low : vector<32xi8>
+}
+
+// ----
+low.func.def target<llvmir.generic.core>(@target) abi(object_function) @i8x64_slice_low_half(%values: reg<llvmir.i8 x64>) -> (reg<llvmir.i8 x32>) asm {
+  %38 = extract.v64i8 %values, 0
+  %39 = extract.v64i8 %values, 1
+  %40 = extract.v64i8 %values, 2
+  %41 = extract.v64i8 %values, 3
+  %42 = extract.v64i8 %values, 4
+  %43 = extract.v64i8 %values, 5
+  %44 = extract.v64i8 %values, 6
+  %45 = extract.v64i8 %values, 7
+  %46 = extract.v64i8 %values, 8
+  %47 = extract.v64i8 %values, 9
+  %48 = extract.v64i8 %values, 10
+  %49 = extract.v64i8 %values, 11
+  %50 = extract.v64i8 %values, 12
+  %51 = extract.v64i8 %values, 13
+  %52 = extract.v64i8 %values, 14
+  %53 = extract.v64i8 %values, 15
+  %54 = extract.v64i8 %values, 16
+  %55 = extract.v64i8 %values, 17
+  %56 = extract.v64i8 %values, 18
+  %57 = extract.v64i8 %values, 19
+  %58 = extract.v64i8 %values, 20
+  %59 = extract.v64i8 %values, 21
+  %60 = extract.v64i8 %values, 22
+  %61 = extract.v64i8 %values, 23
+  %62 = extract.v64i8 %values, 24
+  %63 = extract.v64i8 %values, 25
+  %64 = extract.v64i8 %values, 26
+  %65 = extract.v64i8 %values, 27
+  %66 = extract.v64i8 %values, 28
+  %67 = extract.v64i8 %values, 29
+  %68 = extract.v64i8 %values, 30
+  %69 = extract.v64i8 %values, 31
+  %low = from_elements.v32i8 %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69
+  return %low
+}
+
+// ====
+
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @i8x64_slice_high_half(%values: vector<64xi8>) -> (vector<32xi8>) {
+  %high = vector.slice %values[32] : vector<64xi8> -> vector<32xi8>
+  func.return %high : vector<32xi8>
+}
+
+// ----
+low.func.def target<llvmir.generic.core>(@target) abi(object_function) @i8x64_slice_high_half(%values: reg<llvmir.i8 x64>) -> (reg<llvmir.i8 x32>) asm {
+  %38 = extract.v64i8 %values, 32
+  %39 = extract.v64i8 %values, 33
+  %40 = extract.v64i8 %values, 34
+  %41 = extract.v64i8 %values, 35
+  %42 = extract.v64i8 %values, 36
+  %43 = extract.v64i8 %values, 37
+  %44 = extract.v64i8 %values, 38
+  %45 = extract.v64i8 %values, 39
+  %46 = extract.v64i8 %values, 40
+  %47 = extract.v64i8 %values, 41
+  %48 = extract.v64i8 %values, 42
+  %49 = extract.v64i8 %values, 43
+  %50 = extract.v64i8 %values, 44
+  %51 = extract.v64i8 %values, 45
+  %52 = extract.v64i8 %values, 46
+  %53 = extract.v64i8 %values, 47
+  %54 = extract.v64i8 %values, 48
+  %55 = extract.v64i8 %values, 49
+  %56 = extract.v64i8 %values, 50
+  %57 = extract.v64i8 %values, 51
+  %58 = extract.v64i8 %values, 52
+  %59 = extract.v64i8 %values, 53
+  %60 = extract.v64i8 %values, 54
+  %61 = extract.v64i8 %values, 55
+  %62 = extract.v64i8 %values, 56
+  %63 = extract.v64i8 %values, 57
+  %64 = extract.v64i8 %values, 58
+  %65 = extract.v64i8 %values, 59
+  %66 = extract.v64i8 %values, 60
+  %67 = extract.v64i8 %values, 61
+  %68 = extract.v64i8 %values, 62
+  %69 = extract.v64i8 %values, 63
+  %high = from_elements.v32i8 %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %51, %52, %53, %54, %55, %56, %57, %58, %59, %60, %61, %62, %63, %64, %65, %66, %67, %68, %69
+  return %high
+}
+
+// ====
+
+// XFAIL: LLVMIR wide packed-i8 construction requires a packed vector strategy.
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @i8x32_concat(%low: vector<32xi8>, %high: vector<32xi8>) -> (vector<64xi8>) {
+  %result = vector.concat<0> %low, %high : vector<32xi8>, vector<32xi8> -> vector<64xi8>
+  func.return %result : vector<64xi8>
+}
+
+// ====
+
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @i8x8_interleave(%even: vector<4xi8>, %odd: vector<4xi8>) -> (vector<8xi8>) {
+  %result = vector.interleave<0> %even, %odd : vector<4xi8>, vector<4xi8> -> vector<8xi8>
+  func.return %result : vector<8xi8>
+}
+
+// ----
+low.func.def target<llvmir.generic.core>(@target) abi(object_function) @i8x8_interleave(%even: reg<llvmir.i8 x4>, %odd: reg<llvmir.i8 x4>) -> (reg<llvmir.i8 x8>) asm {
+  %16 = extract.v4i8 %even, 0
+  %17 = extract.v4i8 %odd, 0
+  %18 = extract.v4i8 %even, 1
+  %19 = extract.v4i8 %odd, 1
+  %20 = extract.v4i8 %even, 2
+  %21 = extract.v4i8 %odd, 2
+  %22 = extract.v4i8 %even, 3
+  %23 = extract.v4i8 %odd, 3
+  %result = from_elements.v8i8 %16, %17, %18, %19, %20, %21, %22, %23
+  return %result
+}
+
+// ====
+
+// XFAIL: LLVMIR does not provide packed-i8 deinterleave lowering.
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @i8x8_deinterleave(%values: vector<8xi8>) -> (vector<4xi8>, vector<4xi8>) {
+  %even, %odd = vector.deinterleave<0> %values : vector<8xi8> -> vector<4xi8>, vector<4xi8>
+  func.return %even, %odd : vector<4xi8>, vector<4xi8>
+}
+
+// ====
+
+// XFAIL: LLVMIR rank-2 vector register mapping is unsupported.
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @i32x4_broadcast_rank2(%values: vector<4xi32>) -> (vector<2x4xi32>) {
+  %result = vector.broadcast %values : vector<4xi32> -> vector<2x4xi32>
+  func.return %result : vector<2x4xi32>
+}
+
+// ====
+
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @i16x1_broadcast(%value: vector<1xi16>) -> (vector<16xi16>) {
+  %result = vector.broadcast %value : vector<1xi16> -> vector<16xi16>
+  func.return %result : vector<16xi16>
+}
+
+// ----
+low.func.def target<llvmir.generic.core>(@target) abi(object_function) @i16x1_broadcast(%value: reg<llvmir.i16>) -> (reg<llvmir.i16 x16>) asm {
+  %result = splat.v16i16 %value
+  return %result
+}
+
+// ====
+
+// XFAIL: LLVMIR rank-2 vector register mapping is unsupported.
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @f32x3x4_slice_row(%values: vector<3x4xf32>) -> (vector<1x4xf32>) {
+  %result = vector.slice %values[1, 0] : vector<3x4xf32> -> vector<1x4xf32>
+  func.return %result : vector<1x4xf32>
+}
+
+// ====
+
+// XFAIL: LLVMIR rank-2 vector register mapping is unsupported.
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @f32x2x4_insert_static(%values: vector<2x4xf32>, %value: f32) -> (vector<2x4xf32>) {
+  %result = vector.insert %value into %values[1, 2] : f32, vector<2x4xf32>
+  func.return %result : vector<2x4xf32>
+}
+
+// ====
+
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
 func.def target(@target) @f32x4_insert_static(%values: vector<4xf32>, %value: f32) -> (vector<4xf32>) {
   %updated = vector.insert %value into %values[2] : f32, vector<4xf32>
   func.return %updated : vector<4xf32>
@@ -189,4 +371,129 @@ func.def target(@target) @bf16x4_insert_dynamic(%values: vector<4xbf16>, %value:
 low.func.def target<llvmir.generic.core>(@target) abi(object_function) @bf16x4_insert_dynamic(%values: reg<llvmir.bf16 x4>, %value: reg<llvmir.bf16>, %lane: reg<llvmir.i64>) -> (reg<llvmir.bf16 x4>) asm {
   %updated = insert.dynamic.v4bf16 %values, %value, %lane
   return %updated
+}
+
+// ====
+
+// XFAIL: LLVMIR wide packed-i8 extraction requires a packed vector strategy
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @i8x128_extract_high(%values: vector<128xi8>) -> (i8) {
+  %result = vector.extract %values[95] : vector<128xi8> -> i8
+  func.return %result : i8
+}
+
+// ====
+
+// XFAIL: LLVMIR wide packed-f16 extraction requires a packed vector strategy
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @f16x64_extract_high(%values: vector<64xf16>) -> (f16) {
+  %result = vector.extract %values[47] : vector<64xf16> -> f16
+  func.return %result : f16
+}
+
+// ====
+
+// XFAIL: LLVMIR wide packed-f32 extraction requires a packed vector strategy
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @f32x24_extract_high(%values: vector<24xf32>) -> (f32) {
+  %result = vector.extract %values[20] : vector<24xf32> -> f32
+  func.return %result : f32
+}
+
+// ====
+
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @i64x16_extract_high(%values: vector<16xi64>) -> (i64) {
+  %result = vector.extract %values[12] : vector<16xi64> -> i64
+  func.return %result : i64
+}
+
+// ----
+low.func.def target<llvmir.generic.core>(@target) abi(object_function) @i64x16_extract_high(%values: reg<llvmir.i64 x16>) -> (reg<llvmir.i64>) asm {
+  %result = extract.v16i64 %values, 12
+  return %result
+}
+
+// ====
+
+// XFAIL: LLVMIR rank-2 vector register mapping is unsupported.
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @f32x2x4_extract_static(%values: vector<2x4xf32>) -> (f32) {
+  %result = vector.extract %values[1, 2] : vector<2x4xf32> -> f32
+  func.return %result : f32
+}
+
+// ====
+
+// XFAIL: LLVMIR rank-2 vector register mapping is unsupported.
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @f32x2x2_from_elements(%e0: f32, %e1: f32, %e2: f32, %e3: f32) -> (vector<2x2xf32>) {
+  %result = vector.from_elements %e0, %e1, %e2, %e3 : vector<2x2xf32>
+  func.return %result : vector<2x2xf32>
+}
+
+// ====
+
+// XFAIL: LLVMIR rank-2 vector register mapping is unsupported.
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @f32x2x4_transpose(%values: vector<2x4xf32>) -> (vector<4x2xf32>) {
+  %result = vector.transpose<[1, 0]> %values : vector<2x4xf32> -> vector<4x2xf32>
+  func.return %result : vector<4x2xf32>
+}
+
+// ====
+
+// XFAIL: LLVMIR rank-3 vector register mapping is unsupported.
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @f32x2x2x2_extract_static(%values: vector<2x2x2xf32>) -> (f32) {
+  %result = vector.extract %values[1, 0, 1] : vector<2x2x2xf32> -> f32
+  func.return %result : f32
+}
+
+// ====
+
+// XFAIL: LLVMIR rank-3 vector register mapping is unsupported.
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @f32x2x2x2_from_elements(%e0: f32, %e1: f32, %e2: f32, %e3: f32, %e4: f32, %e5: f32, %e6: f32, %e7: f32) -> (vector<2x2x2xf32>) {
+  %result = vector.from_elements %e0, %e1, %e2, %e3, %e4, %e5, %e6, %e7 : vector<2x2x2xf32>
+  func.return %result : vector<2x2x2xf32>
+}
+
+// ====
+
+// XFAIL: LLVMIR rank-3 vector register mapping is unsupported.
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @f32x2x2x2_transpose(%values: vector<2x2x2xf32>) -> (vector<2x2x2xf32>) {
+  %result = vector.transpose<[2, 0, 1]> %values : vector<2x2x2xf32> -> vector<2x2x2xf32>
+  func.return %result : vector<2x2x2xf32>
+}
+
+// ====
+
+// XFAIL: LLVMIR rank-2 vector register mapping is unsupported.
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @f32x4x4_transpose(%values: vector<4x4xf32>) -> (vector<4x4xf32>) {
+  %result = vector.transpose<[1, 0]> %values : vector<4x4xf32> -> vector<4x4xf32>
+  func.return %result : vector<4x4xf32>
+}
+
+// ====
+
+// XFAIL: LLVMIR rank-2 vector register mapping is unsupported.
+llvmir.target<object> @target {data_layout = "e-p:64:64-i64:64-n8:16:32:64-S128", triple = "loom-direct64-unknown-none"}
+
+func.def target(@target) @i32x4x4_transpose(%values: vector<4x4xi32>) -> (vector<4x4xi32>) {
+  %result = vector.transpose<[1, 0]> %values : vector<4x4xi32> -> vector<4x4xi32>
+  func.return %result : vector<4x4xi32>
 }

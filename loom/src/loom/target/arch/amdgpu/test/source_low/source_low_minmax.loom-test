@@ -47,6 +47,30 @@ low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @vector_
 
 // ====
 
+// XFAIL: gfx11 lacks IEEE minimum/maximum instructions
+amdgpu.target<gfx11-generic> @target
+
+func.def target(@target) @scalar_f32_minimum_maximum(%lhs: f32, %rhs: f32) -> (f32) {
+  %min = scalar.minimumf %lhs, %rhs : f32
+  %max = scalar.maximumf %lhs, %rhs : f32
+  %sum = scalar.addf %min, %max : f32
+  func.return %sum : f32
+}
+
+// ====
+
+// XFAIL: gfx11 lacks IEEE minimum/maximum instructions
+amdgpu.target<gfx11-generic> @target
+
+func.def target(@target) @vector_f32_minimum_maximum(%lhs: vector<2xf32>, %rhs: vector<2xf32>) -> (vector<2xf32>) {
+  %min = vector.minimumf %lhs, %rhs : vector<2xf32>
+  %max = vector.maximumf %lhs, %rhs : vector<2xf32>
+  %sum = vector.addf %min, %max : vector<2xf32>
+  func.return %sum : vector<2xf32>
+}
+
+// ====
+
 amdgpu.target<gfx11-generic> @target
 
 func.def target(@target) @scalar_f32_clampf_number(%input: f32) -> (f32) {
@@ -76,13 +100,13 @@ func.def target(@target) @vector_f32_clampf_number(%input: vector<2xf32>) -> (ve
 
 // ----
 low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @vector_f32_clampf_number(%input: reg<amdgpu.vgpr x2>) -> (reg<amdgpu.vgpr x2>) asm {
-  %13 = slice %input[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
-  %14 = v_max_f32_lit %13, 3212836864
-  %15 = v_min_f32_lit %14, 1065353216
-  %16 = slice %input[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
-  %17 = v_max_f32_lit %16, 3212836864
-  %18 = v_min_f32_lit %17, 1065353216
-  %result = concat(%15, %18) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
+  %16 = slice %input[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+  %19 = v_max_f32_lit %16, 3212836864
+  %20 = v_min_f32_lit %19, 1065353216
+  %21 = slice %input[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+  %22 = v_max_f32_lit %21, 3212836864
+  %23 = v_min_f32_lit %22, 1065353216
+  %result = concat(%20, %23) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
   return %result
 }
 
@@ -115,22 +139,42 @@ func.def target(@target) @vector_f32_clampf_ordered(%input: vector<2xf32>, %lowe
 
 // ----
 low.func.def target<amdgpu.gfx11.generic.core>(@target) abi(hal_kernel) @vector_f32_clampf_ordered(%input: reg<amdgpu.vgpr x2>, %lower: reg<amdgpu.vgpr x2>, %upper: reg<amdgpu.vgpr x2>) -> (reg<amdgpu.vgpr x2>) asm {
-  %9 = slice %input[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
-  %10 = slice %lower[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
-  %11 = slice %upper[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
-  %12 = v_cmp_lt_f32 %9, %10
-  %13 = v_cndmask_b32 %9, %10, %12
-  %14 = v_cmp_gt_f32 %13, %11
-  %15 = v_cndmask_b32 %13, %11, %14
-  %16 = slice %input[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
-  %17 = slice %lower[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
-  %18 = slice %upper[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
-  %19 = v_cmp_lt_f32 %16, %17
-  %20 = v_cndmask_b32 %16, %17, %19
-  %21 = v_cmp_gt_f32 %20, %18
-  %22 = v_cndmask_b32 %20, %18, %21
-  %result = concat(%15, %22) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
+  %18 = slice %input[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+  %19 = slice %lower[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+  %20 = slice %upper[0] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+  %21 = v_cmp_lt_f32 %18, %19
+  %22 = v_cndmask_b32 %18, %19, %21
+  %23 = v_cmp_gt_f32 %22, %20
+  %24 = v_cndmask_b32 %22, %20, %23
+  %25 = slice %input[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+  %26 = slice %lower[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+  %27 = slice %upper[1] : reg<amdgpu.vgpr x2> -> reg<amdgpu.vgpr>
+  %28 = v_cmp_lt_f32 %25, %26
+  %29 = v_cndmask_b32 %25, %26, %28
+  %30 = v_cmp_gt_f32 %29, %27
+  %31 = v_cndmask_b32 %29, %27, %30
+  %result = concat(%24, %31) : (reg<amdgpu.vgpr>, reg<amdgpu.vgpr>) -> reg<amdgpu.vgpr x2>
   return %result
+}
+
+// ====
+
+// XFAIL: gfx11 lacks an IEEE clamp instruction
+amdgpu.target<gfx11-generic> @target
+
+func.def target(@target) @scalar_f32_clampf_ieee(%input: f32, %lower: f32, %upper: f32) -> (f32) {
+  %result = scalar.clampf<ieee> %input, %lower, %upper : f32
+  func.return %result : f32
+}
+
+// ====
+
+// XFAIL: gfx11 lacks an IEEE clamp instruction
+amdgpu.target<gfx11-generic> @target
+
+func.def target(@target) @vector_f32_clampf_ieee(%input: vector<2xf32>, %lower: vector<2xf32>, %upper: vector<2xf32>) -> (vector<2xf32>) {
+  %result = vector.clampf<ieee> %input, %lower, %upper : vector<2xf32>
+  func.return %result : vector<2xf32>
 }
 
 // ====
