@@ -418,10 +418,22 @@ iree_status_t loom_low_materialize_allocation_run(loom_pass_t* pass,
   };
   loom_low_allocation_options_t allocation_probe_options = allocation_options;
   allocation_probe_options.emitter = (iree_diagnostic_emitter_t){0};
+  // Repair only values present when this pass begins. Rematerialized clones
+  // are already placed at their uses and cannot make further progress.
+  iree_bitmap_t rematerialization_candidate_values = {
+      .bit_count = module->values.count,
+  };
+  const iree_host_size_t candidate_word_count =
+      iree_bitmap_calculate_words(rematerialization_candidate_values.bit_count);
+  if (candidate_word_count != 0) {
+    IREE_RETURN_IF_ERROR(iree_arena_allocate_array(
+        pass->arena, candidate_word_count,
+        sizeof(*rematerialization_candidate_values.words),
+        (void**)&rematerialization_candidate_values.words));
+    iree_bitmap_set_all(rematerialization_candidate_values);
+  }
   iree_host_size_t iteration_count = 0;
   iree_host_size_t iteration_limit = 0;
-  iree_host_size_t rematerialization_iteration_count = 0;
-  iree_host_size_t rematerialization_iteration_limit = 0;
   for (;;) {
     loom_low_allocation_table_t table = {0};
     IREE_RETURN_IF_ERROR(loom_low_materialize_allocation_build_table(
@@ -437,27 +449,10 @@ iree_status_t loom_low_materialize_allocation_run(loom_pass_t* pass,
       iteration_limit = table.liveness.value_count + 1;
     }
     if (table.error_count != 0) {
-      if (rematerialization_iteration_limit == 0) {
-        if (table.liveness.value_count == IREE_HOST_SIZE_MAX) {
-          return iree_make_status(
-              IREE_STATUS_OUT_OF_RANGE,
-              "low allocation rematerialization iteration limit overflows "
-              "host size");
-        }
-        rematerialization_iteration_limit = table.liveness.value_count + 1;
-      }
-      if (rematerialization_iteration_count >=
-          rematerialization_iteration_limit) {
-        // Rematerialization is an optimization; preserve normal diagnostics
-        // when pressure repair does not converge.
-        IREE_RETURN_IF_ERROR(loom_low_materialize_allocation_build_table(
-            module, function.op, function_target_facts, descriptor_registry,
-            &allocation_options, pass->arena, &table));
-        return iree_ok_status();
-      }
       loom_low_allocation_rematerialization_result_t result = {0};
       IREE_RETURN_IF_ERROR(loom_low_allocation_rematerialize_failure(
-          module, &table, pass->arena, &result));
+          module, &table, rematerialization_candidate_values, pass->arena,
+          &result));
       if (result.value.rewritten_operand_count != 0) {
         IREE_RETURN_IF_ERROR(
             loom_low_materialize_allocation_emit_rematerialization(
@@ -469,7 +464,6 @@ iree_status_t loom_low_materialize_allocation_run(loom_pass_t* pass,
         statistics->rematerializations +=
             (int64_t)result.value.cloned_packet_count;
         loom_pass_mark_changed(pass);
-        ++rematerialization_iteration_count;
         continue;
       }
       IREE_RETURN_IF_ERROR(loom_low_materialize_allocation_build_table(
@@ -480,51 +474,39 @@ iree_status_t loom_low_materialize_allocation_run(loom_pass_t* pass,
     if (table.spill_plan_count == 0) {
       return iree_ok_status();
     }
-    if (rematerialization_iteration_limit == 0) {
-      if (table.liveness.value_count == IREE_HOST_SIZE_MAX) {
-        return iree_make_status(
-            IREE_STATUS_OUT_OF_RANGE,
-            "low allocation rematerialization iteration limit overflows "
-            "host size");
-      }
-      rematerialization_iteration_limit = table.liveness.value_count + 1;
+    loom_low_allocation_rematerialization_result_t rematerialization_result = {
+        0};
+    IREE_RETURN_IF_ERROR(loom_low_allocation_rematerialize_spill_plan(
+        module, &table, rematerialization_candidate_values, pass->arena,
+        &rematerialization_result));
+    if (rematerialization_result.value.rewritten_operand_count != 0) {
+      IREE_RETURN_IF_ERROR(
+          loom_low_materialize_allocation_emit_rematerialization(
+              pass, state, &table,
+              LOOM_LOW_ALLOCATION_REMATERIALIZATION_TRIGGER_SPILL_PLAN,
+              &rematerialization_result));
+      loom_low_materialize_allocation_statistics_t* statistics =
+          loom_low_materialize_allocation_statistics(pass);
+      statistics->rematerializations +=
+          (int64_t)rematerialization_result.value.cloned_packet_count;
+      loom_pass_mark_changed(pass);
+      continue;
     }
-    if (rematerialization_iteration_count < rematerialization_iteration_limit) {
-      loom_low_allocation_rematerialization_result_t rematerialization_result =
-          {0};
-      IREE_RETURN_IF_ERROR(loom_low_allocation_rematerialize_spill_plan(
-          module, &table, pass->arena, &rematerialization_result));
-      if (rematerialization_result.value.rewritten_operand_count != 0) {
-        IREE_RETURN_IF_ERROR(
-            loom_low_materialize_allocation_emit_rematerialization(
-                pass, state, &table,
-                LOOM_LOW_ALLOCATION_REMATERIALIZATION_TRIGGER_SPILL_PLAN,
-                &rematerialization_result));
-        loom_low_materialize_allocation_statistics_t* statistics =
-            loom_low_materialize_allocation_statistics(pass);
-        statistics->rematerializations +=
-            (int64_t)rematerialization_result.value.cloned_packet_count;
-        loom_pass_mark_changed(pass);
-        ++rematerialization_iteration_count;
-        continue;
-      }
-      loom_low_allocation_live_range_split_result_t split_result = {0};
-      IREE_RETURN_IF_ERROR(loom_low_allocation_split_fixed_value_spill_plan(
-          module, &table, pass->arena, &split_result));
-      if (split_result.rewritten_operand_count != 0) {
-        IREE_RETURN_IF_ERROR(
-            loom_low_materialize_allocation_emit_live_range_split(
-                pass, state, &table,
-                LOOM_LOW_ALLOCATION_LIVE_RANGE_SPLIT_TRIGGER_SPILL_PLAN,
-                &split_result));
-        loom_low_materialize_allocation_statistics_t* statistics =
-            loom_low_materialize_allocation_statistics(pass);
-        statistics->live_range_splits +=
-            (int64_t)split_result.transfer_packet_count;
-        loom_pass_mark_changed(pass);
-        ++rematerialization_iteration_count;
-        continue;
-      }
+    loom_low_allocation_live_range_split_result_t split_result = {0};
+    IREE_RETURN_IF_ERROR(loom_low_allocation_split_fixed_value_spill_plan(
+        module, &table, pass->arena, &split_result));
+    if (split_result.rewritten_operand_count != 0) {
+      IREE_RETURN_IF_ERROR(
+          loom_low_materialize_allocation_emit_live_range_split(
+              pass, state, &table,
+              LOOM_LOW_ALLOCATION_LIVE_RANGE_SPLIT_TRIGGER_SPILL_PLAN,
+              &split_result));
+      loom_low_materialize_allocation_statistics_t* statistics =
+          loom_low_materialize_allocation_statistics(pass);
+      statistics->live_range_splits +=
+          (int64_t)split_result.transfer_packet_count;
+      loom_pass_mark_changed(pass);
+      continue;
     }
     if (iteration_count >= iteration_limit) {
       return iree_make_status(

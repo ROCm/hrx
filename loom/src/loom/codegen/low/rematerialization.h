@@ -51,12 +51,18 @@ typedef struct loom_low_allocation_rematerialization_result_t {
 
 // Rematerializes a descriptor-backed SSA value near all of its uses.
 //
+// |candidate_values| is the immutable candidate set for the surrounding
+// repair process. Results created by rematerialization must not be added: they
+// are already placed at their uses, and recursively rematerializing them can
+// only permute adjacent repair products instead of shortening a live range.
+//
 // Returns OK with a zero result when |value_id| is not a safe rematerialization
 // candidate. When rewritten, callers must discard analyses of the old IR and
 // rebuild them before continuing.
 iree_status_t loom_low_rematerialize_value_uses(
     loom_module_t* module, const loom_low_resolved_target_t* target,
-    loom_value_id_t value_id, iree_arena_allocator_t* arena,
+    iree_bitmap_t candidate_values, loom_value_id_t value_id,
+    iree_arena_allocator_t* arena,
     loom_low_value_rematerialization_result_t* out_result);
 
 // Attempts to repair a terminal hard allocation failure by rematerializing a
@@ -68,7 +74,7 @@ iree_status_t loom_low_rematerialize_value_uses(
 // rewriting already-validated descriptor packets.
 iree_status_t loom_low_allocation_rematerialize_failure(
     loom_module_t* module, const loom_low_allocation_table_t* table,
-    iree_arena_allocator_t* arena,
+    iree_bitmap_t candidate_values, iree_arena_allocator_t* arena,
     loom_low_allocation_rematerialization_result_t* out_result);
 
 // Attempts to repair one predicted spill plan by rematerializing its value
@@ -79,7 +85,7 @@ iree_status_t loom_low_allocation_rematerialize_failure(
 // consulting the old allocation table again.
 iree_status_t loom_low_allocation_rematerialize_spill_plan(
     loom_module_t* module, const loom_low_allocation_table_t* table,
-    iree_arena_allocator_t* arena,
+    iree_bitmap_t candidate_values, iree_arena_allocator_t* arena,
     loom_low_allocation_rematerialization_result_t* out_result);
 
 // Emits a structured remark describing a successful rematerialization result.

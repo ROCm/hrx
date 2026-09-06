@@ -9,6 +9,7 @@
 #include "iree/base/internal/arena.h"
 #include "iree/testing/gtest.h"
 #include "iree/testing/status_matchers.h"
+#include "loom/codegen/low/rematerialization.h"
 #include "loom/codegen/low/text_asm.h"
 #include "loom/format/text/parser.h"
 #include "loom/ir/context.h"
@@ -45,23 +46,26 @@ class LowEmissionFrameTest : public ::testing::Test {
     iree_arena_block_pool_deinitialize(&block_pool_);
   }
 
+  ModulePtr ParseModule(const char* source) {
+    loom_text_parse_options_t options = {};
+    loom_low_descriptor_text_asm_environment_initialize(
+        &registry_.registry, &options.low_asm_environment);
+    loom_module_t* module = nullptr;
+    IREE_CHECK_OK(loom_text_parse(iree_make_cstring_view(source),
+                                  IREE_SV("frame_test.loom"), &context_,
+                                  &block_pool_, &options, &module));
+    return ModulePtr(module);
+  }
+
   ModulePtr ParseModule() {
-    static constexpr const char* kSource = R"(
+    return ParseModule(R"(
 low.func.def target<test.low.core> @structural_model() -> (reg<test.i32 x4>) asm {
   %storage = storage {byte_alignment = 16, byte_length = 64} : low.storage<workgroup>
   %address = storage_address %storage : low.storage<workgroup> -> reg<test.ptr>
   %value = test.load.v4i32 %address
   return %value
 }
-)";
-    loom_text_parse_options_t options = {};
-    loom_low_descriptor_text_asm_environment_initialize(
-        &registry_.registry, &options.low_asm_environment);
-    loom_module_t* module = nullptr;
-    IREE_CHECK_OK(loom_text_parse(iree_make_cstring_view(kSource),
-                                  IREE_SV("frame_test.loom"), &context_,
-                                  &block_pool_, &options, &module));
-    return ModulePtr(module);
+)");
   }
 
   iree_status_t BuildFrame(
@@ -76,6 +80,35 @@ low.func.def target<test.low.core> @structural_model() -> (reg<test.i32 x4>) asm
     options.schedule_strategy = LOOM_LOW_SCHEDULE_STRATEGY_RESOURCE_STALL;
     return loom_low_emission_frame_build(module, loom_block_op(module_block, 0),
                                          &options, &arena_, out_frame);
+  }
+
+  iree_status_t BuildSpillFreeFrame(loom_module_t* module,
+                                    loom_low_planning_statistics_t* statistics,
+                                    loom_low_emission_frame_t* out_frame) {
+    loom_block_t* module_block = loom_module_block(module);
+    IREE_ASSERT_EQ(module_block->op_count, 1);
+    const loom_low_emission_frame_options_t frame_options = {
+        .descriptor_registry = &registry_.registry,
+        .schedule_strategy = LOOM_LOW_SCHEDULE_STRATEGY_SOURCE_PRIORITY,
+        .emitter =
+            {
+                .fn =
+                    [](void*, const loom_diagnostic_emission_t*) {
+                      return iree_ok_status();
+                    },
+            },
+        .statistics = statistics,
+    };
+    const loom_low_emission_frame_spill_free_options_t spill_free_options = {
+        .materialization_options =
+            {
+                .has_supported_storage_spaces = true,
+                .supported_storage_spaces = LOOM_LOW_STORAGE_SPACE_SET_NONE,
+            },
+    };
+    return loom_low_emission_frame_build_spill_free(
+        module, loom_block_op(module_block, 0), &frame_options,
+        &spill_free_options, &arena_, out_frame);
   }
 
   const loom_low_schedule_node_t* FindNode(
@@ -197,6 +230,95 @@ TEST_F(LowEmissionFrameTest, RejectsOverlappingStructuralModels) {
   IREE_EXPECT_STATUS_IS(
       IREE_STATUS_FAILED_PRECONDITION,
       BuildFrame(module.get(), {models, IREE_ARRAYSIZE(models)}, &frame));
+}
+
+TEST_F(LowEmissionFrameTest,
+       RematerializationFreesCompleteOverlappingPhysicalView) {
+  ModulePtr module = ParseModule(R"(
+low.func.def target<test.low.core> @rematerialize_overlapping_view() -> (reg<test.packed.wide x2>, reg<test.i32>) asm {
+  %block0 = test.const.explicit32 0
+  %block1 = test.const.explicit32 1
+  %block2 = test.const.explicit32 2
+  %block3 = test.const.explicit32 3
+  %seed = test.const.packed.narrow 4
+  %wide = test.packing.expand %seed
+  %use0 = copy %block0 : reg<test.explicit32> -> reg<test.i32>
+  %use1 = copy %block1 : reg<test.explicit32> -> reg<test.i32>
+  %use2 = copy %block2 : reg<test.explicit32> -> reg<test.i32>
+  %use3 = copy %block3 : reg<test.explicit32> -> reg<test.i32>
+  %sum01 = test.add.i32 %use0, %use1
+  %sum23 = test.add.i32 %use2, %use3
+  %sum = test.add.i32 %sum01, %sum23
+  return %wide, %sum
+}
+)");
+  loom_low_planning_statistics_t statistics = {};
+  loom_low_emission_frame_t frame = {};
+  IREE_ASSERT_OK(BuildSpillFreeFrame(module.get(), &statistics, &frame));
+
+  EXPECT_EQ(frame.schedule.error_count, 0u);
+  EXPECT_EQ(frame.allocation.error_count, 0u);
+  EXPECT_EQ(frame.allocation.spill_count, 0u);
+  EXPECT_EQ(frame.allocation.spill_plan_count, 0u);
+  EXPECT_GT(statistics.repair.rematerialized_operand_count, 0u);
+}
+
+TEST_F(LowEmissionFrameTest, RematerializedClonesAreTerminalRepairProducts) {
+  ModulePtr module = ParseModule(R"(
+low.func.def target<test.low.core> @rematerialize_once(%a: reg<test.i32>, %b: reg<test.i32>, %c: reg<test.i32>) -> (reg<test.i32>) asm {
+  %derived = test.rematerialize.i32 %c
+  %ab = test.add.i32 %a, %b
+  %use0 = test.add.i32 %ab, %derived
+  %use1 = test.add.i32 %c, %derived
+  %result = test.add.i32 %use0, %use1
+  return %result
+}
+)");
+  loom_low_emission_frame_t frame = {};
+  IREE_ASSERT_OK(BuildFrame(module.get(), {}, &frame));
+
+  const loom_string_id_t derived_name =
+      loom_module_lookup_string(module.get(), IREE_SV("derived"));
+  ASSERT_NE(derived_name, LOOM_STRING_ID_INVALID);
+  loom_value_id_t derived_value_id = LOOM_VALUE_ID_INVALID;
+  for (iree_host_size_t i = 0; i < module->values.count; ++i) {
+    if (loom_module_value(module.get(), (loom_value_id_t)i)->name_id ==
+        derived_name) {
+      derived_value_id = (loom_value_id_t)i;
+      break;
+    }
+  }
+  ASSERT_NE(derived_value_id, LOOM_VALUE_ID_INVALID);
+
+  const iree_host_size_t original_value_count = module->values.count;
+  iree_bitmap_t candidate_values = {
+      .bit_count = original_value_count,
+  };
+  const iree_host_size_t candidate_word_count =
+      iree_bitmap_calculate_words(candidate_values.bit_count);
+  IREE_ASSERT_OK(iree_arena_allocate_array(&arena_, candidate_word_count,
+                                           sizeof(*candidate_values.words),
+                                           (void**)&candidate_values.words));
+  iree_bitmap_set_all(candidate_values);
+
+  loom_low_value_rematerialization_result_t result = {};
+  IREE_ASSERT_OK(loom_low_rematerialize_value_uses(
+      module.get(), &frame.schedule.target, candidate_values, derived_value_id,
+      &arena_, &result));
+  EXPECT_EQ(result.value_id, derived_value_id);
+  EXPECT_EQ(result.cloned_packet_count, 2u);
+  EXPECT_EQ(result.rewritten_operand_count, 2u);
+  ASSERT_EQ(module->values.count, original_value_count + 2);
+
+  for (iree_host_size_t i = original_value_count; i < module->values.count;
+       ++i) {
+    loom_low_value_rematerialization_result_t recursive_result = {};
+    IREE_ASSERT_OK(loom_low_rematerialize_value_uses(
+        module.get(), &frame.schedule.target, candidate_values,
+        (loom_value_id_t)i, &arena_, &recursive_result));
+    EXPECT_EQ(recursive_result.value_id, LOOM_VALUE_ID_INVALID);
+    EXPECT_EQ(recursive_result.rewritten_operand_count, 0u);
+  }
 }
 
 }  // namespace
