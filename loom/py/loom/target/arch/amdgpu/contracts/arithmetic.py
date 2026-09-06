@@ -605,34 +605,11 @@ def _bitcast_alias_rule(
     )
 
 
-def _scalar_assume_alias_rule(type_pattern: TypePattern) -> OrdinalValueAliasRule:
+def _scalar_assume_alias_rule() -> OrdinalValueAliasRule:
     return OrdinalValueAliasRule(
         source_op=scalar_analysis.scalar_assume,
         source=ValueRef.operand("values"),
         result=ValueRef.result("results"),
-        guards=(
-            _value_type("values", type_pattern),
-            _value_type("results", type_pattern),
-        ),
-    )
-
-
-def _scalar_assume_alias_rules() -> tuple[OrdinalValueAliasRule, ...]:
-    return tuple(
-        _scalar_assume_alias_rule(type_pattern)
-        for type_pattern in (
-            _I1,
-            _I8,
-            _I16,
-            _I32,
-            _I64,
-            _F8E4M3,
-            _F8E5M2,
-            _F16,
-            _BF16,
-            _F32,
-            _F64,
-        )
     )
 
 
@@ -1006,52 +983,43 @@ def _vector_transform_recipe_rule() -> RecipeRule:
     )
 
 
-def _vector_uniform_construct_recipe_rule(
+def _vector_construct_recipe_rule(
     source_op: Op,
-    source_field: str,
-    scalar_type: TypePattern,
     result_type: TypePattern,
 ) -> RecipeRule:
+    # The source op verifier proves every scalar operand matches the result
+    # element type, and the target planner validates every element before
+    # selecting a recipe. Keeping selection on the result avoids dereferencing
+    # an arbitrary element of vector.from_elements' variadic operand segment.
     return RecipeRule(
         source_op=source_op,
-        guards=(
-            _value_type(source_field, scalar_type),
-            _value_type("result", result_type),
-        ),
+        guards=(_value_type("result", result_type),),
     )
 
 
-def _vector_storage_construct_recipe_type_pairs() -> tuple[
-    tuple[TypePattern, TypePattern], ...
-]:
+def _vector_storage_construct_recipe_result_types() -> tuple[TypePattern, ...]:
     return (
-        (_I1, _VEC_I1_STATIC),
-        (_I32, _VEC_I32_STATIC),
-        (_F32, _VEC_F32_STATIC),
-        (_I64, _VEC_I64_STATIC),
-        (_F64, _VEC_F64_STATIC),
-        (_F16, _VEC_F16_PACKED_STORAGE),
-        (_BF16, _VEC_BF16_PACKED_STORAGE),
-        (_I16, _VEC_I16_PACKED_STORAGE),
-        (_I8, _VEC_I8_PACKED),
-        (_F8E4M3, _VEC_F8E4M3_PACKED),
-        (_F8E5M2, _VEC_F8E5M2_PACKED),
+        _VEC_I1_STATIC,
+        _VEC_I32_STATIC,
+        _VEC_F32_STATIC,
+        _VEC_I64_STATIC,
+        _VEC_F64_STATIC,
+        _VEC_F16_PACKED_STORAGE,
+        _VEC_BF16_PACKED_STORAGE,
+        _VEC_I16_PACKED_STORAGE,
+        _VEC_I8_PACKED,
+        _VEC_F8E4M3_PACKED,
+        _VEC_F8E5M2_PACKED,
     )
 
 
-def _vector_uniform_construct_recipe_rules(
+def _vector_construct_recipe_rules(
     source_op: Op,
-    source_field: str,
-    type_pairs: tuple[tuple[TypePattern, TypePattern], ...],
+    result_types: tuple[TypePattern, ...],
 ) -> tuple[RecipeRule, ...]:
     return tuple(
-        _vector_uniform_construct_recipe_rule(
-            source_op,
-            source_field,
-            scalar_type,
-            result_type,
-        )
-        for scalar_type, result_type in type_pairs
+        _vector_construct_recipe_rule(source_op, result_type)
+        for result_type in result_types
     )
 
 
@@ -4408,22 +4376,20 @@ def _rules() -> tuple[ContractCase, ...]:
     )
     rules.extend(
         (
-            *_vector_uniform_construct_recipe_rules(
+            *_vector_construct_recipe_rules(
                 vector.vector_from_elements,
-                "elements",
                 (
-                    *_vector_storage_construct_recipe_type_pairs(),
-                    (_INDEX, _VEC_INDEX_STATIC),
+                    *_vector_storage_construct_recipe_result_types(),
+                    _VEC_INDEX_STATIC,
                 ),
             ),
             *_vector_iota_recipe_rules(),
             *_vector_insert_recipe_rules(),
-            *_vector_uniform_construct_recipe_rules(
+            *_vector_construct_recipe_rules(
                 vector.vector_splat,
-                "scalar",
-                _vector_storage_construct_recipe_type_pairs(),
+                _vector_storage_construct_recipe_result_types(),
             ),
-            *_scalar_assume_alias_rules(),
+            _scalar_assume_alias_rule(),
         )
     )
     return tuple(rules)

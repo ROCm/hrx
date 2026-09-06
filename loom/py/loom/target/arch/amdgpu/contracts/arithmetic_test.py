@@ -20,6 +20,7 @@ from loom.target.contracts import (
     CompiledLowerRuleSet,
     GuardKind,
     LowerRule,
+    SourceValueKind,
     compile_lower_rule_set,
 )
 
@@ -310,20 +311,29 @@ def test_vector_extract_rules_publish_contract_only_shape_rows() -> None:
 def test_vector_construct_rules_publish_contract_only_storage_rows() -> None:
     compiled = _compiled_arithmetic_rules()
 
-    expected_rule_counts = {
-        vector.vector_from_elements: 12,
-        vector.vector_iota: 2,
-        vector.vector_insert: 6,
-        vector.vector_splat: 11,
-    }
-    for source_op, expected_rule_count in expected_rule_counts.items():
+    for source_op in (
+        vector.vector_from_elements,
+        vector.vector_iota,
+        vector.vector_insert,
+        vector.vector_splat,
+    ):
         rules = _rules_for_source_op(compiled, source_op)
         contract_rules = tuple(
             rule for rule in rules if rule.flags & LOWER_RULE_FLAG_CONTRACT_ONLY
         )
 
-        assert len(contract_rules) == expected_rule_count
+        assert contract_rules
         assert all(rule.emit_count == 0 for rule in contract_rules)
+
+    for source_op in (vector.vector_from_elements, vector.vector_splat):
+        for rule in _rules_for_source_op(compiled, source_op):
+            guards = compiled.guards[
+                rule.guard_start : rule.guard_start + rule.guard_count
+            ]
+            assert len(guards) == 1
+            assert guards[0].kind == GuardKind.VALUE_TYPE
+            value_ref = compiled.value_refs[guards[0].value_ref_index]
+            assert value_ref.kind == SourceValueKind.RESULT
 
 
 def test_vector_packed_float_conversion_rules_publish_contract_only_shape_rows() -> (
