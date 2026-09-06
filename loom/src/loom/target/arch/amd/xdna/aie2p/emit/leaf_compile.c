@@ -24,7 +24,9 @@ iree_status_t loom_aie2p_leaf_compile(
       .function_target_facts = options->function_target_facts,
       .memory_access_table = loom_low_memory_access_table_empty(),
       .schedule_structural_models = loom_aie2p_low_structural_schedule_models(),
-      .schedule_strategy = LOOM_LOW_SCHEDULE_STRATEGY_RESOURCE_STALL,
+      // Preserve serialized lifetimes through singleton physical selection
+      // registers such as r27 while scheduling spill-free leaf programs.
+      .schedule_strategy = LOOM_LOW_SCHEDULE_STRATEGY_SOURCE_PRIORITY,
       .emitter = options->diagnostic_emitter,
       .statistics =
           options->compile_report != NULL ? &planning_statistics : NULL,

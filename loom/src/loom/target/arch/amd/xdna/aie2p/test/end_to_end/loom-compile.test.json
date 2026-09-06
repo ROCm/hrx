@@ -38,8 +38,8 @@
         "tool": "loom-compile",
         "args": [
           "{srcdir}/f32_carrier.loom",
-          "--backend=xdna",
-          "--target=amd.xdna.strix_halo.17f0_11",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
           "--output={tmp}/f32_carrier.xdna",
           "--compile-report=details"
         ]
@@ -52,7 +52,7 @@
             "\"artifact_format\":\"elf\"",
             "\"status\":{\"code\":0,\"name\":\"OK\"}",
             "\"entries\":{\"count\":2",
-            "\"function\":\"add_f32x4\"",
+            "\"function\":\"f32_carrier\"",
             "\"spill_count\":0"
           ]
         }
@@ -60,6 +60,38 @@
       "files": [
         {
           "path": "{tmp}/f32_carrier.xdna",
+          "non_empty": true
+        }
+      ]
+    },
+    {
+      "name": "compiles canonical GGML Q4_K and Q5_K contractions into one XDNA array",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/q4_q5_k_record_contraction.loom",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--output={tmp}/q4_q5_k_record_contraction.xdna",
+          "--compile-report=text-summary"
+        ]
+      },
+      "stderr": {
+        "contains": {
+          "unordered": [
+            "COMPILE-REPORT: summary artifact=hal-executable status=OK",
+            "backend=xdna",
+            "function=q4_k_record_contraction",
+            "function=q5_k_record_contraction",
+            "function=q4_q5_k_record_array$worker$0",
+            "function=q4_q5_k_record_array$worker$1",
+            " spills=0 spill_plans=0"
+          ]
+        }
+      },
+      "files": [
+        {
+          "path": "{tmp}/q4_q5_k_record_contraction.xdna",
           "non_empty": true
         }
       ]
