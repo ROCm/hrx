@@ -1085,10 +1085,11 @@ static iree_status_t iree_hal_amdgpu_executable_select_load_variant_for_queue(
     iree_hal_queue_ordinal_t queue_ordinal,
     iree_host_size_t* out_variant_ordinal) {
   *out_variant_ordinal = 0;
+  if (!executable->requires_queue_scope) return iree_ok_status();
+
   const iree_hal_amdgpu_queue_scope_t* queue_scope = NULL;
   IREE_RETURN_IF_ERROR(iree_hal_amdgpu_executable_select_queue_scope(
       executable, queue_ordinal, &queue_scope));
-  if (!executable->requires_queue_scope) return iree_ok_status();
 
   const iree_host_size_t variant_ordinal = queue_scope->physical_queue_ordinal;
   if (IREE_UNLIKELY(variant_ordinal >= executable->load_variant_count)) {

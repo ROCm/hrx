@@ -52,6 +52,8 @@ typedef struct iree_hal_amdgpu_profile_trace_slot_t
 typedef struct iree_hal_amdgpu_feedback_state_t
     iree_hal_amdgpu_feedback_state_t;
 typedef struct iree_hal_amdgpu_staging_pool_t iree_hal_amdgpu_staging_pool_t;
+typedef struct iree_hal_amdgpu_system_event_agent_target_t
+    iree_hal_amdgpu_system_event_agent_target_t;
 typedef struct iree_hal_amdgpu_tsan_memory_policy_t
     iree_hal_amdgpu_tsan_memory_policy_t;
 typedef struct iree_hal_amdgpu_transient_buffer_pool_t
@@ -148,6 +150,36 @@ IREE_ASYNC_FIXED_FRONTIER_TYPE(iree_hal_amdgpu_host_queue_frontier_t,
 #define IREE_HAL_AMDGPU_HOST_QUEUE_DISPATCH_SCRATCH_RESOURCE_CAPACITY \
   (2u + IREE_HAL_AMDGPU_HOST_QUEUE_DISPATCH_SCRATCH_BINDING_CAPACITY)
 
+// Called after a separately allocated queue has quiesced, retired external
+// failure delivery, and retired its frontier axis. The parent device remains
+// live by contract.
+typedef void(IREE_API_PTR* iree_hal_amdgpu_host_queue_release_slot_fn_t)(
+    void* user_data, uint8_t queue_index);
+
+// Callback returning a dynamic queue identity slot to its parent device.
+typedef struct iree_hal_amdgpu_host_queue_release_slot_callback_t {
+  // Callback function invoked exactly once during queue destruction.
+  iree_hal_amdgpu_host_queue_release_slot_fn_t fn;
+
+  // Opaque parent-device state passed to |fn|.
+  void* user_data;
+
+  // Logical-device queue identity slot returned to |fn|.
+  uint8_t queue_index;
+} iree_hal_amdgpu_host_queue_release_slot_callback_t;
+
+// Storage ownership present only on separately allocated queues.
+typedef struct iree_hal_amdgpu_host_queue_storage_t {
+  // Allocator used to reclaim the queue after it has quiesced.
+  iree_allocator_t allocator;
+
+  // Fault-delivery target retired before queue-owned HSA resources.
+  iree_hal_amdgpu_system_event_agent_target_t* system_event_target;
+
+  // Callback returning the queue identity slot before storage reclamation.
+  iree_hal_amdgpu_host_queue_release_slot_callback_t release_slot;
+} iree_hal_amdgpu_host_queue_storage_t;
+
 // Immutable parameters used to construct one host queue.
 //
 // All borrowed objects and pointed-to storage must outlive the initialized
@@ -164,7 +196,9 @@ typedef struct iree_hal_amdgpu_host_queue_params_t {
     iree_async_axis_t axis;
     // Ordinal of the physical device owning the native queue.
     iree_host_size_t device_ordinal;
-    // Ordinal in the physical device's provisioned queue table.
+    // Ordinal in the physical device's provisioned queue table, or
+    // IREE_HAL_AMDGPU_PHYSICAL_QUEUE_ORDINAL_NONE when the queue has no
+    // provisioned queue scope.
     iree_hal_queue_ordinal_t physical_queue_ordinal;
   } identity;
 
@@ -196,6 +230,10 @@ typedef struct iree_hal_amdgpu_host_queue_params_t {
     iree_async_frontier_tracker_t* frontier_tracker;
     // Device-side epoch-signal lookup table used for cross-queue waits.
     iree_hal_amdgpu_epoch_signal_table_t* epoch_table;
+    // Optional table in which this queue publishes its owned epoch signal.
+    // This must be NULL for queues that may be released independently because
+    // peer hardware packets can retain a published signal after HAL release.
+    iree_hal_amdgpu_epoch_signal_table_t* epoch_registration_table;
     // Optional logical-device feedback state drained during queue retirement.
     iree_hal_amdgpu_feedback_state_t* feedback_state;
     // Initial host affinity of the queue completion thread.
@@ -257,6 +295,10 @@ typedef struct iree_hal_amdgpu_host_queue_params_t {
 typedef struct iree_hal_amdgpu_host_queue_t {
   // Base HAL queue resource. Must be at offset zero.
   iree_hal_queue_t base;
+
+  // Dynamic queue storage, fault-target, and identity-slot ownership. Zeroed
+  // for provisioned queues embedded in their parent physical device.
+  iree_hal_amdgpu_host_queue_storage_t storage;
 
   // HSA API handle for queue operations. Not retained.
   const iree_hal_amdgpu_libhsa_t* libhsa;
@@ -576,9 +618,14 @@ typedef struct iree_hal_amdgpu_host_queue_t {
   // when emitting AQL barrier-value packets for multi-axis dependencies.
   //
   // Borrowed from the logical device and valid for the lifetime of the queue.
-  // This queue's own epoch signal is registered at init and deregistered at
-  // deinit. Read-only during normal operation.
+  // Read-only during normal operation.
   iree_hal_amdgpu_epoch_signal_table_t* epoch_table;
+
+  // Optional table containing this queue's owned epoch signal. Provisioned
+  // queues remain live until every peer is quiesced and may publish here;
+  // independently released queues leave this NULL so no peer hardware packet
+  // can retain their signal beyond its lifetime.
+  iree_hal_amdgpu_epoch_signal_table_t* epoch_registration_table;
 
   // Last semaphore pushed to the notification ring and its epoch. Used to
   // detect semaphore transitions for frontier snapshot recording: when a
@@ -752,6 +799,19 @@ void iree_hal_amdgpu_host_queue_enqueue_post_drain_action(
 iree_status_t iree_hal_amdgpu_host_queue_initialize(
     const iree_hal_amdgpu_host_queue_params_t* params,
     iree_hal_amdgpu_host_queue_t* out_queue);
+
+// Allocates and initializes an independently releasable host queue.
+//
+// Execution-resource ordinals in |params| are copied into queue-owned storage.
+// The queue is published to |system_event_target| only after initialization is
+// complete. |release_slot| is captured only on success; callers retain
+// responsibility for returning the slot when allocation fails. |out_queue| is
+// unchanged on failure.
+iree_status_t iree_hal_amdgpu_host_queue_allocate(
+    const iree_hal_amdgpu_host_queue_params_t* params,
+    iree_hal_amdgpu_system_event_agent_target_t* system_event_target,
+    iree_hal_amdgpu_host_queue_release_slot_callback_t release_slot,
+    iree_hal_amdgpu_host_queue_t** out_queue);
 
 // Trims transient resources retained by |queue|.
 void iree_hal_amdgpu_host_queue_trim(iree_hal_amdgpu_host_queue_t* queue);

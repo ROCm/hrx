@@ -1284,6 +1284,7 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
               .proactor = proactor,
               .frontier_tracker = frontier_tracker,
               .epoch_table = epoch_signal_table,
+              .epoch_registration_table = epoch_signal_table,
               .feedback_state = feedback_state,
           },
       .memory =

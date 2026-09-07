@@ -32,6 +32,7 @@
 #include "iree/hal/drivers/amdgpu/hsa_queue.h"
 #include "iree/hal/drivers/amdgpu/logical_device.h"
 #include "iree/hal/drivers/amdgpu/semaphore.h"
+#include "iree/hal/drivers/amdgpu/system_event.h"
 #include "iree/hal/drivers/amdgpu/transient_buffer.h"
 #include "iree/hal/drivers/amdgpu/tsan_state.h"
 #include "iree/hal/drivers/amdgpu/util/pm4_emitter.h"
@@ -834,6 +835,7 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
   out_queue->proactor = params->coordination.proactor;
   out_queue->frontier_tracker = params->coordination.frontier_tracker;
   out_queue->host_allocator = params->host_allocator;
+  out_queue->epoch_table = params->coordination.epoch_table;
 
   // Submission pipeline state.
   iree_slim_mutex_initialize(&out_queue->locks.submission_mutex);
@@ -957,16 +959,20 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
         &out_queue->notification_ring);
   }
 
-  // Register this queue's epoch signal in the shared table for cross-queue
-  // barrier emission lookups. Must happen after notification ring init (which
-  // creates the epoch signal) and before any submissions.
-  if (iree_status_is_ok(status)) {
+  // Provisioned queues publish their epoch signals for device-side cross-queue
+  // barriers. Independently releasable queues must not publish: an already
+  // submitted peer packet can retain the raw signal beyond HAL queue release.
+  // They still use epoch_table above to look up provisioned peer signals and
+  // resolve every other wait through software deferral.
+  if (iree_status_is_ok(status) &&
+      params->coordination.epoch_registration_table) {
     iree_hal_amdgpu_epoch_signal_table_register(
-        params->coordination.epoch_table,
+        params->coordination.epoch_registration_table,
         iree_async_axis_queue_index(params->identity.axis),
         iree_hal_amdgpu_notification_ring_epoch_signal(
             &out_queue->notification_ring));
-    out_queue->epoch_table = params->coordination.epoch_table;
+    out_queue->epoch_registration_table =
+        params->coordination.epoch_registration_table;
   }
 
   if (iree_status_is_ok(status)) {
@@ -988,6 +994,60 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
   }
 
   IREE_TRACE_ZONE_END(z0);
+  return status;
+}
+
+iree_status_t iree_hal_amdgpu_host_queue_allocate(
+    const iree_hal_amdgpu_host_queue_params_t* params,
+    iree_hal_amdgpu_system_event_agent_target_t* system_event_target,
+    iree_hal_amdgpu_host_queue_release_slot_callback_t release_slot,
+    iree_hal_amdgpu_host_queue_t** out_queue) {
+  iree_host_size_t total_size = 0;
+  iree_host_size_t resource_ordinals_offset = 0;
+  IREE_RETURN_IF_ERROR(
+      IREE_STRUCT_LAYOUT(sizeof(iree_hal_amdgpu_host_queue_t), &total_size,
+                         IREE_STRUCT_FIELD_ALIGNED(
+                             params->identity.params.execution_resources.count,
+                             iree_hal_queue_execution_resource_ordinal_t, 1,
+                             &resource_ordinals_offset)));
+
+  iree_hal_amdgpu_host_queue_t* queue = NULL;
+  IREE_RETURN_IF_ERROR(
+      iree_allocator_malloc_aligned(params->host_allocator, total_size,
+                                    iree_alignof(iree_hal_amdgpu_host_queue_t),
+                                    /*offset=*/0, (void**)&queue));
+
+  iree_hal_amdgpu_host_queue_params_t owned_params = *params;
+  const iree_host_size_t resource_count =
+      params->identity.params.execution_resources.count;
+  if (resource_count) {
+    iree_hal_queue_execution_resource_ordinal_t* resource_ordinals =
+        (iree_hal_queue_execution_resource_ordinal_t*)((uint8_t*)queue +
+                                                       resource_ordinals_offset);
+    memcpy(resource_ordinals,
+           params->identity.params.execution_resources.ordinals,
+           resource_count * sizeof(*resource_ordinals));
+    owned_params.identity.params.execution_resources.ordinals =
+        resource_ordinals;
+  }
+
+  iree_status_t status =
+      iree_hal_amdgpu_host_queue_initialize(&owned_params, queue);
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_amdgpu_system_event_publish_queue_targets(
+        system_event_target, queue, /*live_queue_count=*/1);
+    if (iree_status_is_ok(status)) {
+      queue->storage.allocator = params->host_allocator;
+      queue->storage.system_event_target = system_event_target;
+      queue->storage.release_slot = release_slot;
+      *out_queue = queue;
+    } else {
+      iree_hal_amdgpu_host_queue_deinitialize(queue);
+    }
+  }
+  if (!iree_status_is_ok(status)) {
+    iree_allocator_free_aligned(params->host_allocator, queue);
+  }
   return status;
 }
 
@@ -1069,13 +1129,13 @@ void iree_hal_amdgpu_host_queue_finish_deinitialize(
                                                            reclaim_positions);
   iree_hal_amdgpu_host_queue_run_post_drain_actions(queue);
 
-  // Deregister from the epoch signal table before destroying the notification
-  // ring (which owns the epoch signal). Guarded by epoch_table != NULL to
-  // handle partial initialization (init failed before registration).
-  if (queue->epoch_table) {
+  // Deregister before destroying the notification ring that owns the signal.
+  // The lookup-only epoch_table remains borrowed and needs no teardown.
+  if (queue->epoch_registration_table) {
     iree_hal_amdgpu_epoch_signal_table_deregister(
-        queue->epoch_table, iree_async_axis_queue_index(queue->axis));
-    queue->epoch_table = NULL;
+        queue->epoch_registration_table,
+        iree_async_axis_queue_index(queue->axis));
+    queue->epoch_registration_table = NULL;
   }
 
   if (queue->frontier_tracker) {
@@ -2082,8 +2142,23 @@ static iree_status_t iree_hal_amdgpu_host_queue_enqueue_host_call(
 //===----------------------------------------------------------------------===//
 
 static void iree_hal_amdgpu_host_queue_destroy(iree_hal_queue_t* base_queue) {
-  iree_hal_amdgpu_host_queue_finish_deinitialize(
-      (iree_hal_amdgpu_host_queue_t*)base_queue);
+  iree_hal_amdgpu_host_queue_t* queue =
+      (iree_hal_amdgpu_host_queue_t*)base_queue;
+  const iree_hal_amdgpu_host_queue_storage_t storage = queue->storage;
+  if (!iree_allocator_is_null(storage.allocator)) {
+    iree_hal_amdgpu_host_queue_begin_deinitialize(queue);
+    iree_hal_amdgpu_host_queue_wait_idle_before_deinitialize(queue);
+    iree_hal_amdgpu_system_event_retire_queue_target(
+        storage.system_event_target, queue);
+  }
+  iree_hal_amdgpu_host_queue_finish_deinitialize(queue);
+  if (storage.release_slot.fn) {
+    storage.release_slot.fn(storage.release_slot.user_data,
+                            storage.release_slot.queue_index);
+  }
+  if (!iree_allocator_is_null(storage.allocator)) {
+    iree_allocator_free_aligned(storage.allocator, queue);
+  }
 }
 
 static iree_status_t iree_hal_amdgpu_host_queue_check_device_failure(
