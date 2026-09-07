@@ -364,12 +364,21 @@ iree_status_t iree_hal_task_device_create(
                                                      node_id, &queue_proactor);
       if (!iree_status_is_ok(status)) break;
 
-      status = iree_hal_task_queue_initialize(
-          device->identifier, (iree_hal_device_t*)device, &device->queue_family,
-          &queue_params, params->queue_scope_flags, queue_executors[i],
-          queue_proactor, params->inline_transfer_threshold,
-          &device->small_block_pool, &device->large_block_pool,
-          device->device_allocator, &device->queues[i]);
+      const iree_hal_task_queue_create_params_t queue_create_params = {
+          .identifier = device->identifier,
+          .device = (iree_hal_device_t*)device,
+          .queue_family = &device->queue_family,
+          .queue_params = queue_params,
+          .scope_flags = params->queue_scope_flags,
+          .executor = queue_executors[i],
+          .proactor = queue_proactor,
+          .inline_transfer_threshold = params->inline_transfer_threshold,
+          .small_block_pool = &device->small_block_pool,
+          .large_block_pool = &device->large_block_pool,
+          .device_allocator = device->device_allocator,
+      };
+      status = iree_hal_task_queue_initialize(&queue_create_params,
+                                              &device->queues[i]);
       if (!iree_status_is_ok(status)) break;
       ++device->queue_count;
     }

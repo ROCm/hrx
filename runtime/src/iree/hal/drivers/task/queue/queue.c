@@ -3598,37 +3598,32 @@ static iree_status_t iree_hal_task_queue_submit_op(
 static const iree_hal_queue_vtable_t iree_hal_task_queue_vtable;
 
 iree_status_t iree_hal_task_queue_initialize(
-    iree_string_view_t identifier, iree_hal_device_t* device,
-    const iree_hal_queue_family_t* queue_family,
-    const iree_hal_queue_params_t* queue_params,
-    iree_task_scope_flags_t scope_flags, iree_task_executor_t* executor,
-    iree_async_proactor_t* proactor,
-    iree_device_size_t inline_transfer_threshold,
-    iree_arena_block_pool_t* small_block_pool,
-    iree_arena_block_pool_t* large_block_pool,
-    iree_hal_allocator_t* device_allocator, iree_hal_task_queue_t* out_queue) {
+    const iree_hal_task_queue_create_params_t* params,
+    iree_hal_task_queue_t* out_queue) {
   IREE_TRACE_ZONE_BEGIN(z0);
-  IREE_TRACE_ZONE_APPEND_TEXT(z0, identifier.data, identifier.size);
+  IREE_TRACE_ZONE_APPEND_TEXT(z0, params->identifier.data,
+                              params->identifier.size);
 
   memset(out_queue, 0, sizeof(*out_queue));
 
-  iree_hal_queue_initialize(queue_family, queue_params,
+  iree_hal_queue_initialize(params->queue_family, &params->queue_params,
                             &iree_hal_task_queue_vtable, &out_queue->base);
-  out_queue->device = device;
-  out_queue->executor = executor;
+  out_queue->device = params->device;
+  out_queue->executor = params->executor;
   iree_task_executor_retain(out_queue->executor);
-  out_queue->proactor = proactor;
+  out_queue->proactor = params->proactor;
   iree_atomic_store(&out_queue->epoch, 0, iree_memory_order_relaxed);
   iree_atomic_store(&out_queue->shutdown_phase,
                     IREE_HAL_TASK_QUEUE_SHUTDOWN_PHASE_RUNNING,
                     iree_memory_order_relaxed);
-  out_queue->inline_transfer_threshold = inline_transfer_threshold;
-  out_queue->small_block_pool = small_block_pool;
-  out_queue->large_block_pool = large_block_pool;
-  out_queue->device_allocator = device_allocator;
+  out_queue->inline_transfer_threshold = params->inline_transfer_threshold;
+  out_queue->small_block_pool = params->small_block_pool;
+  out_queue->large_block_pool = params->large_block_pool;
+  out_queue->device_allocator = params->device_allocator;
   iree_hal_allocator_retain(out_queue->device_allocator);
 
-  iree_task_scope_initialize(identifier, scope_flags, &out_queue->scope);
+  iree_task_scope_initialize(params->identifier, params->scope_flags,
+                             &out_queue->scope);
   iree_atomic_store(&out_queue->pending_process_release_count, 2,
                     iree_memory_order_relaxed);
 
@@ -3666,7 +3661,8 @@ iree_status_t iree_hal_task_queue_initialize(
   iree_task_process_initialize(
       iree_hal_task_queue_compute_process_drain,
       /*suspend_count=*/0,
-      /*wake_budget=*/(int32_t)iree_task_executor_worker_count(executor),
+      /*wake_budget=*/
+      (int32_t)iree_task_executor_worker_count(params->executor),
       &out_queue->compute_process);
   iree_task_process_set_flags(&out_queue->compute_process,
                               IREE_TASK_PROCESS_FLAG_COMPUTE_SLOT);
@@ -3689,12 +3685,14 @@ iree_status_t iree_hal_task_queue_initialize(
   // compute_current is NULL (no active recording) — memset handles this.
 
   // Cache worker count for item FAM sizing.
-  uint32_t worker_count = (uint32_t)iree_task_executor_worker_count(executor);
+  uint32_t worker_count =
+      (uint32_t)iree_task_executor_worker_count(params->executor);
   if (worker_count == 0) worker_count = 1;
   out_queue->compute_worker_count = worker_count;
 
   // Initialize the arena for item allocation from the large block pool.
-  iree_arena_initialize(large_block_pool, &out_queue->compute_item_arena);
+  iree_arena_initialize(params->large_block_pool,
+                        &out_queue->compute_item_arena);
 
   // Pre-allocate initial pool items.
   iree_status_t status = iree_ok_status();
@@ -3714,6 +3712,46 @@ iree_status_t iree_hal_task_queue_initialize(
   }
 
   IREE_TRACE_ZONE_END(z0);
+  return status;
+}
+
+iree_status_t iree_hal_task_queue_allocate(
+    const iree_hal_task_queue_create_params_t* params,
+    iree_hal_task_queue_release_slot_callback_t release_slot,
+    iree_allocator_t host_allocator, iree_hal_task_queue_t** out_queue) {
+  iree_host_size_t total_size = 0;
+  iree_host_size_t resource_ordinals_offset = 0;
+  IREE_RETURN_IF_ERROR(IREE_STRUCT_LAYOUT(
+      sizeof(iree_hal_task_queue_t), &total_size,
+      IREE_STRUCT_FIELD_ALIGNED(params->queue_params.execution_resources.count,
+                                iree_hal_queue_execution_resource_ordinal_t, 1,
+                                &resource_ordinals_offset)));
+
+  iree_hal_task_queue_t* queue = NULL;
+  IREE_RETURN_IF_ERROR(iree_allocator_malloc_aligned(
+      host_allocator, total_size, iree_alignof(iree_hal_task_queue_t),
+      /*offset=*/0, (void**)&queue));
+
+  iree_hal_task_queue_create_params_t owned_params = *params;
+  const iree_host_size_t resource_count =
+      params->queue_params.execution_resources.count;
+  if (resource_count) {
+    iree_hal_queue_execution_resource_ordinal_t* resource_ordinals =
+        (iree_hal_queue_execution_resource_ordinal_t*)((uint8_t*)queue +
+                                                       resource_ordinals_offset);
+    memcpy(resource_ordinals, params->queue_params.execution_resources.ordinals,
+           resource_count * sizeof(*resource_ordinals));
+    owned_params.queue_params.execution_resources.ordinals = resource_ordinals;
+  }
+
+  iree_status_t status = iree_hal_task_queue_initialize(&owned_params, queue);
+  if (iree_status_is_ok(status)) {
+    queue->storage.allocator = host_allocator;
+    queue->storage.release_slot = release_slot;
+    *out_queue = queue;
+  } else {
+    iree_allocator_free_aligned(host_allocator, queue);
+  }
   return status;
 }
 
@@ -3801,7 +3839,16 @@ static void iree_hal_task_queue_deinitialize(iree_hal_task_queue_t* queue) {
 
 static void iree_hal_task_queue_destroy(iree_hal_queue_t* base_queue) {
   IREE_HAL_ASSERT_TYPE(base_queue, &iree_hal_task_queue_vtable);
-  iree_hal_task_queue_deinitialize((iree_hal_task_queue_t*)base_queue);
+  iree_hal_task_queue_t* queue = (iree_hal_task_queue_t*)base_queue;
+  const iree_hal_task_queue_storage_t storage = queue->storage;
+  iree_hal_task_queue_deinitialize(queue);
+  if (storage.release_slot.fn) {
+    storage.release_slot.fn(storage.release_slot.user_data,
+                            storage.release_slot.queue_index);
+  }
+  if (!iree_allocator_is_null(storage.allocator)) {
+    iree_allocator_free_aligned(storage.allocator, queue);
+  }
 }
 
 void iree_hal_task_queue_trim(iree_hal_task_queue_t* queue) {
