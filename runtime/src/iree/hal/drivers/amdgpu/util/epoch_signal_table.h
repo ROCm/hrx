@@ -38,11 +38,14 @@ extern "C" {
 // can still require N lookups for N undominated peer axes discovered from the
 // semaphore frontier.
 //
-// The table is allocated once at logical-device topology assignment. Each queue
-// registers its epoch signal using its flattened logical queue index and
-// deregisters during deinit. Lookup verifies the axis's session, machine, and
-// topology-assigned logical device index. Axes from another identity fail the
-// lookup and use the tier 3 host-deferral path.
+// The table is allocated once at logical-device topology assignment.
+// Provisioned queues register their epoch signals using flattened logical queue
+// indices and deregister during deinit. Independently releasable queues never
+// publish raw signals here because peer hardware packets could retain them
+// beyond queue release; dependencies on those axes use the tier 3 host-deferral
+// path. Lookup verifies the axis's session, machine, and topology-assigned
+// logical device index. Axes from another identity also fail the lookup and use
+// tier 3.
 typedef struct iree_hal_amdgpu_epoch_signal_table_t {
   // Session epoch from the axis encoding. Used to verify that a lookup axis
   // belongs to the same session as this table. Prevents cross-session aliasing

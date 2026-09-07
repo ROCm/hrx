@@ -1366,6 +1366,30 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
   return status;
 }
 
+iree_status_t iree_hal_amdgpu_physical_device_allocate_host_queue(
+    iree_hal_amdgpu_physical_device_t* physical_device,
+    const iree_hal_queue_params_t* params, iree_async_axis_t axis,
+    iree_hal_amdgpu_host_queue_release_slot_callback_t release_slot,
+    iree_hal_amdgpu_host_queue_t** out_queue) {
+  if (IREE_UNLIKELY(!physical_device->host_queue_construction.params
+                         .coordination.frontier_tracker)) {
+    return iree_make_status(
+        IREE_STATUS_FAILED_PRECONDITION,
+        "AMDGPU physical device has no assigned queue construction policy");
+  }
+
+  iree_hal_amdgpu_host_queue_params_t host_queue_params =
+      physical_device->host_queue_construction.params;
+  host_queue_params.identity.params = *params;
+  host_queue_params.identity.axis = axis;
+  host_queue_params.identity.physical_queue_ordinal =
+      IREE_HAL_AMDGPU_PHYSICAL_QUEUE_ORDINAL_NONE;
+  host_queue_params.coordination.epoch_registration_table = NULL;
+  return iree_hal_amdgpu_host_queue_allocate(
+      &host_queue_params, physical_device->system_event_target, release_slot,
+      out_queue);
+}
+
 void iree_hal_amdgpu_physical_device_deassign_frontier(
     iree_hal_amdgpu_physical_device_t* physical_device) {
   IREE_TRACE_ZONE_BEGIN(z0);

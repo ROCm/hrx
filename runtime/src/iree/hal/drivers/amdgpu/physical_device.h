@@ -397,6 +397,18 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
     iree_allocator_t host_allocator,
     iree_hal_amdgpu_physical_device_t* physical_device);
 
+// Allocates an independently releasable host queue with exact |params| and
+// |axis| using the physical device's assigned construction policy.
+//
+// |release_slot| is captured only on success. The caller remains responsible
+// for returning the slot when this call fails. |out_queue| is unchanged on
+// failure.
+iree_status_t iree_hal_amdgpu_physical_device_allocate_host_queue(
+    iree_hal_amdgpu_physical_device_t* physical_device,
+    const iree_hal_queue_params_t* params, iree_async_axis_t axis,
+    iree_hal_amdgpu_host_queue_release_slot_callback_t release_slot,
+    iree_hal_amdgpu_host_queue_t** out_queue);
+
 // Deinitializes any host queues initialized by assign_frontier.
 //
 // Closes admission on every queue, waits for all of them to pass their

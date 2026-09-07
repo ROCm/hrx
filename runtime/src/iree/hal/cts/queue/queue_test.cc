@@ -190,7 +190,7 @@ TEST_P(QueueTest, DynamicallyAcquiredQueueExecutesBarrier) {
     EXPECT_NE(iree_hal_device_queue(device_, family.ordinal, i), queue.get());
   }
 
-  SemaphoreList signal(device_, {family.ordinal}, {1});
+  SemaphoreList signal(device_, {0}, {1});
   IREE_ASSERT_OK(iree_hal_queue_barrier(queue, iree_hal_semaphore_list_empty(),
                                         signal,
                                         IREE_HAL_QUEUE_BARRIER_FLAG_NONE));
@@ -225,6 +225,40 @@ TEST_P(QueueTest, QueueAcquisitionCanonicalizesCompleteResourceSet) {
       iree_hal_queue_execution_resources(queue);
   EXPECT_EQ(0u, achieved_resources.count);
   EXPECT_EQ(nullptr, achieved_resources.ordinals);
+}
+
+TEST_P(QueueTest, DynamicallyAcquiredQueueOrdersProvisionedQueue) {
+  DynamicQueueFamily family;
+  if (!FindDynamicQueueFamily(device_, /*required_roles=*/0, &family)) {
+    GTEST_SKIP() << "device has no dynamically acquirable queue family";
+  }
+  if (!family.spec->provisioned_queue_count) {
+    GTEST_SKIP() << "dynamic queue family has no provisioned queues";
+  }
+
+  iree_hal_queue_params_t params;
+  iree_hal_queue_params_initialize(&params);
+  Ref<iree_hal_queue_t> dynamic_queue;
+  IREE_ASSERT_OK(iree_hal_device_acquire_queue(device_, family.identity,
+                                               &params, dynamic_queue.out()));
+
+  SemaphoreList producer_signal(device_, {0}, {1});
+  SemaphoreList completion_signal(device_, {0}, {1});
+  IREE_ASSERT_OK(iree_hal_queue_barrier(
+      dynamic_queue, iree_hal_semaphore_list_empty(), producer_signal,
+      IREE_HAL_QUEUE_BARRIER_FLAG_NONE));
+  iree_hal_queue_t* provisioned_queue =
+      iree_hal_device_queue(device_, family.ordinal, 0);
+  ASSERT_NE(nullptr, provisioned_queue);
+  IREE_ASSERT_OK(iree_hal_queue_barrier(provisioned_queue, producer_signal,
+                                        completion_signal,
+                                        IREE_HAL_QUEUE_BARRIER_FLAG_NONE));
+
+  // Releasing the producing queue must not invalidate the dependency edge
+  // consumed by another queue.
+  dynamic_queue.reset();
+  IREE_ASSERT_OK(iree_hal_semaphore_list_wait(
+      completion_signal, iree_infinite_timeout(), IREE_ASYNC_WAIT_FLAG_NONE));
 }
 
 TEST_P(QueueTest, QueueAcquisitionRejectsInvalidRequests) {

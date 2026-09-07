@@ -370,7 +370,12 @@ static iree_status_t iree_hal_amdgpu_device_spec_populate_queues(
         .zero_compute_atomic_capabilities =
             iree_hal_amdgpu_device_spec_zero_compute_atomic_capabilities(
                 physical_device->vendor_packet_capabilities),
-        .flags = IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_NONE,
+        .flags =
+            iree_any_bit_set(
+                params->flags,
+                IREE_HAL_AMDGPU_DEVICE_SPEC_PARAM_FLAG_DYNAMIC_QUEUE_ACQUISITION)
+                ? IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION
+                : IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_NONE,
     };
   }
   if (iree_status_is_ok(status)) {

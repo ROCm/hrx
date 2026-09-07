@@ -66,6 +66,8 @@ typedef enum iree_hal_amdgpu_device_spec_param_flag_bits_e {
   IREE_HAL_AMDGPU_DEVICE_SPEC_PARAM_FLAG_NONE = 0u,
   // DMA-BUF import/export is supported.
   IREE_HAL_AMDGPU_DEVICE_SPEC_PARAM_FLAG_DMABUF = 1u << 0,
+  // Queue families support exact dynamic hardware queue acquisition.
+  IREE_HAL_AMDGPU_DEVICE_SPEC_PARAM_FLAG_DYNAMIC_QUEUE_ACQUISITION = 1u << 1,
 } iree_hal_amdgpu_device_spec_param_flag_bits_t;
 
 // Parameters for creating an AMDGPU HAL device spec.
