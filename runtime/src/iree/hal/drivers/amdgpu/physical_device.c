@@ -439,13 +439,6 @@ static iree_status_t iree_hal_amdgpu_physical_device_query_global_memory_pools(
   return status;
 }
 
-typedef struct iree_hal_amdgpu_physical_device_kernarg_ring_memory_t {
-  // Descriptor consumed by host queue initialization.
-  iree_hal_amdgpu_kernarg_ring_memory_t descriptor;
-  // Host fallback access-agent list referenced by |descriptor|.
-  hsa_agent_t host_access_agents[1];
-} iree_hal_amdgpu_physical_device_kernarg_ring_memory_t;
-
 static iree_status_t iree_hal_amdgpu_physical_device_query_memory_pool_access(
     const iree_hal_amdgpu_libhsa_t* libhsa, hsa_agent_t agent,
     hsa_amd_memory_pool_t memory_pool,
@@ -458,22 +451,20 @@ static iree_status_t iree_hal_amdgpu_physical_device_query_memory_pool_access(
 
 static void iree_hal_amdgpu_physical_device_use_host_kernarg_memory(
     const iree_hal_amdgpu_host_memory_pools_t* host_memory_pools,
-    hsa_agent_t device_agent,
-    iree_hal_amdgpu_physical_device_kernarg_ring_memory_t* out_memory) {
-  memset(out_memory, 0, sizeof(*out_memory));
-  out_memory->host_access_agents[0] = device_agent;
-  out_memory->descriptor = (iree_hal_amdgpu_kernarg_ring_memory_t){
+    hsa_agent_t device_agent, hsa_agent_t* out_access_agent,
+    iree_hal_amdgpu_kernarg_ring_memory_t* out_memory) {
+  *out_access_agent = device_agent;
+  *out_memory = (iree_hal_amdgpu_kernarg_ring_memory_t){
       .memory_pool = host_memory_pools->kernarg_pool,
-      .access_agents = out_memory->host_access_agents,
+      .access_agents = out_access_agent,
       .access_agent_count = 1,
   };
 }
 
 static void iree_hal_amdgpu_physical_device_use_cpu_visible_kernarg_memory(
     const iree_hal_amdgpu_cpu_visible_device_coarse_memory_t* capability,
-    iree_hal_amdgpu_physical_device_kernarg_ring_memory_t* out_memory) {
-  memset(out_memory, 0, sizeof(*out_memory));
-  out_memory->descriptor = (iree_hal_amdgpu_kernarg_ring_memory_t){
+    iree_hal_amdgpu_kernarg_ring_memory_t* out_memory) {
+  *out_memory = (iree_hal_amdgpu_kernarg_ring_memory_t){
       .memory_pool = capability->memory_pool,
       .access_agents = capability->access_agents,
       .access_agent_count = capability->access_agent_count,
@@ -618,9 +609,11 @@ iree_hal_amdgpu_physical_device_initialize_memory_system_capabilities(
 static void iree_hal_amdgpu_physical_device_select_kernarg_ring_memory(
     const iree_hal_amdgpu_physical_device_t* physical_device,
     const iree_hal_amdgpu_host_memory_pools_t* host_memory_pools,
-    iree_hal_amdgpu_physical_device_kernarg_ring_memory_t* out_memory) {
+    hsa_agent_t* out_access_agent,
+    iree_hal_amdgpu_kernarg_ring_memory_t* out_memory) {
   iree_hal_amdgpu_physical_device_use_host_kernarg_memory(
-      host_memory_pools, physical_device->device_agent, out_memory);
+      host_memory_pools, physical_device->device_agent, out_access_agent,
+      out_memory);
   if (!iree_hal_amdgpu_cpu_visible_device_coarse_memory_is_available(
           &physical_device->cpu_visible_device_coarse_memory)) {
     return;
@@ -1203,26 +1196,25 @@ static iree_status_t iree_hal_amdgpu_physical_device_create_default_pools(
   return status;
 }
 
-iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
+static void iree_hal_amdgpu_physical_device_initialize_host_queue_construction(
     iree_hal_device_t* logical_device, iree_hal_amdgpu_system_t* system,
     iree_async_proactor_t* proactor,
     iree_async_frontier_tracker_t* frontier_tracker,
-    iree_async_axis_t base_axis,
     iree_hal_amdgpu_epoch_signal_table_t* epoch_signal_table,
     iree_hal_amdgpu_feedback_state_t* feedback_state,
-    const iree_hal_amdgpu_host_memory_pools_t* host_memory_pools,
-    iree_hal_amdgpu_system_event_agent_target_t* system_event_target,
     iree_allocator_t host_allocator,
     iree_hal_amdgpu_physical_device_t* physical_device) {
-  IREE_TRACE_ZONE_BEGIN(z0);
+  iree_hal_amdgpu_host_queue_construction_t* construction =
+      &physical_device->host_queue_construction;
+  memset(construction, 0, sizeof(*construction));
 
-  physical_device->system_event_target = system_event_target;
-  iree_hal_amdgpu_libhsa_t* libhsa = &system->libhsa;
-  iree_status_t status = iree_hal_amdgpu_physical_device_create_default_pools(
-      physical_device, epoch_signal_table, host_allocator);
-  iree_hal_amdgpu_physical_device_kernarg_ring_memory_t kernarg_ring_memory;
+  const iree_hal_amdgpu_host_memory_pools_t* host_memory_pools =
+      &physical_device->host_memory_pools;
+  iree_hal_amdgpu_kernarg_ring_memory_t kernarg_memory;
   iree_hal_amdgpu_physical_device_select_kernarg_ring_memory(
-      physical_device, host_memory_pools, &kernarg_ring_memory);
+      physical_device, host_memory_pools, &construction->kernarg_access_agent,
+      &kernarg_memory);
+
   iree_hal_amdgpu_host_queue_profiling_memory_t profiling_memory = {0};
   hsa_amd_memory_pool_t device_signal_memory_pool = {0};
   if (physical_device->coarse_block_pools.small.is_initialized) {
@@ -1259,7 +1251,7 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
     profiling_memory.event_access_agent_count = 1;
   }
 
-  iree_hal_amdgpu_host_queue_params_t host_queue_params = {
+  construction->params = (iree_hal_amdgpu_host_queue_params_t){
       .identity =
           {
               .family = &physical_device->queue_family,
@@ -1267,7 +1259,7 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
           },
       .hardware =
           {
-              .libhsa = libhsa,
+              .libhsa = &system->libhsa,
               .gpu_agent = physical_device->device_agent,
               .hostcall_buffer =
                   iree_hal_amdgpu_physical_device_hostcall_buffer(
@@ -1289,7 +1281,7 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
           },
       .memory =
           {
-              .kernarg = kernarg_ring_memory.descriptor,
+              .kernarg = kernarg_memory,
               .pm4_ib_pool = host_memory_pools->fine_pool,
               .block_pool = &physical_device->fine_host_block_pool,
               .profiling = profiling_memory,
@@ -1310,7 +1302,34 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
           },
       .host_allocator = host_allocator,
   };
-  iree_hal_queue_params_initialize(&host_queue_params.identity.params);
+  iree_hal_queue_params_initialize(&construction->params.identity.params);
+  iree_thread_affinity_set_group_any(
+      physical_device->host_numa_node,
+      &construction->params.coordination.completion_thread_affinity);
+}
+
+iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
+    iree_hal_device_t* logical_device, iree_hal_amdgpu_system_t* system,
+    iree_async_proactor_t* proactor,
+    iree_async_frontier_tracker_t* frontier_tracker,
+    iree_async_axis_t base_axis,
+    iree_hal_amdgpu_epoch_signal_table_t* epoch_signal_table,
+    iree_hal_amdgpu_feedback_state_t* feedback_state,
+    iree_hal_amdgpu_system_event_agent_target_t* system_event_target,
+    iree_allocator_t host_allocator,
+    iree_hal_amdgpu_physical_device_t* physical_device) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+
+  physical_device->system_event_target = system_event_target;
+  iree_status_t status = iree_hal_amdgpu_physical_device_create_default_pools(
+      physical_device, epoch_signal_table, host_allocator);
+  if (iree_status_is_ok(status)) {
+    iree_hal_amdgpu_physical_device_initialize_host_queue_construction(
+        logical_device, system, proactor, frontier_tracker, epoch_signal_table,
+        feedback_state, host_allocator, physical_device);
+  }
+  iree_hal_amdgpu_host_queue_params_t host_queue_params =
+      physical_device->host_queue_construction.params;
   for (iree_host_size_t queue_ordinal = 0;
        queue_ordinal < physical_device->host_queue_capacity &&
        iree_status_is_ok(status);
@@ -1325,9 +1344,6 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
     host_queue_params.identity.axis = queue_axis;
     host_queue_params.identity.physical_queue_ordinal =
         (iree_hal_queue_ordinal_t)queue_ordinal;
-    iree_thread_affinity_set_group_any(
-        physical_device->host_numa_node,
-        &host_queue_params.coordination.completion_thread_affinity);
     status = iree_hal_amdgpu_host_queue_initialize(
         &host_queue_params, &physical_device->host_queues[queue_ordinal]);
     if (iree_status_is_ok(status)) {
@@ -1409,6 +1425,8 @@ void iree_hal_amdgpu_physical_device_deassign_frontier(
   physical_device->default_oversized_pool = NULL;
   iree_hal_pool_release(physical_device->default_pool);
   physical_device->default_pool = NULL;
+  memset(&physical_device->host_queue_construction, 0,
+         sizeof(physical_device->host_queue_construction));
   IREE_TRACE_ZONE_END(z0);
 }
 

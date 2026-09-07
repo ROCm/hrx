@@ -189,6 +189,18 @@ iree_status_t iree_hal_amdgpu_physical_device_options_verify(
 // iree_hal_amdgpu_physical_device_t
 //===----------------------------------------------------------------------===//
 
+// Cold construction policy shared by every host queue on a physical device
+// while the logical-device frontier is assigned.
+typedef struct iree_hal_amdgpu_host_queue_construction_t {
+  // Queue parameter template copied and completed with an exact identity for
+  // each provisioned or dynamically acquired queue.
+  iree_hal_amdgpu_host_queue_params_t params;
+
+  // Stable single-agent storage referenced by |params.memory.kernarg| when
+  // host kernarg memory requires an explicit device-access grant.
+  hsa_agent_t kernarg_access_agent;
+} iree_hal_amdgpu_host_queue_construction_t;
+
 // A physical device representing an HSA GPU agent.
 // May contain one or more HAL queues that map to HSA queues on the agent.
 typedef struct iree_hal_amdgpu_physical_device_t {
@@ -327,6 +339,9 @@ typedef struct iree_hal_amdgpu_physical_device_t {
   // Queue-local PM4 timestamp strategy selected from this GPU agent's ISA.
   iree_hal_amdgpu_pm4_timestamp_strategy_t pm4_timestamp_strategy;
 
+  // Host queue construction policy valid while frontier assignment is live.
+  iree_hal_amdgpu_host_queue_construction_t host_queue_construction;
+
   // Process-wide HSA system event delivery target for |device_agent|, or NULL
   // when the logical device has no registration. Borrowed from the
   // registration, which outlives frontier assignment.
@@ -378,7 +393,6 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
     iree_async_axis_t base_axis,
     iree_hal_amdgpu_epoch_signal_table_t* epoch_signal_table,
     iree_hal_amdgpu_feedback_state_t* feedback_state,
-    const iree_hal_amdgpu_host_memory_pools_t* host_memory_pools,
     iree_hal_amdgpu_system_event_agent_target_t* system_event_target,
     iree_allocator_t host_allocator,
     iree_hal_amdgpu_physical_device_t* physical_device);

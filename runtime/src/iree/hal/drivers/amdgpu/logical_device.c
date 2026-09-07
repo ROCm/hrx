@@ -2536,15 +2536,12 @@ static iree_status_t iree_hal_amdgpu_logical_device_assign_topology_info(
        device_ordinal < logical_device->physical_device_count &&
        iree_status_is_ok(status);
        ++device_ordinal) {
-    const iree_host_size_t host_ordinal =
-        system->topology.gpu_cpu_map[device_ordinal];
     iree_hal_amdgpu_physical_device_t* physical_device =
         logical_device->physical_devices[device_ordinal];
     status = iree_hal_amdgpu_physical_device_assign_frontier(
         base_device, system, logical_device->proactor,
         topology_info->frontier.tracker, topology_info->frontier.base_axis,
         logical_device->host_queue_epoch_table, &logical_device->feedback,
-        &system->host_memory_pools[host_ordinal],
         iree_hal_amdgpu_system_event_registration_lookup_agent(
             logical_device->system_event_registration,
             physical_device->device_agent),
