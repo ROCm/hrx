@@ -276,7 +276,7 @@ IREE_API_EXPORT iree_status_t iree_hal_device_group_create_with_replacements(
     topology_info.frontier.base_axis = iree_async_axis_make_queue(
         iree_async_frontier_tracker_session_epoch(group->frontier_tracker),
         iree_async_frontier_tracker_machine_index(group->frontier_tracker),
-        (uint8_t)i, /*queue_index=*/0);
+        (uint8_t)i, /*queue_index=*/0, /*queue_incarnation=*/0);
 
     iree_hal_device_group_compute_bitmaps(group->topology, (uint32_t)i,
                                           &topology_info);
@@ -404,7 +404,7 @@ IREE_API_EXPORT iree_status_t iree_hal_device_group_builder_finalize(
     topology_info.frontier.base_axis = iree_async_axis_make_queue(
         iree_async_frontier_tracker_session_epoch(group->frontier_tracker),
         iree_async_frontier_tracker_machine_index(group->frontier_tracker),
-        (uint8_t)i, /*queue_index=*/0);
+        (uint8_t)i, /*queue_index=*/0, /*queue_incarnation=*/0);
 
     iree_hal_device_group_compute_bitmaps(group->topology, (uint32_t)i,
                                           &topology_info);

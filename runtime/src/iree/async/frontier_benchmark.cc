@@ -65,7 +65,7 @@ static void PopulateFrontier(iree_async_frontier_t* frontier, int entry_count,
   iree_async_frontier_initialize(frontier, static_cast<uint8_t>(entry_count));
   for (int i = 0; i < entry_count; ++i) {
     frontier->entries[i].axis =
-        iree_async_axis_make_queue(1, machine, static_cast<uint8_t>(i), 0);
+        iree_async_axis_make_queue(1, machine, static_cast<uint8_t>(i), 0, 0);
     frontier->entries[i].epoch = base_epoch + i * epoch_stride;
   }
 }
@@ -77,8 +77,8 @@ static void PopulateFrontierEvenAxes(iree_async_frontier_t* frontier,
                                      uint64_t base_epoch) {
   iree_async_frontier_initialize(frontier, static_cast<uint8_t>(entry_count));
   for (int i = 0; i < entry_count; ++i) {
-    frontier->entries[i].axis =
-        iree_async_axis_make_queue(1, machine, static_cast<uint8_t>(i * 2), 0);
+    frontier->entries[i].axis = iree_async_axis_make_queue(
+        1, machine, static_cast<uint8_t>(i * 2), 0, 0);
     frontier->entries[i].epoch = base_epoch + i;
   }
 }
@@ -91,7 +91,7 @@ static void PopulateFrontierOddAxes(iree_async_frontier_t* frontier,
   iree_async_frontier_initialize(frontier, static_cast<uint8_t>(entry_count));
   for (int i = 0; i < entry_count; ++i) {
     frontier->entries[i].axis = iree_async_axis_make_queue(
-        1, machine, static_cast<uint8_t>(i * 2 + 1), 0);
+        1, machine, static_cast<uint8_t>(i * 2 + 1), 0, 0);
     frontier->entries[i].epoch = base_epoch + i;
   }
 }
@@ -109,13 +109,13 @@ static void PopulateFrontierHalfOverlap(iree_async_frontier_t* frontier,
   // Overlapping entries: same devices as the first half of the sequential set.
   for (int i = 0; i < overlap_count; ++i) {
     frontier->entries[i].axis =
-        iree_async_axis_make_queue(1, machine, static_cast<uint8_t>(i), 0);
+        iree_async_axis_make_queue(1, machine, static_cast<uint8_t>(i), 0, 0);
     frontier->entries[i].epoch = base_epoch + i;
   }
   // Unique entries: devices beyond the sequential set's range.
   for (int i = 0; i < unique_count; ++i) {
     frontier->entries[overlap_count + i].axis = iree_async_axis_make_queue(
-        1, machine, static_cast<uint8_t>(base_sequential_count + i), 0);
+        1, machine, static_cast<uint8_t>(base_sequential_count + i), 0, 0);
     frontier->entries[overlap_count + i].epoch = base_epoch + overlap_count + i;
   }
 }
@@ -505,7 +505,7 @@ static void BM_IsSatisfied_AllSatisfied(benchmark::State& state) {
   iree_async_frontier_entry_t current_epochs[kMaxEntries];
   for (int i = 0; i < entry_count; ++i) {
     current_epochs[i].axis =
-        iree_async_axis_make_queue(1, 0, static_cast<uint8_t>(i), 0);
+        iree_async_axis_make_queue(1, 0, static_cast<uint8_t>(i), 0, 0);
     current_epochs[i].epoch = 200 + i * 10;
   }
   for (auto _ : state) {
@@ -535,7 +535,7 @@ static void BM_IsSatisfied_FirstFails(benchmark::State& state) {
   iree_async_frontier_entry_t current_epochs[kMaxEntries];
   for (int i = 0; i < entry_count; ++i) {
     current_epochs[i].axis =
-        iree_async_axis_make_queue(1, 0, static_cast<uint8_t>(i), 0);
+        iree_async_axis_make_queue(1, 0, static_cast<uint8_t>(i), 0, 0);
     current_epochs[i].epoch = (i == 0) ? 50 : 200 + i * 10;
   }
   for (auto _ : state) {
@@ -557,7 +557,7 @@ static void BM_IsSatisfied_LastFails(benchmark::State& state) {
   iree_async_frontier_entry_t current_epochs[kMaxEntries];
   for (int i = 0; i < entry_count; ++i) {
     current_epochs[i].axis =
-        iree_async_axis_make_queue(1, 0, static_cast<uint8_t>(i), 0);
+        iree_async_axis_make_queue(1, 0, static_cast<uint8_t>(i), 0, 0);
     current_epochs[i].epoch = (i == entry_count - 1) ? 50 : 200 + i * 10;
   }
   for (auto _ : state) {
@@ -580,7 +580,7 @@ static void BM_IsSatisfied_MidpointFails(benchmark::State& state) {
   int midpoint = entry_count / 2;
   for (int i = 0; i < entry_count; ++i) {
     current_epochs[i].axis =
-        iree_async_axis_make_queue(1, 0, static_cast<uint8_t>(i), 0);
+        iree_async_axis_make_queue(1, 0, static_cast<uint8_t>(i), 0, 0);
     current_epochs[i].epoch = (i == midpoint) ? 50 : 200 + i * 10;
   }
   for (auto _ : state) {
@@ -605,7 +605,7 @@ static void BM_IsSatisfied_SparseCurrentEpochs(benchmark::State& state) {
   int current_count = entry_count * 2;
   for (int i = 0; i < current_count; ++i) {
     current_epochs[i].axis =
-        iree_async_axis_make_queue(1, 0, static_cast<uint8_t>(i), 0);
+        iree_async_axis_make_queue(1, 0, static_cast<uint8_t>(i), 0, 0);
     current_epochs[i].epoch = 200 + i;
   }
   for (auto _ : state) {
@@ -687,7 +687,7 @@ static void BM_Scenario_WaiterCheck(benchmark::State& state) {
   iree_async_frontier_entry_t tracker_epochs[kMaxEntries];
   for (int i = 0; i < entry_count; ++i) {
     tracker_epochs[i].axis =
-        iree_async_axis_make_queue(1, 0, static_cast<uint8_t>(i), 0);
+        iree_async_axis_make_queue(1, 0, static_cast<uint8_t>(i), 0, 0);
     // All epochs at or above the frontier's targets.
     tracker_epochs[i].epoch = 100 + i * 10;
   }

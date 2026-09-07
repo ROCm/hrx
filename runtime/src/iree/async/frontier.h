@@ -72,7 +72,7 @@ typedef uint8_t iree_async_causal_domain_t;
 //     QUEUE domain:
 //       [39:32] device_index (8 bits) — 256 devices per machine
 //       [31:24] queue_index  (8 bits) — 256 queues per device
-//       [23:0]  reserved     (24 bits)
+//       [23:0]  incarnation  (24 bits) — prevents queue-slot ABA reuse
 //     COLLECTIVE domain:
 //       [39:0]  channel_id   (40 bits) — coordinator-assigned
 //     HOST domain:
@@ -89,6 +89,9 @@ typedef uint8_t iree_async_causal_domain_t;
 //   Host context 7:           0x01_03_03_00_00_000007
 typedef uint64_t iree_async_axis_t;
 
+// Maximum queue incarnation encodable in a QUEUE-domain axis.
+#define IREE_ASYNC_QUEUE_INCARNATION_MAX UINT32_C(0x00FFFFFF)
+
 // Constructs an axis from its four components. The ordinal is masked to 40
 // bits; the caller is responsible for encoding domain-specific structure within
 // the ordinal.
@@ -103,9 +106,10 @@ static inline iree_async_axis_t iree_async_axis_make(
 // This is the most common axis construction — one per GPU queue in the system.
 static inline iree_async_axis_t iree_async_axis_make_queue(
     uint8_t session_epoch, uint8_t machine_index, uint8_t device_index,
-    uint8_t queue_index) {
-  uint64_t ordinal =
-      ((uint64_t)device_index << 32) | ((uint64_t)queue_index << 24);
+    uint8_t queue_index, uint32_t queue_incarnation) {
+  IREE_ASSERT(queue_incarnation <= IREE_ASYNC_QUEUE_INCARNATION_MAX);
+  uint64_t ordinal = ((uint64_t)device_index << 32) |
+                     ((uint64_t)queue_index << 24) | queue_incarnation;
   return iree_async_axis_make(session_epoch, machine_index,
                               IREE_ASYNC_CAUSAL_DOMAIN_QUEUE, ordinal);
 }
@@ -142,6 +146,14 @@ static inline uint8_t iree_async_axis_device_index(iree_async_axis_t axis) {
 // Undefined behavior if the axis is not in the QUEUE domain.
 static inline uint8_t iree_async_axis_queue_index(iree_async_axis_t axis) {
   return (uint8_t)(iree_async_axis_ordinal(axis) >> 24);
+}
+
+// Extracts the incarnation from a QUEUE-domain axis.
+// Undefined behavior if the axis is not in the QUEUE domain.
+static inline uint32_t iree_async_axis_queue_incarnation(
+    iree_async_axis_t axis) {
+  return (uint32_t)(iree_async_axis_ordinal(axis) &
+                    IREE_ASYNC_QUEUE_INCARNATION_MAX);
 }
 
 //===----------------------------------------------------------------------===//

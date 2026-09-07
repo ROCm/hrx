@@ -52,7 +52,7 @@ static iree_async_frontier_t* BuildFrontier(
 
 // Test axes: simple sequential values.
 static iree_async_axis_t TestQueueAxis(uint8_t queue_index) {
-  return iree_async_axis_make_queue(1, 0, 0, queue_index);
+  return iree_async_axis_make_queue(1, 0, 0, queue_index, 0);
 }
 
 // Shorthand for creating frontier entries.

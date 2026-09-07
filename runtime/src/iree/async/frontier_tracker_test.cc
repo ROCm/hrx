@@ -55,7 +55,7 @@ static iree_async_frontier_entry_t E(iree_async_axis_t axis, uint64_t epoch) {
 
 // Test axes.
 static iree_async_axis_t Axis(uint8_t index) {
-  return iree_async_axis_make_queue(1, 0, 0, index);
+  return iree_async_axis_make_queue(1, 0, 0, index, 0);
 }
 
 // Callback tracking state.

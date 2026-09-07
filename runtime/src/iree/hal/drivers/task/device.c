@@ -547,7 +547,8 @@ static iree_status_t iree_hal_task_device_assign_topology_info(
   for (iree_host_size_t i = 0;
        i < device->queue_count && iree_status_is_ok(status); ++i) {
     iree_async_axis_t queue_axis = iree_async_axis_make_queue(
-        session_epoch, machine_index, device_index, (uint8_t)i);
+        session_epoch, machine_index, device_index, (uint8_t)i,
+        /*queue_incarnation=*/0);
     status = iree_hal_task_queue_assign_frontier(&device->queues[i],
                                                  frontier_tracker, queue_axis);
     if (iree_status_is_ok(status)) {

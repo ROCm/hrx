@@ -37,7 +37,7 @@ static iree_async_frontier_t* BuildFrontier(
       BuildFrontier(name##_storage, sizeof(name##_storage), {__VA_ARGS__})
 
 static iree_async_axis_t TestQueueAxis(uint8_t queue_index) {
-  return iree_async_axis_make_queue(1, 0, 0, queue_index);
+  return iree_async_axis_make_queue(1, 0, 0, queue_index, 0);
 }
 
 static iree_async_frontier_entry_t E(iree_async_axis_t axis, uint64_t epoch) {

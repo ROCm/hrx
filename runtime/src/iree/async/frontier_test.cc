@@ -54,12 +54,12 @@ static iree_async_frontier_entry_t E(iree_async_axis_t axis, uint64_t epoch) {
 // Axes for testing: use simple values that are easy to reason about.
 // Session=1, Machine=0, Domain=QUEUE, Device=0, Queue=0..7.
 static iree_async_axis_t TestQueueAxis(uint8_t queue_index) {
-  return iree_async_axis_make_queue(1, 0, 0, queue_index);
+  return iree_async_axis_make_queue(1, 0, 0, queue_index, 0);
 }
 
 // Session=1, Machine=1, Domain=QUEUE, Device=0, Queue=0..7.
 static iree_async_axis_t RemoteQueueAxis(uint8_t queue_index) {
-  return iree_async_axis_make_queue(1, 1, 0, queue_index);
+  return iree_async_axis_make_queue(1, 1, 0, queue_index, 0);
 }
 
 // Session=1, Machine=0, Domain=COLLECTIVE, Channel=N.
@@ -73,21 +73,25 @@ static iree_async_axis_t CollectiveAxis(uint64_t channel_id) {
 //===----------------------------------------------------------------------===//
 
 TEST(AxisTest, QueueAxisRoundTrip) {
-  iree_async_axis_t axis = iree_async_axis_make_queue(3, 7, 2, 5);
+  iree_async_axis_t axis = iree_async_axis_make_queue(3, 7, 2, 5, 12345);
   EXPECT_EQ(iree_async_axis_session(axis), 3);
   EXPECT_EQ(iree_async_axis_machine(axis), 7);
   EXPECT_EQ(iree_async_axis_domain(axis), IREE_ASYNC_CAUSAL_DOMAIN_QUEUE);
   EXPECT_EQ(iree_async_axis_device_index(axis), 2);
   EXPECT_EQ(iree_async_axis_queue_index(axis), 5);
+  EXPECT_EQ(iree_async_axis_queue_incarnation(axis), 12345u);
 }
 
 TEST(AxisTest, QueueAxisMaxValues) {
-  iree_async_axis_t axis = iree_async_axis_make_queue(255, 255, 255, 255);
+  iree_async_axis_t axis = iree_async_axis_make_queue(
+      255, 255, 255, 255, IREE_ASYNC_QUEUE_INCARNATION_MAX);
   EXPECT_EQ(iree_async_axis_session(axis), 255);
   EXPECT_EQ(iree_async_axis_machine(axis), 255);
   EXPECT_EQ(iree_async_axis_domain(axis), IREE_ASYNC_CAUSAL_DOMAIN_QUEUE);
   EXPECT_EQ(iree_async_axis_device_index(axis), 255);
   EXPECT_EQ(iree_async_axis_queue_index(axis), 255);
+  EXPECT_EQ(iree_async_axis_queue_incarnation(axis),
+            IREE_ASYNC_QUEUE_INCARNATION_MAX);
 }
 
 TEST(AxisTest, CollectiveAxisRoundTrip) {
@@ -132,10 +136,10 @@ TEST(AxisTest, OrdinalMasking) {
 
 TEST(AxisTest, SortingOrder) {
   // Axes with lower session/machine/domain/ordinal sort first.
-  iree_async_axis_t a = iree_async_axis_make_queue(1, 0, 0, 0);
-  iree_async_axis_t b = iree_async_axis_make_queue(1, 0, 0, 1);
-  iree_async_axis_t c = iree_async_axis_make_queue(1, 0, 1, 0);
-  iree_async_axis_t d = iree_async_axis_make_queue(1, 1, 0, 0);
+  iree_async_axis_t a = iree_async_axis_make_queue(1, 0, 0, 0, 0);
+  iree_async_axis_t b = iree_async_axis_make_queue(1, 0, 0, 1, 0);
+  iree_async_axis_t c = iree_async_axis_make_queue(1, 0, 1, 0, 0);
+  iree_async_axis_t d = iree_async_axis_make_queue(1, 1, 0, 0, 0);
   EXPECT_LT(a, b);
   EXPECT_LT(b, c);
   EXPECT_LT(c, d);
@@ -558,7 +562,8 @@ TEST(MergeTest, CapacityOverflowLargeDisjointSets) {
   iree_async_frontier_initialize(target, 200);
   for (int i = 0; i < 200; ++i) {
     // Machine=0, 200 device axes — all less than any machine=1 axis.
-    target->entries[i].axis = iree_async_axis_make_queue(1, 0, (uint8_t)i, 0);
+    target->entries[i].axis =
+        iree_async_axis_make_queue(1, 0, (uint8_t)i, 0, 0);
     target->entries[i].epoch = 1;
   }
 
@@ -566,7 +571,8 @@ TEST(MergeTest, CapacityOverflowLargeDisjointSets) {
   iree_async_frontier_initialize(source, 100);
   for (int i = 0; i < 100; ++i) {
     // Machine=1, 100 device axes — all greater than any machine=0 axis.
-    source->entries[i].axis = iree_async_axis_make_queue(1, 1, (uint8_t)i, 0);
+    source->entries[i].axis =
+        iree_async_axis_make_queue(1, 1, (uint8_t)i, 0, 0);
     source->entries[i].epoch = 1;
   }
 
@@ -1178,10 +1184,10 @@ TEST(FindUndominatedTest, ConsistentWithCompare) {
 TEST(FindUndominatedTest, TPCollectiveJoin) {
   // 4-GPU TP collective join: Q0 waits on a semaphore whose frontier includes
   // all 4 queues. Q0 should see Q1, Q2, Q3 as undominated (self is dominated).
-  iree_async_axis_t q0 = iree_async_axis_make_queue(1, 0, 0, 0);
-  iree_async_axis_t q1 = iree_async_axis_make_queue(1, 0, 1, 0);
-  iree_async_axis_t q2 = iree_async_axis_make_queue(1, 0, 2, 0);
-  iree_async_axis_t q3 = iree_async_axis_make_queue(1, 0, 3, 0);
+  iree_async_axis_t q0 = iree_async_axis_make_queue(1, 0, 0, 0, 0);
+  iree_async_axis_t q1 = iree_async_axis_make_queue(1, 0, 1, 0, 0);
+  iree_async_axis_t q2 = iree_async_axis_make_queue(1, 0, 2, 0, 0);
+  iree_async_axis_t q3 = iree_async_axis_make_queue(1, 0, 3, 0, 0);
 
   // Q0's frontier: only itself at epoch 10.
   MAKE_FRONTIER(queue_frontier, 4, E(q0, 10));
@@ -1197,8 +1203,8 @@ TEST(FindUndominatedTest, TPCollectiveJoin) {
 
 TEST(FindUndominatedTest, CrossMachineWait) {
   // Queue on machine 0 waits on a semaphore with dependencies on both machines.
-  iree_async_axis_t local = iree_async_axis_make_queue(1, 0, 0, 0);
-  iree_async_axis_t remote = iree_async_axis_make_queue(1, 1, 0, 0);
+  iree_async_axis_t local = iree_async_axis_make_queue(1, 0, 0, 0, 0);
+  iree_async_axis_t remote = iree_async_axis_make_queue(1, 1, 0, 0, 0);
 
   MAKE_FRONTIER(queue_frontier, 2, E(local, 10));
   MAKE_FRONTIER(sem_frontier, 2, E(local, 8), E(remote, 5));

@@ -186,7 +186,8 @@ struct NotificationRingTest : public ::testing::Test {
     for (uint8_t i = 0; i < IREE_HAL_AMDGPU_MAX_FRONTIER_SNAPSHOT_ENTRY_COUNT;
          ++i) {
       frontier->entries[i].axis = iree_async_axis_make_queue(
-          /*session_epoch=*/1, /*machine_index=*/2, /*device_index=*/3, i);
+          /*session_epoch=*/1, /*machine_index=*/2, /*device_index=*/3, i,
+          /*queue_incarnation=*/0);
       frontier->entries[i].epoch = i + 1;
     }
     return frontier;
@@ -343,7 +344,8 @@ TEST_F(NotificationRingTest, OmittedSnapshotDoesNotConsumeNextSnapshot) {
   iree_async_single_frontier_t public_frontier_storage;
   const iree_async_axis_t public_axis =
       iree_async_axis_make_queue(/*session_epoch=*/1, /*machine_index=*/0,
-                                 /*device_index=*/0, /*queue_index=*/3);
+                                 /*device_index=*/0, /*queue_index=*/3,
+                                 /*queue_incarnation=*/0);
   iree_async_single_frontier_initialize(&public_frontier_storage, public_axis,
                                         /*epoch=*/42);
 
@@ -418,7 +420,8 @@ TEST_F(NotificationRingTest, LateSnapshotForAlreadyDrainedSpanIsDiscarded) {
   iree_async_single_frontier_t stale_frontier_storage;
   const iree_async_axis_t stale_axis =
       iree_async_axis_make_queue(/*session_epoch=*/1, /*machine_index=*/0,
-                                 /*device_index=*/0, /*queue_index=*/4);
+                                 /*device_index=*/0, /*queue_index=*/4,
+                                 /*queue_incarnation=*/0);
   iree_async_single_frontier_initialize(&stale_frontier_storage, stale_axis,
                                         /*epoch=*/99);
   iree_hal_amdgpu_notification_ring_push_frontier_snapshot(

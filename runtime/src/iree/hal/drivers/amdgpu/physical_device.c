@@ -1269,8 +1269,8 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
         queue_ordinal;
     const iree_async_axis_t queue_axis = iree_async_axis_make_queue(
         iree_async_axis_session(base_axis), iree_async_axis_machine(base_axis),
-        iree_async_axis_device_index(base_axis),
-        (uint8_t)logical_queue_ordinal);
+        iree_async_axis_device_index(base_axis), (uint8_t)logical_queue_ordinal,
+        /*queue_incarnation=*/0);
     iree_thread_affinity_t completion_thread_affinity;
     iree_thread_affinity_set_group_any(physical_device->host_numa_node,
                                        &completion_thread_affinity);

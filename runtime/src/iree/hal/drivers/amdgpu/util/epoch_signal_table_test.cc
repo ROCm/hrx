@@ -45,7 +45,8 @@ TEST(EpochSignalTable, ResolvesFlattenedLogicalQueues) {
   }
 
   for (uint8_t queue = 0; queue < 4; ++queue) {
-    const iree_async_axis_t axis = iree_async_axis_make_queue(5, 2, 9, queue);
+    const iree_async_axis_t axis =
+        iree_async_axis_make_queue(5, 2, 9, queue, 0);
     hsa_signal_t signal;
     ASSERT_TRUE(
         iree_hal_amdgpu_epoch_signal_table_lookup(table.get(), axis, &signal));
@@ -59,9 +60,9 @@ TEST(EpochSignalTable, RejectsForeignAxes) {
   iree_hal_amdgpu_epoch_signal_table_register(table.get(), 0, MakeSignal(100));
 
   const iree_async_axis_t foreign_axes[] = {
-      iree_async_axis_make_queue(4, 7, 5, 0),
-      iree_async_axis_make_queue(3, 8, 5, 0),
-      iree_async_axis_make_queue(3, 7, 6, 0),
+      iree_async_axis_make_queue(4, 7, 5, 0, 0),
+      iree_async_axis_make_queue(3, 8, 5, 0, 0),
+      iree_async_axis_make_queue(3, 7, 6, 0, 0),
       iree_async_axis_make(3, 7, IREE_ASYNC_CAUSAL_DOMAIN_COLLECTIVE, 0),
       iree_async_axis_make(3, 7, IREE_ASYNC_CAUSAL_DOMAIN_HOST, 0),
   };
@@ -79,16 +80,16 @@ TEST(EpochSignalTable, RejectsUnavailableQueues) {
 
   hsa_signal_t signal;
   EXPECT_FALSE(iree_hal_amdgpu_epoch_signal_table_lookup(
-      table.get(), iree_async_axis_make_queue(1, 0, 4, 1), &signal));
+      table.get(), iree_async_axis_make_queue(1, 0, 4, 1, 0), &signal));
   EXPECT_FALSE(iree_hal_amdgpu_epoch_signal_table_lookup(
-      table.get(), iree_async_axis_make_queue(1, 0, 4, 2), &signal));
+      table.get(), iree_async_axis_make_queue(1, 0, 4, 2, 0), &signal));
 }
 
 TEST(EpochSignalTable, DeregisterRemovesQueue) {
   EpochSignalTable table(/*session_epoch=*/1, /*machine_index=*/0,
                          /*device_index=*/4, /*queue_count=*/2);
   iree_hal_amdgpu_epoch_signal_table_register(table.get(), 1, MakeSignal(77));
-  const iree_async_axis_t axis = iree_async_axis_make_queue(1, 0, 4, 1);
+  const iree_async_axis_t axis = iree_async_axis_make_queue(1, 0, 4, 1, 0);
   hsa_signal_t signal;
   ASSERT_TRUE(
       iree_hal_amdgpu_epoch_signal_table_lookup(table.get(), axis, &signal));
