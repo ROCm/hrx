@@ -85,6 +85,17 @@ amdf_status_t amdf_platform_endpoint_open(
   return status;
 }
 
+amdf_queue_publication_modes_t
+amdf_platform_endpoint_query_queue_publication_modes(
+    const amdf_platform_endpoint_t* endpoint,
+    amdf_queue_command_type_t command_type) {
+  if (command_type == AMDF_QUEUE_COMMAND_TYPE_XDNA &&
+      amdf_kmt_api_supports_xdna_kernel_execution(&endpoint->instance->kmt)) {
+    return AMDF_QUEUE_PUBLICATION_MODE_KERNEL;
+  }
+  return 0;
+}
+
 amdf_status_t amdf_platform_endpoint_close(amdf_platform_endpoint_t* endpoint) {
   const amdf_status_t status = amdf_windows_close_endpoint_adapter(endpoint);
   if (amdf_status_is_ok(status)) {

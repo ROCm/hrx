@@ -27,18 +27,102 @@ endif()
 if(AMDF_BUILD AND AMDF_FAMILY_XDNA)
 iree_cc_library(
   NAME
+    transaction
+  HDRS
+    "transaction.h"
+  SRCS
+    "transaction.c"
+  DEPS
+    amdf::headers
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD AND AMDF_FAMILY_XDNA)
+iree_cc_library(
+  NAME
     device
   HDRS
     "device.h"
+    "memory.h"
   SRCS
     "device.c"
+    "memory.c"
   DEPS
     ::endpoint_profile
+    ::transaction
     amdf::headers
     libamdf::src::device
     libamdf::src::endpoint
+    libamdf::src::host_mapping
+    libamdf::src::memory
     libamdf::src::structure
     libamdf::src::xdna::umd::device
+    libamdf::src::xdna::umd::memory
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD AND AMDF_FAMILY_XDNA)
+iree_cc_library(
+  NAME
+    program
+  HDRS
+    "program.h"
+  SRCS
+    "program.c"
+  DEPS
+    ::device
+    ::endpoint_profile
+    amdf::headers
+    libamdf::src::child_tracker
+    libamdf::src::device
+    libamdf::src::structure
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD AND AMDF_FAMILY_XDNA)
+iree_cc_library(
+  NAME
+    command
+  HDRS
+    "command.h"
+  SRCS
+    "command.c"
+  DEPS
+    ::device
+    ::endpoint_profile
+    ::program
+    ::transaction
+    amdf::headers
+    libamdf::src::child_tracker
+    libamdf::src::memory
+    libamdf::src::structure
+    libamdf::src::xdna::umd::command
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD AND AMDF_FAMILY_XDNA)
+iree_cc_library(
+  NAME
+    kernel_queue
+  HDRS
+    "kernel_queue.h"
+  SRCS
+    "kernel_queue.c"
+  DEPS
+    ::command
+    ::device
+    ::program
+    amdf::headers
+    libamdf::src::atomics
+    libamdf::src::device
+    libamdf::src::endpoint
+    libamdf::src::kernel_queue
+    libamdf::src::structure
+    libamdf::src::xdna::umd::kernel_queue
   PUBLIC
 )
 endif()
@@ -52,10 +136,14 @@ iree_cc_library(
   SRCS
     "extension.c"
   DEPS
+    ::command
     ::device
     ::endpoint_profile
+    ::kernel_queue
+    ::program
     amdf::headers
     libamdf::src::endpoint
+    libamdf::src::platform
     libamdf::src::structure
   PUBLIC
 )
@@ -81,6 +169,23 @@ iree_cc_test(
     "endpoint_profile_test.cc"
   DEPS
     ::endpoint_profile
+    amdf::headers
+    iree::third_party::google_test
+    iree::third_party::google_test_main
+  LABELS
+    "iree-build-requirement=libamdf"
+    "iree-build-requirement=libamdf.xdna"
+)
+endif()
+
+if(AMDF_BUILD AND AMDF_FAMILY_XDNA)
+iree_cc_test(
+  NAME
+    transaction_test
+  SRCS
+    "transaction_test.cc"
+  DEPS
+    ::transaction
     amdf::headers
     iree::third_party::google_test
     iree::third_party::google_test_main

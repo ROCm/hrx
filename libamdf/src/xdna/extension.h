@@ -8,6 +8,8 @@
 #define AMDF_SRC_XDNA_EXTENSION_H_
 
 #include "amdf/amdf.h"
+#include "libamdf/src/platform/endpoint.h"
+#include "libamdf/src/xdna/endpoint_profile.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,6 +19,12 @@ extern "C" {
 amdf_status_t amdf_xdna_extension_query(uint32_t minimum_version,
                                         uint32_t maximum_version,
                                         const void** out_extension_api);
+
+// Writes the XDNA queue families fully constructible for an opened endpoint.
+uint32_t amdf_xdna_extension_query_endpoint_queue_families(
+    const amdf_xdna_endpoint_profile_t* profile,
+    const amdf_platform_endpoint_t* platform_endpoint, uint32_t capacity,
+    amdf_queue_family_info_t* out_families);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -20,6 +20,13 @@ typedef struct amdf_xdna_endpoint_profile_t {
   amdf_pci_xdna_model_t model;
   // Borrowed public compiler target and context-admission properties.
   const amdf_xdna_endpoint_info_t* info;
+  // Target-native transaction properties fixed for this endpoint identity.
+  struct {
+    // AIE-RT device-generation value encoded in transaction headers.
+    uint8_t device_generation;
+    // Memory-tile row count encoded in transaction headers.
+    uint8_t memory_tile_row_count;
+  } transaction;
 } amdf_xdna_endpoint_profile_t;
 
 // Selects the exact immutable XDNA profile matching `endpoint_info`.

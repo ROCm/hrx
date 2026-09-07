@@ -43,6 +43,10 @@ TEST(XdnaEndpointProfileTest, SelectsPublishedStaticProfiles) {
     uint32_t maximum_live_context_count;
     // Maximum hardware-resident contexts.
     uint32_t maximum_hardware_context_count;
+    // Maximum copied program components, or zero when unsupported.
+    uint32_t maximum_program_component_count;
+    // Maximum fixed command bindings, or zero when unsupported.
+    uint32_t maximum_command_binding_count;
     // Stable compiler target identifier.
     const char* target_id;
   };
@@ -50,15 +54,15 @@ TEST(XdnaEndpointProfileTest, SelectsPublishedStaticProfiles) {
       {0x1502u, 0x00u, AMDF_XDNA_ARCHITECTURE_AIE2, 1u, 4u,
        AMDF_XDNA_SCHEDULING_MODE_SPATIAL |
            AMDF_XDNA_SCHEDULING_MODE_TIME_SLICED,
-       6u, 6u, "amd.xdna.phoenix.1502_00"},
+       6u, 6u, 0u, 0u, "amd.xdna.phoenix.1502_00"},
       {0x17F0u, 0x10u, AMDF_XDNA_ARCHITECTURE_AIE2P, 0u, 8u,
-       AMDF_XDNA_SCHEDULING_MODE_TIME_SLICED, 32u, 16u,
+       AMDF_XDNA_SCHEDULING_MODE_TIME_SLICED, 32u, 16u, 0u, 0u,
        "amd.xdna.strix.17f0_10"},
       {0x17F0u, 0x11u, AMDF_XDNA_ARCHITECTURE_AIE2P, 0u, 8u,
-       AMDF_XDNA_SCHEDULING_MODE_TIME_SLICED, 32u, 16u,
+       AMDF_XDNA_SCHEDULING_MODE_TIME_SLICED, 32u, 16u, 1u, 5u,
        "amd.xdna.strix_halo.17f0_11"},
       {0x17F0u, 0x20u, AMDF_XDNA_ARCHITECTURE_AIE2P, 0u, 8u,
-       AMDF_XDNA_SCHEDULING_MODE_TIME_SLICED, 32u, 16u,
+       AMDF_XDNA_SCHEDULING_MODE_TIME_SLICED, 32u, 16u, 0u, 0u,
        "amd.xdna.krackan.17f0_20"},
   };
 
@@ -92,6 +96,51 @@ TEST(XdnaEndpointProfileTest, SelectsPublishedStaticProfiles) {
               test_case.maximum_live_context_count);
     EXPECT_EQ(profile_info->context.maximum_hardware_context_count,
               test_case.maximum_hardware_context_count);
+    EXPECT_EQ(profile_info->program.supported_flags, 0u);
+    EXPECT_EQ(profile_info->program.maximum_component_count,
+              test_case.maximum_program_component_count);
+    EXPECT_EQ(profile_info->program.reserved, 0u);
+    EXPECT_EQ(profile_info->command.maximum_binding_count,
+              test_case.maximum_command_binding_count);
+    EXPECT_EQ(profile_info->command.reserved, 0u);
+    EXPECT_EQ(profile_info->program.component_formats.pdi.format,
+              AMDF_XDNA_BINARY_FORMAT_UNKNOWN);
+    EXPECT_EQ(profile_info->program.component_formats.pdi.version, 0u);
+    EXPECT_EQ(profile_info->program.component_formats.save.format,
+              AMDF_XDNA_BINARY_FORMAT_UNKNOWN);
+    EXPECT_EQ(profile_info->program.component_formats.save.version, 0u);
+    EXPECT_EQ(profile_info->program.component_formats.restore.format,
+              AMDF_XDNA_BINARY_FORMAT_UNKNOWN);
+    EXPECT_EQ(profile_info->program.component_formats.restore.version, 0u);
+    if (test_case.maximum_program_component_count == 0) {
+      EXPECT_EQ(profile_info->program.maximum_component_byte_length, 0u);
+      EXPECT_EQ(profile_info->program.maximum_total_byte_length, 0u);
+      EXPECT_EQ(
+          profile_info->program.component_formats.array_configuration.format,
+          AMDF_XDNA_BINARY_FORMAT_UNKNOWN);
+      EXPECT_EQ(
+          profile_info->program.component_formats.array_configuration.version,
+          0u);
+      EXPECT_EQ(profile_info->command.maximum_control_byte_length, 0u);
+      EXPECT_EQ(profile_info->command.control_format.format,
+                AMDF_XDNA_BINARY_FORMAT_UNKNOWN);
+      EXPECT_EQ(profile_info->command.control_format.version, 0u);
+    } else {
+      EXPECT_EQ(profile_info->program.maximum_component_byte_length,
+                32u * 1024u);
+      EXPECT_EQ(profile_info->program.maximum_total_byte_length, 32u * 1024u);
+      EXPECT_EQ(
+          profile_info->program.component_formats.array_configuration.format,
+          AMDF_XDNA_BINARY_FORMAT_TRANSACTION);
+      EXPECT_EQ(
+          profile_info->program.component_formats.array_configuration.version,
+          AMDF_XDNA_TRANSACTION_FORMAT_VERSION_0_1);
+      EXPECT_EQ(profile_info->command.maximum_control_byte_length, 32u * 1024u);
+      EXPECT_EQ(profile_info->command.control_format.format,
+                AMDF_XDNA_BINARY_FORMAT_TRANSACTION);
+      EXPECT_EQ(profile_info->command.control_format.version,
+                AMDF_XDNA_TRANSACTION_FORMAT_VERSION_0_1);
+    }
     EXPECT_STREQ(profile_info->target_id, test_case.target_id);
   }
 }

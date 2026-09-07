@@ -33,8 +33,33 @@ constructed for that endpoint. Missing families mean the loaded provider has
 no matching implementation, not that the silicon necessarily lacks the
 capability. `endpoint_query_queue_family_info` copies records cached during
 endpoint open and performs no allocation, system call, device initialization,
-queue creation, retry, sleep, or device wait. The query-only provider currently
-reports no families because it contains no queue constructors.
+queue creation, retry, sleep, or device wait. A Windows endpoint advertises the
+kernel-mediated XDNA family only when the loaded KMT surface contains every
+operation required to construct and publish to that queue.
+
+A materialized XDNA device can own system-memory backing with one stable XDNA
+virtual address on qualified Windows x86-64 systems. Memory creation publishes
+the address only after mapping and ordinary residency have completed, without
+using the fatal `MustSucceed` residency mode. Explicit host mappings expose
+write-back cached pages and require range-scoped flush or invalidate operations
+when ownership moves between the host and XDNA. Placement classes or properties
+that the provider cannot fully satisfy fail explicitly instead of silently
+degrading.
+
+Qualified XDNA profiles can also accept copied target-native program components
+and immutable prepared commands. Program creation validates the exact
+profile-specific transaction envelope and declared array footprint before
+copying component bytes. Command creation copies invocation control, resolves
+each memory binding to its stable device address once, and borrows the program
+and memory objects until destruction. Neither operation submits work or mutates
+active array state.
+
+The qualified NPU5 path exposes a kernel-mediated XDNA queue with one prepared
+command per submission and one unretired submission at a time. Submission is a
+bounded native publication call: it performs no allocation, transaction
+parsing, lowering, binding resolution, command transcription, retry, sleep, or
+host wait. Status queries and waits retire the submission's command borrow only
+after the native progress fence covers it.
 
 The build produces two link modes from one implementation:
 

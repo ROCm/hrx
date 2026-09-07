@@ -6,6 +6,7 @@
 
 #include "libamdf/src/endpoint.h"
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdlib.h>
 
@@ -23,8 +24,8 @@ struct amdf_endpoint_t {
   amdf_endpoint_info_t info;
   // Immutable endpoint-local native queue families.
   struct {
-    // Records owned elsewhere and valid for the lifetime of this endpoint.
-    const amdf_queue_family_info_t* values;
+    // Records owned inline for the lifetime of this endpoint.
+    amdf_queue_family_info_t values[AMDF_ENDPOINT_QUEUE_FAMILY_CAPACITY];
     // Number of records in `values`.
     uint32_t count;
   } queue_families;
@@ -57,7 +58,7 @@ amdf_status_t AMDF_CALL amdf_endpoint_open(amdf_instance_t* instance,
                                          &endpoint->platform, &endpoint->info);
   }
   if (amdf_status_is_ok(status)) {
-    endpoint->info.queue_family_count = endpoint->queue_families.count;
+    endpoint->info.queue_family_count = 0;
     *out_endpoint = endpoint;
   } else {
     if (endpoint->instance != NULL) {
@@ -66,6 +67,17 @@ amdf_status_t AMDF_CALL amdf_endpoint_open(amdf_instance_t* instance,
     free(endpoint);
   }
   return status;
+}
+
+void amdf_endpoint_set_queue_families(
+    amdf_endpoint_t* endpoint, uint32_t queue_family_count,
+    const amdf_queue_family_info_t* queue_families) {
+  assert(queue_family_count <= AMDF_ENDPOINT_QUEUE_FAMILY_CAPACITY);
+  for (uint32_t i = 0; i < queue_family_count; ++i) {
+    endpoint->queue_families.values[i] = queue_families[i];
+  }
+  endpoint->queue_families.count = queue_family_count;
+  endpoint->info.queue_family_count = queue_family_count;
 }
 
 const amdf_endpoint_info_t* amdf_endpoint_get_cached_info(
@@ -121,10 +133,6 @@ amdf_status_t AMDF_CALL amdf_endpoint_query_queue_family_info(
   if (queue_family_ordinal >= endpoint->queue_families.count) {
     return amdf_make_api_status(AMDF_STATUS_CODE_OUT_OF_RANGE);
   }
-  if (endpoint->queue_families.values == NULL) {
-    return amdf_make_api_status(AMDF_STATUS_CODE_INTERNAL);
-  }
-
   const amdf_queue_family_info_t* source_info =
       &endpoint->queue_families.values[queue_family_ordinal];
   const uint32_t structure_size = out_info->structure_size;

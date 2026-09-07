@@ -21,3 +21,23 @@ amdf_cc_library(
         "//libamdf/src/xdna:endpoint_profile",
     ],
 )
+
+amdf_cc_library(
+    name = "memory",
+    hdrs = ["memory.h"],
+    visibility = ["//libamdf/src/xdna:__subpackages__"],
+)
+
+amdf_cc_library(
+    name = "command",
+    hdrs = ["command.h"],
+    visibility = ["//libamdf/src/xdna:__subpackages__"],
+    deps = [":device"],
+)
+
+amdf_cc_library(
+    name = "kernel_queue",
+    hdrs = ["kernel_queue.h"],
+    visibility = ["//libamdf/src/xdna:__subpackages__"],
+    deps = [":command"],
+)

@@ -14,10 +14,17 @@
 extern "C" {
 #endif  // __cplusplus
 
+enum { AMDF_ENDPOINT_QUEUE_FAMILY_CAPACITY = 4 };
+
 // Opens one query-only endpoint identity directly.
 amdf_status_t AMDF_CALL amdf_endpoint_open(amdf_instance_t* instance,
                                            const amdf_endpoint_id_t* id,
                                            amdf_endpoint_t** out_endpoint);
+
+// Copies the immutable queue-family records selected during provider open.
+void amdf_endpoint_set_queue_families(
+    amdf_endpoint_t* endpoint, uint32_t queue_family_count,
+    const amdf_queue_family_info_t* queue_families);
 
 // Copies immutable endpoint properties cached during open.
 amdf_status_t AMDF_CALL amdf_endpoint_query_info(

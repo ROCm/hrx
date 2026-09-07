@@ -10,24 +10,9 @@
 #include <stdlib.h>
 
 #include "libamdf/src/platform/windows/endpoint.h"
+#include "libamdf/src/xdna/umd/mcdm/device.h"
+#include "libamdf/src/xdna/umd/mcdm/kernel_execution.h"
 #include "libamdf/src/xdna/umd/mcdm/legacy_context.h"
-
-struct amdf_xdna_umd_device_t {
-  // KMT table borrowed from the endpoint's platform instance.
-  const amdf_kmt_api_t* kmt;
-  // Logical KMT device owning paging and execution state.
-  D3DKMT_HANDLE device;
-  // Paging queue owned by this logical device.
-  D3DKMT_HANDLE paging_queue;
-  // Synchronization object owned by the paging queue.
-  D3DKMT_HANDLE paging_sync_object;
-  // CPU mapping of the paging queue's monitored fence.
-  const volatile uint64_t* paging_fence;
-  // Program-independent XDNA context and address domain.
-  D3DKMT_HANDLE context;
-  // Driver-returned command aperture cookie used by prepared commands.
-  uint32_t command_aperture_cookie;
-};
 
 static amdf_status_t amdf_windows_xdna_query_legacy_context_abi(
     const amdf_platform_endpoint_t* endpoint) {
@@ -46,6 +31,19 @@ static amdf_status_t amdf_windows_xdna_query_legacy_context_abi(
 
 static amdf_status_t amdf_windows_xdna_device_release_native(
     amdf_xdna_umd_device_t* device) {
+  if (device->kernel_execution != NULL) {
+    const amdf_status_t status =
+        amdf_windows_xdna_kernel_execution_destroy(device->kernel_execution);
+    if (!amdf_status_is_ok(status)) {
+      return status;
+    }
+    device->kernel_execution = NULL;
+  }
+  const amdf_status_t memory_status =
+      amdf_windows_xdna_device_drain_memory_releases(device);
+  if (!amdf_status_is_ok(memory_status)) {
+    return memory_status;
+  }
   if (device->context != 0) {
     D3DKMT_DESTROYCONTEXT destroy_context = {0};
     destroy_context.hContext = device->context;
@@ -119,6 +117,7 @@ amdf_status_t amdf_xdna_umd_device_create(
     free(context_data);
     return amdf_make_api_status(AMDF_STATUS_CODE_RESOURCE_EXHAUSTED);
   }
+  InitializeSRWLock(&device->deferred_memory_release_lock);
   device->kmt = &endpoint->instance->kmt;
 
   D3DKMT_CREATEDEVICE create_device = {0};
@@ -169,13 +168,14 @@ amdf_status_t amdf_xdna_umd_device_create(
     } else {
       status = amdf_windows_xdna_legacy_context_query_command_aperture_cookie(
           context_data, context_data_size, &device->command_aperture_cookie);
-      if (amdf_status_is_ok(status) && device->command_aperture_cookie == 0) {
-        status = amdf_make_api_status(AMDF_STATUS_CODE_INTERNAL);
-      }
     }
   }
   free(context_data);
 
+  if (amdf_status_is_ok(status)) {
+    status = amdf_windows_xdna_kernel_execution_create(
+        device, &device->kernel_execution);
+  }
   if (amdf_status_is_ok(status)) {
     amdf_xdna_umd_device_result_t result = {0};
     result.id.words[0] = endpoint->id.words[0];

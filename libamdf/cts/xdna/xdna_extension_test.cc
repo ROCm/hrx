@@ -27,8 +27,27 @@ static_assert(offsetof(amdf_xdna_device_info_t, reset_epoch) == 32);
 static_assert(offsetof(amdf_xdna_device_info_t, columns) == 48);
 static_assert(offsetof(amdf_xdna_device_info_t, row_count) == 60);
 static_assert(sizeof(amdf_xdna_device_info_t) == 64);
-static_assert(offsetof(amdf_xdna_api_t, device_query_info) +
-                  sizeof(amdf_xdna_api_t::device_query_info) ==
+static_assert(offsetof(amdf_xdna_endpoint_info_t, program) == 72);
+static_assert(offsetof(amdf_xdna_endpoint_info_t, command) == 136);
+static_assert(offsetof(amdf_xdna_endpoint_info_t, target_id) == 168);
+static_assert(sizeof(amdf_xdna_endpoint_info_t) == 232);
+static_assert(sizeof(amdf_xdna_program_component_t) == 24);
+static_assert(offsetof(amdf_xdna_program_create_info_t, required_flags) == 24);
+static_assert(offsetof(amdf_xdna_program_create_info_t, footprint) == 40);
+static_assert(sizeof(amdf_xdna_program_create_info_t) == 56);
+static_assert(offsetof(amdf_xdna_program_info_t, total_byte_length) == 32);
+static_assert(offsetof(amdf_xdna_program_info_t, footprint) == 48);
+static_assert(sizeof(amdf_xdna_program_info_t) == 64);
+static_assert(sizeof(amdf_xdna_command_binding_t) == 24);
+static_assert(offsetof(amdf_xdna_command_create_info_t, control_bytes) == 24);
+static_assert(offsetof(amdf_xdna_command_create_info_t, bindings) == 40);
+static_assert(sizeof(amdf_xdna_command_create_info_t) == 48);
+static_assert(offsetof(amdf_xdna_command_info_t, control_byte_length) == 24);
+static_assert(sizeof(amdf_xdna_command_info_t) == 40);
+static_assert(sizeof(amdf_xdna_kernel_queue_create_info_t) == 24);
+static_assert(sizeof(amdf_xdna_kernel_queue_submission_info_t) == 32);
+static_assert(offsetof(amdf_xdna_api_t, kernel_queue_submit) +
+                  sizeof(amdf_xdna_api_t::kernel_queue_submit) ==
               sizeof(amdf_xdna_api_t));
 
 const amdf_api_t* QueryApi() {
@@ -63,6 +82,14 @@ TEST(XdnaExtensionTest, ReportsCompiledAvailabilityBeforeCreatingInstance) {
   EXPECT_NE(xdna_api->endpoint_query_info, nullptr);
   EXPECT_NE(xdna_api->device_create, nullptr);
   EXPECT_NE(xdna_api->device_query_info, nullptr);
+  EXPECT_NE(xdna_api->program_create, nullptr);
+  EXPECT_NE(xdna_api->program_query_info, nullptr);
+  EXPECT_NE(xdna_api->program_destroy, nullptr);
+  EXPECT_NE(xdna_api->command_create, nullptr);
+  EXPECT_NE(xdna_api->command_query_info, nullptr);
+  EXPECT_NE(xdna_api->command_destroy, nullptr);
+  EXPECT_NE(xdna_api->kernel_queue_create, nullptr);
+  EXPECT_NE(xdna_api->kernel_queue_submit, nullptr);
 }
 
 TEST(XdnaExtensionTest, ReturnsStableImmutableTable) {
@@ -184,6 +211,20 @@ TEST_F(XdnaEndpointTest, ReturnsQualifiedCachedProfile) {
   EXPECT_EQ(info.context.column_count_granularity, 1u);
   EXPECT_EQ(info.context.maximum_live_context_count, 32u);
   EXPECT_EQ(info.context.maximum_hardware_context_count, 16u);
+  EXPECT_EQ(info.program.maximum_component_count, 1u);
+  EXPECT_EQ(info.program.maximum_component_byte_length, 32u * 1024u);
+  EXPECT_EQ(info.program.maximum_total_byte_length, 32u * 1024u);
+  EXPECT_EQ(info.program.component_formats.array_configuration.format,
+            AMDF_XDNA_BINARY_FORMAT_TRANSACTION);
+  EXPECT_EQ(info.program.component_formats.array_configuration.version,
+            AMDF_XDNA_TRANSACTION_FORMAT_VERSION_0_1);
+  EXPECT_EQ(info.command.maximum_binding_count, 5u);
+  EXPECT_EQ(info.command.maximum_control_byte_length, 32u * 1024u);
+  EXPECT_EQ(info.command.maximum_native_byte_length, 32u * 1024u);
+  EXPECT_EQ(info.command.control_format.format,
+            AMDF_XDNA_BINARY_FORMAT_TRANSACTION);
+  EXPECT_EQ(info.command.control_format.version,
+            AMDF_XDNA_TRANSACTION_FORMAT_VERSION_0_1);
   EXPECT_STREQ(info.target_id, "amd.xdna.strix_halo.17f0_11");
 
   amdf_xdna_endpoint_info_t second_info = {};

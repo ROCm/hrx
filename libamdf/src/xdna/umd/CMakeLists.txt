@@ -23,4 +23,42 @@ iree_cc_library(
 )
 endif()
 
+if(AMDF_BUILD AND AMDF_FAMILY_XDNA)
+iree_cc_library(
+  NAME
+    memory
+  HDRS
+    "memory.h"
+  DEPS
+    amdf::headers
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD AND AMDF_FAMILY_XDNA)
+iree_cc_library(
+  NAME
+    command
+  HDRS
+    "command.h"
+  DEPS
+    ::device
+    amdf::headers
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD AND AMDF_FAMILY_XDNA)
+iree_cc_library(
+  NAME
+    kernel_queue
+  HDRS
+    "kernel_queue.h"
+  DEPS
+    ::command
+    amdf::headers
+  PUBLIC
+)
+endif()
+
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###

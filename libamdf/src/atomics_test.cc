@@ -42,4 +42,30 @@ TEST(AtomicUint32Test, CompareExchangeUpdatesExpectedOnFailure) {
   EXPECT_EQ(amdf_atomic_uint32_load_acquire(&atomic), 1u);
 }
 
+TEST(AtomicUint64Test, InitializesStoresAndLoads) {
+  amdf_atomic_uint64_t atomic;
+  amdf_atomic_uint64_initialize(&atomic, UINT64_MAX);
+
+  EXPECT_EQ(amdf_atomic_uint64_load_acquire(&atomic), UINT64_MAX);
+  amdf_atomic_uint64_store_release(&atomic, UINT64_C(0x123456789ABCDEF0));
+  EXPECT_EQ(amdf_atomic_uint64_load_acquire(&atomic),
+            UINT64_C(0x123456789ABCDEF0));
+}
+
+TEST(AtomicUint64Test, CompareExchangeUpdatesValueAndExpected) {
+  amdf_atomic_uint64_t atomic;
+  amdf_atomic_uint64_initialize(&atomic, UINT64_C(0x123456789ABCDEF0));
+
+  uint64_t expected = UINT64_C(0x123456789ABCDEF0);
+  EXPECT_TRUE(amdf_atomic_uint64_compare_exchange_acq_rel(
+      &atomic, &expected, UINT64_C(0xFEDCBA9876543210)));
+  EXPECT_EQ(amdf_atomic_uint64_load_acquire(&atomic),
+            UINT64_C(0xFEDCBA9876543210));
+
+  expected = 0;
+  EXPECT_FALSE(amdf_atomic_uint64_compare_exchange_acq_rel(&atomic, &expected,
+                                                           UINT64_C(1)));
+  EXPECT_EQ(expected, UINT64_C(0xFEDCBA9876543210));
+}
+
 }  // namespace

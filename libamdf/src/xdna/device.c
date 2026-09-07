@@ -13,11 +13,14 @@
 #include "libamdf/src/endpoint.h"
 #include "libamdf/src/structure.h"
 #include "libamdf/src/xdna/endpoint_profile.h"
+#include "libamdf/src/xdna/memory.h"
 #include "libamdf/src/xdna/umd/device.h"
 
 typedef struct amdf_xdna_device_t {
   // Generic device state shared by every engine implementation.
   amdf_device_t base;
+  // Immutable endpoint profile selected before native device creation.
+  const amdf_xdna_endpoint_profile_t* profile;
   // Exact native context and address-domain state.
   amdf_xdna_umd_device_t* umd;
   // Immutable identity and achieved placement returned by the provider.
@@ -76,6 +79,7 @@ static amdf_status_t amdf_xdna_device_destroy_native(
 }
 
 static const amdf_device_vtable_t amdf_xdna_device_vtable = {
+    .memory_create = amdf_xdna_memory_create,
     .destroy_native = amdf_xdna_device_destroy_native,
 };
 
@@ -109,6 +113,7 @@ amdf_xdna_device_create(amdf_endpoint_t* endpoint,
   }
   status = amdf_device_initialize(&device->base, &amdf_xdna_device_vtable,
                                   endpoint, AMDF_ENGINE_KIND_XDNA);
+  device->profile = profile;
 
   amdf_xdna_umd_device_result_t result = {0};
   if (amdf_status_is_ok(status)) {
@@ -160,4 +165,36 @@ amdf_status_t AMDF_CALL amdf_xdna_device_query_info(
   out_info->structure_size = structure_size;
   out_info->next = next;
   return AMDF_STATUS_OK;
+}
+
+amdf_xdna_umd_device_t* amdf_xdna_device_get_umd(amdf_device_t* device) {
+  return ((amdf_xdna_device_t*)device)->umd;
+}
+
+const amdf_xdna_device_info_t* amdf_xdna_device_get_info(
+    const amdf_device_t* device) {
+  return &((const amdf_xdna_device_t*)device)->info;
+}
+
+const amdf_xdna_endpoint_profile_t* amdf_xdna_device_get_profile(
+    const amdf_device_t* device) {
+  return ((const amdf_xdna_device_t*)device)->profile;
+}
+
+uint64_t amdf_xdna_device_query_reset_epoch(const amdf_device_t* device) {
+  return ((const amdf_xdna_device_t*)device)->info.reset_epoch;
+}
+
+void amdf_xdna_device_query_transaction_target(
+    const amdf_device_t* device,
+    amdf_xdna_transaction_target_t* out_transaction_target) {
+  const amdf_xdna_device_t* xdna_device = (const amdf_xdna_device_t*)device;
+  const amdf_xdna_endpoint_profile_t* profile =
+      amdf_xdna_device_get_profile(device);
+  *out_transaction_target = (amdf_xdna_transaction_target_t){
+      .device_generation = profile->transaction.device_generation,
+      .row_count = (uint8_t)xdna_device->info.row_count,
+      .column_count = (uint8_t)xdna_device->info.columns.logical_count,
+      .memory_tile_row_count = profile->transaction.memory_tile_row_count,
+  };
 }

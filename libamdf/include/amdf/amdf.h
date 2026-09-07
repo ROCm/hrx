@@ -134,6 +134,18 @@ enum amdf_structure_type_e {
   AMDF_STRUCTURE_TYPE_ENDPOINT_INFO = 2,
   /// An `amdf_queue_family_info_t` output structure.
   AMDF_STRUCTURE_TYPE_QUEUE_FAMILY_INFO = 3,
+  /// An `amdf_memory_create_info_t` input structure.
+  AMDF_STRUCTURE_TYPE_MEMORY_CREATE_INFO = 4,
+  /// An `amdf_memory_info_t` output structure.
+  AMDF_STRUCTURE_TYPE_MEMORY_INFO = 5,
+  /// An `amdf_memory_map_info_t` input structure.
+  AMDF_STRUCTURE_TYPE_MEMORY_MAP_INFO = 6,
+  /// An `amdf_host_mapping_info_t` output structure.
+  AMDF_STRUCTURE_TYPE_HOST_MAPPING_INFO = 7,
+  /// An `amdf_kernel_queue_info_t` output structure.
+  AMDF_STRUCTURE_TYPE_KERNEL_QUEUE_INFO = 8,
+  /// An `amdf_kernel_queue_status_t` output structure.
+  AMDF_STRUCTURE_TYPE_KERNEL_QUEUE_STATUS = 9,
 };
 
 /// Identifier of an optional API table compiled into the providing library.
@@ -171,6 +183,15 @@ typedef struct amdf_endpoint_t amdf_endpoint_t;
 
 /// Live engine context and address domain materialized from an endpoint.
 typedef struct amdf_device_t amdf_device_t;
+
+/// Physical backing and one stable attachment to a materialized device.
+typedef struct amdf_memory_t amdf_memory_t;
+
+/// Explicit host access to one range of host-visible memory.
+typedef struct amdf_host_mapping_t amdf_host_mapping_t;
+
+/// Kernel-mediated publication and retirement of native commands.
+typedef struct amdf_kernel_queue_t amdf_kernel_queue_t;
 
 /// Parameters used to create an independent provider instance.
 typedef struct amdf_instance_create_info_t {
@@ -211,6 +232,30 @@ typedef struct amdf_device_id_t {
 /// Returns true when two device identities contain the same opaque value.
 static inline bool amdf_device_id_is_equal(const amdf_device_id_t* lhs,
                                            const amdf_device_id_t* rhs) {
+  return lhs->words[0] == rhs->words[0] && lhs->words[1] == rhs->words[1];
+}
+
+/// Opaque identity of live physical backing within one provider instance.
+///
+/// Equal nonzero identities prove that two attachments name the same physical
+/// backing. An all-zero identity means that the provider cannot establish
+/// physical identity. The value is not persistent and is never a native
+/// handle.
+typedef struct amdf_physical_memory_id_t {
+  /// Provider-defined identity words.
+  uint64_t words[2];
+} amdf_physical_memory_id_t;
+
+/// Returns true when a physical-memory identity is available.
+static inline bool amdf_physical_memory_id_is_valid(
+    const amdf_physical_memory_id_t* id) {
+  return (id->words[0] | id->words[1]) != 0;
+}
+
+/// Returns true when two physical-memory identities contain the same value.
+static inline bool amdf_physical_memory_id_is_equal(
+    const amdf_physical_memory_id_t* lhs,
+    const amdf_physical_memory_id_t* rhs) {
   return lhs->words[0] == rhs->words[0] && lhs->words[1] == rhs->words[1];
 }
 
@@ -316,6 +361,60 @@ typedef struct amdf_queue_family_info_t {
   amdf_queue_publication_modes_t publication_modes;
 } amdf_queue_family_info_t;
 
+/// An infinite timeout accepted by operations that explicitly wait.
+#define AMDF_TIMEOUT_INFINITE UINT64_MAX
+
+/// Lifecycle state of one kernel-mediated queue.
+typedef uint32_t amdf_kernel_queue_state_t;
+enum amdf_kernel_queue_state_e {
+  /// The queue accepts new work subject to its reported capacity.
+  AMDF_KERNEL_QUEUE_STATE_ACTIVE = 1,
+  /// The queue encountered a terminal provider or firmware failure.
+  AMDF_KERNEL_QUEUE_STATE_FAILED = 2,
+  /// The queue's device can no longer execute or retire work.
+  AMDF_KERNEL_QUEUE_STATE_DEVICE_LOST = 3,
+};
+
+/// Immutable properties of one kernel-mediated queue.
+typedef struct amdf_kernel_queue_info_t {
+  /// Must be `AMDF_STRUCTURE_TYPE_KERNEL_QUEUE_INFO`.
+  amdf_structure_type_t type;
+  /// Must be at least `sizeof(amdf_kernel_queue_info_t)`.
+  uint32_t structure_size;
+  /// Optional output extension chain. No extensions are currently defined.
+  void* next;
+  /// Identity of the materialized device owning this queue.
+  amdf_device_id_t device_id;
+  /// Device reset epoch in which this queue remains valid.
+  uint64_t reset_epoch;
+  /// Endpoint-local family selected when the queue was created.
+  uint32_t queue_family_ordinal;
+  /// Native command representation accepted by the queue.
+  amdf_queue_command_type_t command_type;
+  /// Maximum accepted submissions that may remain unretired.
+  uint32_t maximum_pending_submission_count;
+  /// Maximum commands accepted by one submission.
+  uint32_t maximum_command_count;
+} amdf_kernel_queue_info_t;
+
+/// Current retirement and terminal state of one kernel-mediated queue.
+typedef struct amdf_kernel_queue_status_t {
+  /// Must be `AMDF_STRUCTURE_TYPE_KERNEL_QUEUE_STATUS`.
+  amdf_structure_type_t type;
+  /// Must be at least `sizeof(amdf_kernel_queue_status_t)`.
+  uint32_t structure_size;
+  /// Optional output extension chain. No extensions are currently defined.
+  void* next;
+  /// Greatest accepted submission whose native storage is no longer in use.
+  uint64_t retired_submission;
+  /// Current queue lifecycle state.
+  amdf_kernel_queue_state_t state;
+  /// Reserved for future use and always zero.
+  uint32_t reserved;
+  /// Sticky terminal failure, or `AMDF_STATUS_OK` while active.
+  amdf_status_t terminal_status;
+} amdf_kernel_queue_status_t;
+
 /// Immutable properties of one opened endpoint.
 typedef struct amdf_endpoint_info_t {
   /// Must be `AMDF_STRUCTURE_TYPE_ENDPOINT_INFO`.
@@ -337,6 +436,155 @@ typedef struct amdf_endpoint_info_t {
   /// Number of immutable endpoint-local native queue families.
   uint32_t queue_family_count;
 } amdf_endpoint_info_t;
+
+/// Physical placement class requested for a memory allocation.
+typedef uint32_t amdf_memory_class_t;
+enum amdf_memory_class_e {
+  /// No placement class. This value is never accepted by memory creation.
+  AMDF_MEMORY_CLASS_UNKNOWN = 0,
+  /// Provider-owned system memory accessible through a host mapping.
+  AMDF_MEMORY_CLASS_SYSTEM = 1,
+  /// Device-local physical memory that may not be host visible.
+  AMDF_MEMORY_CLASS_LOCAL = 2,
+  /// Caller-owned host memory registered with a device.
+  AMDF_MEMORY_CLASS_REGISTERED_HOST = 3,
+};
+
+/// Required or achieved properties of a memory attachment.
+typedef uint64_t amdf_memory_flags_t;
+enum amdf_memory_flag_bits_e {
+  /// The allocation can be explicitly mapped for host access.
+  AMDF_MEMORY_FLAG_HOST_VISIBLE = UINT64_C(1) << 0,
+  /// The physical placement is local to the attached device.
+  AMDF_MEMORY_FLAG_DEVICE_LOCAL = UINT64_C(1) << 1,
+  /// The physical backing can be exported and attached to another device.
+  AMDF_MEMORY_FLAG_SHAREABLE = UINT64_C(1) << 2,
+  /// The allocation can hold instructions executable by the device.
+  AMDF_MEMORY_FLAG_EXECUTABLE = UINT64_C(1) << 3,
+  /// The allocation can hold directly published user-mode queue state.
+  AMDF_MEMORY_FLAG_QUEUE_STORAGE = UINT64_C(1) << 4,
+  /// Host and device access requires no explicit host cache transition.
+  AMDF_MEMORY_FLAG_HOST_COHERENT = UINT64_C(1) << 5,
+  /// A stable device address is established before creation returns.
+  AMDF_MEMORY_FLAG_DEVICE_ADDRESS = UINT64_C(1) << 6,
+};
+
+/// Parameters used to create physical backing and attach it to one device.
+typedef struct amdf_memory_create_info_t {
+  /// Must be `AMDF_STRUCTURE_TYPE_MEMORY_CREATE_INFO`.
+  amdf_structure_type_t type;
+  /// Must be at least `sizeof(amdf_memory_create_info_t)`.
+  uint32_t structure_size;
+  /// Optional input extension chain. No extensions are currently defined.
+  const void* next;
+  /// Required physical placement class.
+  amdf_memory_class_t memory_class;
+  /// Required properties that must all be achieved.
+  amdf_memory_flags_t required_flags;
+  /// Minimum usable byte length. The achieved allocation may be larger.
+  uint64_t byte_length;
+  /// Minimum power-of-two allocation-base alignment in every supported address
+  /// space, or zero for provider policy.
+  uint64_t minimum_alignment;
+  /// Host base for `AMDF_MEMORY_CLASS_REGISTERED_HOST`, otherwise `NULL`.
+  void* registered_host_pointer;
+} amdf_memory_create_info_t;
+
+/// Immutable properties of one live device memory attachment.
+typedef struct amdf_memory_info_t {
+  /// Must be `AMDF_STRUCTURE_TYPE_MEMORY_INFO`.
+  amdf_structure_type_t type;
+  /// Must be at least `sizeof(amdf_memory_info_t)`.
+  uint32_t structure_size;
+  /// Optional output extension chain. No extensions are currently defined.
+  void* next;
+  /// Achieved physical placement class.
+  amdf_memory_class_t memory_class;
+  /// Achieved attachment properties.
+  amdf_memory_flags_t flags;
+  /// Physical allocation length in bytes.
+  uint64_t byte_length;
+  /// Guaranteed power-of-two allocation-base alignment in every supported
+  /// address space.
+  uint64_t alignment;
+  /// Identity shared by attachments to the same physical backing, when known.
+  amdf_physical_memory_id_t physical_backing_id;
+  /// Stable device virtual base when `AMDF_MEMORY_FLAG_DEVICE_ADDRESS` is set.
+  uint64_t device_address;
+  /// Device reset epoch in which the attachment and address remain valid.
+  uint64_t reset_epoch;
+} amdf_memory_info_t;
+
+/// Host access requested for one explicit mapping.
+typedef uint32_t amdf_memory_map_flags_t;
+enum amdf_memory_map_flag_bits_e {
+  /// Host loads are permitted from the mapped range.
+  AMDF_MEMORY_MAP_FLAG_READ = 1u << 0,
+  /// Host stores are permitted to the mapped range.
+  AMDF_MEMORY_MAP_FLAG_WRITE = 1u << 1,
+};
+
+/// Parameters used to map a range of host-visible memory.
+typedef struct amdf_memory_map_info_t {
+  /// Must be `AMDF_STRUCTURE_TYPE_MEMORY_MAP_INFO`.
+  amdf_structure_type_t type;
+  /// Must be at least `sizeof(amdf_memory_map_info_t)`.
+  uint32_t structure_size;
+  /// Optional input extension chain. No extensions are currently defined.
+  const void* next;
+  /// Byte offset into the physical allocation.
+  uint64_t byte_offset;
+  /// Nonzero byte length of the mapped range.
+  uint64_t byte_length;
+  /// Required host read and write access.
+  amdf_memory_map_flags_t flags;
+} amdf_memory_map_info_t;
+
+/// Host cache behavior of a mapped allocation.
+typedef uint32_t amdf_host_cacheability_t;
+enum amdf_host_cacheability_e {
+  /// The provider cannot describe the mapping's cache behavior.
+  AMDF_HOST_CACHEABILITY_UNKNOWN = 0,
+  /// Host and device accesses are mutually coherent without cache control.
+  AMDF_HOST_CACHEABILITY_COHERENT = 1,
+  /// Ordinary host write-back caching requiring explicit ownership transfer.
+  AMDF_HOST_CACHEABILITY_WRITE_BACK = 2,
+  /// Host write-combined caching intended for sequential stores.
+  AMDF_HOST_CACHEABILITY_WRITE_COMBINED = 3,
+  /// Uncached host access.
+  AMDF_HOST_CACHEABILITY_UNCACHED = 4,
+};
+
+/// Immutable properties of one live host mapping.
+typedef struct amdf_host_mapping_info_t {
+  /// Must be `AMDF_STRUCTURE_TYPE_HOST_MAPPING_INFO`.
+  amdf_structure_type_t type;
+  /// Must be at least `sizeof(amdf_host_mapping_info_t)`.
+  uint32_t structure_size;
+  /// Optional output extension chain. No extensions are currently defined.
+  void* next;
+  /// Achieved host read and write access.
+  amdf_memory_map_flags_t flags;
+  /// Host cache behavior of the mapped pages.
+  amdf_host_cacheability_t cacheability;
+  /// First mapped byte borrowed until `host_mapping_destroy` succeeds.
+  void* pointer;
+  /// Mapped byte length.
+  uint64_t byte_length;
+  /// Host cache-line length in bytes, or zero when not applicable.
+  uint32_t cache_line_size;
+  /// Device reset epoch in which the mapping remains valid.
+  uint64_t reset_epoch;
+} amdf_host_mapping_info_t;
+
+/// Direction of one explicit host cache ownership transition.
+typedef uint32_t amdf_host_cache_operation_t;
+enum amdf_host_cache_operation_e {
+  /// Releases prior host writes for subsequent device reads.
+  AMDF_HOST_CACHE_OPERATION_FLUSH = 1,
+  /// Acquires prior device writes for subsequent host reads.
+  AMDF_HOST_CACHE_OPERATION_INVALIDATE = 2,
+};
 
 /// Immutable entry-point table for one negotiated ABI version.
 ///
@@ -442,6 +690,108 @@ typedef struct amdf_api_t {
   /// live. Destruction performs no implicit device wait. A native teardown
   /// failure leaves the device live so destruction can be retried.
   amdf_status_t(AMDF_CALL* device_destroy)(amdf_device_t* device);
+
+  /// Creates physical backing and one stable attachment to `device`.
+  ///
+  /// The returned memory borrows `device`, which must outlive it. Every bit in
+  /// `required_flags` is guaranteed in the copied memory info. In particular,
+  /// `AMDF_MEMORY_FLAG_DEVICE_ADDRESS` means that all ordinary mapping and
+  /// residency work has completed and the address is ready for any supported
+  /// consumer when this cold call returns. This operation performs no queue
+  /// submission, command inspection, retry, or device-wide synchronization.
+  /// On failure, `out_memory` is set to `NULL`.
+  amdf_status_t(AMDF_CALL* memory_create)(
+      amdf_device_t* device, const amdf_memory_create_info_t* create_info,
+      amdf_memory_t** out_memory);
+
+  /// Copies immutable properties cached when `memory` was created.
+  ///
+  /// The operation is thread-safe and performs no system call, allocation,
+  /// mapping mutation, retry, sleep, or device wait. The caller initializes
+  /// `out_info` and its complete extension chain. No output is modified when
+  /// validation fails.
+  amdf_status_t(AMDF_CALL* memory_query_info)(amdf_memory_t* memory,
+                                              amdf_memory_info_t* out_info);
+
+  /// Creates an explicit host mapping of one memory range.
+  ///
+  /// The returned mapping borrows `memory`, which must outlive it. Mapping does
+  /// not wait for device work or transfer cache ownership. On failure,
+  /// `out_mapping` is set to `NULL`.
+  amdf_status_t(AMDF_CALL* memory_map)(amdf_memory_t* memory,
+                                       const amdf_memory_map_info_t* map_info,
+                                       amdf_host_mapping_t** out_mapping);
+
+  /// Copies immutable properties of one live host mapping.
+  ///
+  /// The copied pointer is borrowed until `host_mapping_destroy` succeeds. The
+  /// operation is thread-safe and performs no system call, allocation, cache
+  /// transition, or device wait. No output is modified on validation failure.
+  amdf_status_t(AMDF_CALL* host_mapping_query_info)(
+      amdf_host_mapping_t* mapping, amdf_host_mapping_info_t* out_info);
+
+  /// Performs one explicit host cache ownership transition over a mapped range.
+  ///
+  /// `byte_offset` is relative to the mapping. The implementation may touch
+  /// every cache line intersecting the range; callers externally synchronize
+  /// the complete intersected lines. A non-empty flush requires write access
+  /// and a non-empty invalidate requires read access; otherwise the operation
+  /// returns `AMDF_STATUS_CODE_FAILED_PRECONDITION`. An empty range is a no-op.
+  /// This operation never waits for device execution or supplies an execution
+  /// dependency.
+  amdf_status_t(AMDF_CALL* host_mapping_cache_control)(
+      amdf_host_mapping_t* mapping, amdf_host_cache_operation_t operation,
+      uint64_t byte_offset, uint64_t byte_length);
+
+  /// Destroys one mapping after all host access to its pointer has stopped.
+  ///
+  /// The caller must have exclusive access. Failure leaves the mapping live so
+  /// destruction can be retried. No device wait or cache transition is implied.
+  amdf_status_t(AMDF_CALL* host_mapping_destroy)(amdf_host_mapping_t* mapping);
+
+  /// Destroys memory after all host mappings and future device uses are gone.
+  ///
+  /// The caller must have exclusive access. Returns `AMDF_STATUS_CODE_BUSY`
+  /// without native mutation while a mapping remains live. Destruction performs
+  /// no implicit device wait or cache transition. A native teardown failure
+  /// leaves the memory live so destruction can be retried.
+  amdf_status_t(AMDF_CALL* memory_destroy)(amdf_memory_t* memory);
+
+  /// Copies immutable properties cached when `queue` was created.
+  ///
+  /// The operation is thread-safe and performs no system call, allocation,
+  /// native progress query, retry, sleep, or device wait. No output is modified
+  /// when validation fails.
+  amdf_status_t(AMDF_CALL* kernel_queue_query_info)(
+      amdf_kernel_queue_t* queue, amdf_kernel_queue_info_t* out_info);
+
+  /// Samples retirement and terminal state without waiting.
+  ///
+  /// The operation may retire completed submissions and release their command
+  /// borrows. It is thread-safe with submission and other status operations. It
+  /// performs no allocation, system call, retry, sleep, or active polling. No
+  /// output is modified when validation fails.
+  amdf_status_t(AMDF_CALL* kernel_queue_query_status)(
+      amdf_kernel_queue_t* queue, amdf_kernel_queue_status_t* out_status);
+
+  /// Waits until `submission` retires or the timeout expires.
+  ///
+  /// `timeout_nanoseconds` includes active polling and the subsequent event
+  /// wait. `poll_duration_nanoseconds` is clipped to that timeout; zero
+  /// disables active polling. `AMDF_TIMEOUT_INFINITE` requests no deadline. A
+  /// timeout observes but never cancels accepted work or releases its command
+  /// borrows. The operation is thread-safe with submission and status queries.
+  amdf_status_t(AMDF_CALL* kernel_queue_wait)(
+      amdf_kernel_queue_t* queue, uint64_t submission,
+      uint64_t timeout_nanoseconds, uint64_t poll_duration_nanoseconds);
+
+  /// Destroys one queue after every accepted submission has retired.
+  ///
+  /// The caller must have exclusive access. The operation samples progress once
+  /// and returns `AMDF_STATUS_CODE_BUSY` without waiting while work remains. A
+  /// native teardown failure leaves the queue live so destruction can be
+  /// retried.
+  amdf_status_t(AMDF_CALL* kernel_queue_destroy)(amdf_kernel_queue_t* queue);
 } amdf_api_t;
 
 /// Function type used to acquire the immutable API table.

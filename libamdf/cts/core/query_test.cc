@@ -22,8 +22,18 @@ static_assert(offsetof(amdf_queue_family_info_t, ordinal) ==
 static_assert(offsetof(amdf_queue_family_info_t, command_type) == 20);
 static_assert(offsetof(amdf_queue_family_info_t, publication_modes) == 24);
 static_assert(sizeof(amdf_queue_family_info_t) == 32);
-static_assert(offsetof(amdf_api_t, device_destroy) +
-                  sizeof(amdf_api_t::device_destroy) ==
+static_assert(offsetof(amdf_kernel_queue_info_t, device_id) ==
+              sizeof(amdf_output_structure_t));
+static_assert(offsetof(amdf_kernel_queue_info_t, reset_epoch) == 32);
+static_assert(offsetof(amdf_kernel_queue_info_t,
+                       maximum_pending_submission_count) == 48);
+static_assert(sizeof(amdf_kernel_queue_info_t) == 56);
+static_assert(offsetof(amdf_kernel_queue_status_t, retired_submission) ==
+              sizeof(amdf_output_structure_t));
+static_assert(offsetof(amdf_kernel_queue_status_t, terminal_status) == 32);
+static_assert(sizeof(amdf_kernel_queue_status_t) == 40);
+static_assert(offsetof(amdf_api_t, kernel_queue_destroy) +
+                  sizeof(amdf_api_t::kernel_queue_destroy) ==
               sizeof(amdf_api_t));
 
 TEST(QueryApiTest, NegotiatesSupportedVersion) {
@@ -44,6 +54,17 @@ TEST(QueryApiTest, NegotiatesSupportedVersion) {
   EXPECT_NE(api->query_extension, nullptr);
   EXPECT_NE(api->endpoint_query_queue_family_info, nullptr);
   EXPECT_NE(api->device_destroy, nullptr);
+  EXPECT_NE(api->memory_create, nullptr);
+  EXPECT_NE(api->memory_query_info, nullptr);
+  EXPECT_NE(api->memory_map, nullptr);
+  EXPECT_NE(api->host_mapping_query_info, nullptr);
+  EXPECT_NE(api->host_mapping_cache_control, nullptr);
+  EXPECT_NE(api->host_mapping_destroy, nullptr);
+  EXPECT_NE(api->memory_destroy, nullptr);
+  EXPECT_NE(api->kernel_queue_query_info, nullptr);
+  EXPECT_NE(api->kernel_queue_query_status, nullptr);
+  EXPECT_NE(api->kernel_queue_wait, nullptr);
+  EXPECT_NE(api->kernel_queue_destroy, nullptr);
 }
 
 TEST(QueryApiTest, ReturnsStableImmutableTable) {

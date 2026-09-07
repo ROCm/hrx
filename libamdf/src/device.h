@@ -15,6 +15,10 @@ extern "C" {
 #endif  // __cplusplus
 
 typedef struct amdf_device_vtable_t {
+  // Creates physical memory attached to this device.
+  amdf_status_t (*memory_create)(amdf_device_t* device,
+                                 const amdf_memory_create_info_t* create_info,
+                                 amdf_memory_t** out_memory);
   // Releases the exact native state owned by a device implementation.
   amdf_status_t (*destroy_native)(amdf_device_t* device);
 } amdf_device_vtable_t;
@@ -42,6 +46,12 @@ void amdf_device_deinitialize(amdf_device_t* device);
 // Returns true when a device is implemented by `expected_engine_kind`.
 bool amdf_device_is_engine(const amdf_device_t* device,
                            amdf_engine_kind_t expected_engine_kind);
+
+// Registers one child that borrows `device`.
+amdf_status_t amdf_device_register_child(amdf_device_t* device);
+
+// Releases one child borrow.
+void amdf_device_unregister_child(amdf_device_t* device);
 
 // Destroys a device with no remaining children.
 amdf_status_t AMDF_CALL amdf_device_destroy(amdf_device_t* device);

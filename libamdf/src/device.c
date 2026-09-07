@@ -36,6 +36,14 @@ bool amdf_device_is_engine(const amdf_device_t* device,
   return device != NULL && device->engine_kind == expected_engine_kind;
 }
 
+amdf_status_t amdf_device_register_child(amdf_device_t* device) {
+  return amdf_child_tracker_register(&device->children);
+}
+
+void amdf_device_unregister_child(amdf_device_t* device) {
+  amdf_child_tracker_unregister(&device->children);
+}
+
 amdf_status_t AMDF_CALL amdf_device_destroy(amdf_device_t* device) {
   if (device == NULL) {
     return amdf_make_api_status(AMDF_STATUS_CODE_INVALID_ARGUMENT);

@@ -10,7 +10,10 @@
 
 #include "libamdf/src/device.h"
 #include "libamdf/src/endpoint.h"
+#include "libamdf/src/host_mapping.h"
 #include "libamdf/src/instance.h"
+#include "libamdf/src/kernel_queue.h"
+#include "libamdf/src/memory.h"
 #include "libamdf/src/provider/extension.h"
 
 static const amdf_api_t amdf_api_v1 = {
@@ -19,12 +22,23 @@ static const amdf_api_t amdf_api_v1 = {
     .instance_create = amdf_instance_create,
     .instance_destroy = amdf_instance_destroy,
     .endpoint_enumerate = amdf_endpoint_enumerate,
-    .endpoint_open = amdf_endpoint_open,
+    .endpoint_open = amdf_provider_endpoint_open,
     .endpoint_query_info = amdf_endpoint_query_info,
     .endpoint_close = amdf_endpoint_close,
     .query_extension = amdf_extension_query,
     .endpoint_query_queue_family_info = amdf_endpoint_query_queue_family_info,
     .device_destroy = amdf_device_destroy,
+    .memory_create = amdf_memory_create,
+    .memory_query_info = amdf_memory_query_info,
+    .memory_map = amdf_memory_map,
+    .host_mapping_query_info = amdf_host_mapping_query_info,
+    .host_mapping_cache_control = amdf_host_mapping_cache_control,
+    .host_mapping_destroy = amdf_host_mapping_destroy,
+    .memory_destroy = amdf_memory_destroy,
+    .kernel_queue_query_info = amdf_kernel_queue_query_info,
+    .kernel_queue_query_status = amdf_kernel_queue_query_status,
+    .kernel_queue_wait = amdf_kernel_queue_wait,
+    .kernel_queue_destroy = amdf_kernel_queue_destroy,
 };
 
 amdf_status_t AMDF_CALL amdf_query_api(amdf_abi_version_t minimum_version,

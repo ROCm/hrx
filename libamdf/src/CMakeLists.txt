@@ -115,6 +115,55 @@ iree_cc_library(
 )
 endif()
 
+if(AMDF_BUILD)
+iree_cc_library(
+  NAME
+    memory
+  HDRS
+    "memory.h"
+  SRCS
+    "memory.c"
+  DEPS
+    ::child_tracker
+    ::device
+    ::structure
+    amdf::headers
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD)
+iree_cc_library(
+  NAME
+    host_mapping
+  HDRS
+    "host_mapping.h"
+  SRCS
+    "host_mapping.c"
+  DEPS
+    ::memory
+    ::structure
+    amdf::headers
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD)
+iree_cc_library(
+  NAME
+    kernel_queue
+  HDRS
+    "kernel_queue.h"
+  SRCS
+    "kernel_queue.c"
+  DEPS
+    ::device
+    ::structure
+    amdf::headers
+  PUBLIC
+)
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
 set(_core_platform_deps "")
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
@@ -126,7 +175,10 @@ iree_cc_library(
   DEPS
     ::device
     ::endpoint
+    ::host_mapping
     ::instance
+    ::kernel_queue
+    ::memory
     ::pci
     ::structure
     amdf::headers

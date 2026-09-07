@@ -16,7 +16,13 @@ package(
 amdf_cc_library(
     name = "xdna_tests",
     testonly = True,
-    srcs = ["xdna_extension_test.cc"],
+    srcs = [
+        "kernel_queue_test.cc",
+        "memory_test.cc",
+        "program_test.cc",
+        "xdna_device_fixture.h",
+        "xdna_extension_test.cc",
+    ],
     deps = [
         "//libamdf/cts/util:provider_headers",
         "//third_party:google_test",

@@ -22,15 +22,78 @@ amdf_cc_library(
 )
 
 amdf_cc_library(
+    name = "transaction",
+    srcs = ["transaction.c"],
+    hdrs = ["transaction.h"],
+    visibility = ["//libamdf/src/xdna:__subpackages__"],
+)
+
+amdf_cc_library(
     name = "device",
-    srcs = ["device.c"],
-    hdrs = ["device.h"],
+    srcs = [
+        "device.c",
+        "memory.c",
+    ],
+    hdrs = [
+        "device.h",
+        "memory.h",
+    ],
     deps = [
         ":endpoint_profile",
+        ":transaction",
         "//libamdf/src:device",
         "//libamdf/src:endpoint",
+        "//libamdf/src:host_mapping",
+        "//libamdf/src:memory",
         "//libamdf/src:structure",
         "//libamdf/src/xdna/umd:device",
+        "//libamdf/src/xdna/umd:memory",
+    ],
+)
+
+amdf_cc_library(
+    name = "program",
+    srcs = ["program.c"],
+    hdrs = ["program.h"],
+    deps = [
+        ":device",
+        ":endpoint_profile",
+        "//libamdf/src:child_tracker",
+        "//libamdf/src:device",
+        "//libamdf/src:structure",
+    ],
+)
+
+amdf_cc_library(
+    name = "command",
+    srcs = ["command.c"],
+    hdrs = ["command.h"],
+    deps = [
+        ":device",
+        ":endpoint_profile",
+        ":program",
+        ":transaction",
+        "//libamdf/src:child_tracker",
+        "//libamdf/src:memory",
+        "//libamdf/src:structure",
+        "//libamdf/src/xdna/umd:command",
+    ],
+)
+
+amdf_cc_library(
+    name = "kernel_queue",
+    srcs = ["kernel_queue.c"],
+    hdrs = ["kernel_queue.h"],
+    deps = [
+        ":command",
+        ":device",
+        ":program",
+        "//libamdf/src:atomics",
+        "//libamdf/src:device",
+        "//libamdf/src:endpoint",
+        "//libamdf/src:kernel_queue",
+        "//libamdf/src:structure",
+        "//libamdf/src/xdna/umd:kernel_queue",
     ],
 )
 
@@ -40,10 +103,14 @@ amdf_cc_library(
     hdrs = ["extension.h"],
     visibility = ["//libamdf/src/provider:__pkg__"],
     deps = [
+        ":command",
         ":device",
         ":endpoint_profile",
+        ":kernel_queue",
+        ":program",
         "//libamdf/src:endpoint",
         "//libamdf/src:structure",
+        "//libamdf/src/platform",
     ],
 )
 
@@ -62,6 +129,16 @@ amdf_cc_test(
     srcs = ["endpoint_profile_test.cc"],
     deps = [
         ":endpoint_profile",
+        "//third_party:google_test",
+        "//third_party:google_test_main",
+    ],
+)
+
+amdf_cc_test(
+    name = "transaction_test",
+    srcs = ["transaction_test.cc"],
+    deps = [
+        ":transaction",
         "//third_party:google_test",
         "//third_party:google_test_main",
     ],

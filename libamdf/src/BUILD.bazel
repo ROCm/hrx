@@ -16,12 +16,14 @@ package(
 amdf_cc_library(
     name = "atomics",
     hdrs = ["atomics.h"],
+    visibility = ["//libamdf/src:__subpackages__"],
 )
 
 amdf_cc_library(
     name = "child_tracker",
     srcs = ["child_tracker.c"],
     hdrs = ["child_tracker.h"],
+    visibility = ["//libamdf/src:__subpackages__"],
     deps = [":atomics"],
 )
 
@@ -76,13 +78,50 @@ amdf_cc_library(
 )
 
 amdf_cc_library(
+    name = "memory",
+    srcs = ["memory.c"],
+    hdrs = ["memory.h"],
+    visibility = ["//libamdf/src:__subpackages__"],
+    deps = [
+        ":child_tracker",
+        ":device",
+        ":structure",
+    ],
+)
+
+amdf_cc_library(
+    name = "host_mapping",
+    srcs = ["host_mapping.c"],
+    hdrs = ["host_mapping.h"],
+    visibility = ["//libamdf/src:__subpackages__"],
+    deps = [
+        ":memory",
+        ":structure",
+    ],
+)
+
+amdf_cc_library(
+    name = "kernel_queue",
+    srcs = ["kernel_queue.c"],
+    hdrs = ["kernel_queue.h"],
+    visibility = ["//libamdf/src:__subpackages__"],
+    deps = [
+        ":device",
+        ":structure",
+    ],
+)
+
+amdf_cc_library(
     name = "core",
     target_compatible_with = ["@platforms//os:windows"],
     visibility = ["//libamdf/src/provider:__pkg__"],
     deps = [
         ":device",
         ":endpoint",
+        ":host_mapping",
         ":instance",
+        ":kernel_queue",
+        ":memory",
         ":pci",
         ":structure",
     ] + select({
