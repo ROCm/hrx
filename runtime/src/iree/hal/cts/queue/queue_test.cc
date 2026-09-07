@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include <algorithm>
+#include <cstdint>
 #include <vector>
 
 #include "iree/hal/cts/util/test_base.h"
@@ -100,6 +101,77 @@ TEST_P(QueueTest, ProvisionedInventoryMatchesDeviceSpec) {
   EXPECT_EQ(nullptr,
             iree_hal_device_queue_family(device_, invalid_family_ordinal));
   EXPECT_EQ(nullptr, iree_hal_device_queue(device_, invalid_family_ordinal, 0));
+}
+
+TEST_P(QueueTest, QueueAcquisitionCanonicalizesCompleteResourceSet) {
+  const iree_hal_device_queue_spec_t* queue_spec =
+      iree_hal_device_spec_queues(iree_hal_device_spec(device_));
+  const iree_hal_queue_family_t* family = nullptr;
+  const iree_hal_queue_family_spec_t* family_spec = nullptr;
+  for (iree_host_size_t i = 0; i < queue_spec->family_count; ++i) {
+    const iree_hal_queue_family_spec_t* candidate_spec =
+        &queue_spec->families[i];
+    if (!candidate_spec->execution_resource_count ||
+        !iree_any_bit_set(
+            candidate_spec->flags,
+            IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION)) {
+      continue;
+    }
+    family = iree_hal_device_queue_family(
+        device_, (iree_hal_queue_family_ordinal_t)i);
+    family_spec = candidate_spec;
+    break;
+  }
+  if (!family) {
+    GTEST_SKIP()
+        << "device has no dynamically acquirable family with execution "
+           "resources";
+  }
+
+  std::vector<iree_hal_queue_execution_resource_ordinal_t> resource_ordinals(
+      family_spec->execution_resource_count);
+  for (iree_host_size_t i = 0; i < resource_ordinals.size(); ++i) {
+    resource_ordinals[i] = (iree_hal_queue_execution_resource_ordinal_t)i;
+  }
+  iree_hal_queue_params_t params;
+  iree_hal_queue_params_initialize(&params);
+  params.execution_resources.count = resource_ordinals.size();
+  params.execution_resources.ordinals = resource_ordinals.data();
+
+  Ref<iree_hal_queue_t> queue;
+  IREE_ASSERT_OK(
+      iree_hal_device_acquire_queue(device_, family, &params, queue.out()));
+  EXPECT_EQ(family, iree_hal_queue_family(queue));
+  const iree_hal_queue_execution_resource_list_t achieved_resources =
+      iree_hal_queue_execution_resources(queue);
+  EXPECT_EQ(0u, achieved_resources.count);
+  EXPECT_EQ(nullptr, achieved_resources.ordinals);
+}
+
+TEST_P(QueueTest, QueueAcquisitionRequiresDynamicFamily) {
+  const iree_hal_device_queue_spec_t* queue_spec =
+      iree_hal_device_spec_queues(iree_hal_device_spec(device_));
+  for (iree_host_size_t i = 0; i < queue_spec->family_count; ++i) {
+    const iree_hal_queue_family_spec_t* family_spec = &queue_spec->families[i];
+    if (iree_any_bit_set(family_spec->flags,
+                         IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION)) {
+      continue;
+    }
+    const iree_hal_queue_family_t* family = iree_hal_device_queue_family(
+        device_, (iree_hal_queue_family_ordinal_t)i);
+    ASSERT_NE(nullptr, family);
+    iree_hal_queue_params_t params;
+    iree_hal_queue_params_initialize(&params);
+    iree_hal_queue_t* const sentinel =
+        reinterpret_cast<iree_hal_queue_t*>(uintptr_t{1});
+    iree_hal_queue_t* output = sentinel;
+    IREE_EXPECT_STATUS_IS(
+        IREE_STATUS_UNIMPLEMENTED,
+        iree_hal_device_acquire_queue(device_, family, &params, &output));
+    EXPECT_EQ(sentinel, output);
+    return;
+  }
+  GTEST_SKIP() << "all device queue families support dynamic acquisition";
 }
 
 CTS_REGISTER_TEST_SUITE(QueueTest);

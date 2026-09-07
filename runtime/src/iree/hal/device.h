@@ -556,6 +556,25 @@ IREE_API_EXPORT iree_hal_queue_t* iree_hal_device_queue(
     iree_hal_device_t* device, iree_hal_queue_family_ordinal_t family_ordinal,
     iree_hal_queue_ordinal_t queue_ordinal);
 
+// Acquires an exact hardware queue from |queue_family| with immutable
+// |params|.
+//
+// |queue_family| must be the exact borrowed identity exposed by |device|.
+// Parameter storage is borrowed only for the duration of the call. An empty
+// execution-resource list requests the complete resource set advertised by the
+// family; a nonempty list must contain sorted unique family-local ordinals. An
+// explicitly enumerated complete set is accepted and canonicalized to the empty
+// form reported by the acquired queue.
+//
+// The returned queue is dynamically acquired and does not have a provisioned
+// queue ordinal. Acquisition performs no generic caching, pooling, or virtual
+// queuing. On success, |out_queue| receives one owning reference and the parent
+// device must remain live until it is released. |out_queue| is unchanged on
+// failure.
+IREE_API_EXPORT iree_status_t iree_hal_device_acquire_queue(
+    iree_hal_device_t* device, const iree_hal_queue_family_t* queue_family,
+    const iree_hal_queue_params_t* params, iree_hal_queue_t** out_queue);
+
 // Initializes |out_observation| for a device state sample.
 IREE_API_EXPORT void iree_hal_device_observation_initialize(
     iree_hal_device_observation_flags_t requested_flags,
@@ -789,6 +808,10 @@ typedef struct iree_hal_device_vtable_t {
   iree_hal_queue_t*(IREE_API_PTR* queue)(
       iree_hal_device_t* device, iree_hal_queue_family_ordinal_t family_ordinal,
       iree_hal_queue_ordinal_t queue_ordinal);
+
+  iree_status_t(IREE_API_PTR* acquire_queue)(
+      iree_hal_device_t* device, const iree_hal_queue_family_t* queue_family,
+      const iree_hal_queue_params_t* params, iree_hal_queue_t** out_queue);
 
   iree_status_t(IREE_API_PTR* sample_observation)(
       iree_hal_device_t* device,

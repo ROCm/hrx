@@ -68,9 +68,10 @@ enum iree_hal_queue_feature_flag_bits_e {
 // Exact family-local execution-resource set.
 //
 // Ordinals are sorted and unique. An empty list selects every execution
-// resource advertised by the queue family. List storage is borrowed by queue
-// acquisition calls and owned by the queue implementation for an achieved
-// queue realization.
+// resource advertised by the queue family. An explicitly enumerated complete
+// set has the same meaning and is canonicalized to the empty form during queue
+// acquisition. List storage is borrowed by queue acquisition calls and owned
+// by the queue implementation for an achieved queue realization.
 typedef struct iree_hal_queue_execution_resource_list_t {
   // Number of canonical resource ordinals in |ordinals|.
   iree_host_size_t count;
