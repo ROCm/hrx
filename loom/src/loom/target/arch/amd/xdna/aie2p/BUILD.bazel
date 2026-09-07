@@ -450,6 +450,7 @@ iree_execution_test_suite(
     size = "small",
     data = [
         "test/end_to_end/f32_carrier.loom",
+        "test/end_to_end/fixed_record_report.loom",
         "test/end_to_end/q4_q5_k_record_contraction.loom",
         "test/end_to_end/split_k.loom",
     ],
@@ -527,6 +528,7 @@ loom_cc_library(
         "//loom/src/loom/ir",
         "//loom/src/loom/target/reporting:low",
         "//loom/src/loom/target/reporting:report",
+        "//loom/src/loom/util:fact_table",
         "//runtime/src/iree/base",
         "//runtime/src/iree/base/internal:arena",
     ],
@@ -563,7 +565,11 @@ loom_cc_library(
 
 loom_cc_library(
     name = "artifact",
-    srcs = ["emit/artifact.c"],
+    srcs = [
+        "emit/array_report.c",
+        "emit/array_report.h",
+        "emit/artifact.c",
+    ],
     hdrs = ["emit/artifact.h"],
     visibility = ["//loom/src/loom/tooling/target/amd/xdna:__pkg__"],
     deps = [
@@ -578,6 +584,7 @@ loom_cc_library(
         "//loom/src/loom/codegen/low:diagnostics",
         "//loom/src/loom/ir",
         "//loom/src/loom/ops:op_defs",
+        "//loom/src/loom/ops/encoding",
         "//loom/src/loom/ops/low",
         "//loom/src/loom/target:function_version",
         "//loom/src/loom/target/arch/amd/xdna:device_profile",

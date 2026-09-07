@@ -1,0 +1,28 @@
+aie2p.target<array> @array_target
+
+aie2p.target<core> @core_target
+
+pipeline.def<kernel> public retain target(@array_target) @fixed_record_report_array() launch(%input: buffer, %output: buffer) {
+  %worker_lanes = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %worker_lanes : index -> group
+
+  %input_view = buffer.view %input[%base] : buffer -> view<1x2x176xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q5_k>>
+  %output_view = buffer.view %output[%base] : buffer -> view<1xf32>
+
+  %records = pipeline.scatter %input_view across %workers : view<1x2x176xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q5_k>>, group -> pipeline.flow<tile<176xi8>>
+  %partials = pipeline.stage @zero_partial on %workers(%records) : (group, pipeline.flow<tile<176xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %result = pipeline.fold<addf> %partials : pipeline.flow<tile<1xf32>>
+  pipeline.write %result to %output_view : pipeline.flow<tile<1xf32>>, view<1xf32>
+  pipeline.return
+}
+
+func.def target(@core_target) @zero_partial(%input: buffer, %output: buffer) {
+  %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 4} : buffer, buffer
+  %base = index.constant 0 : offset
+  %input_view = buffer.view %input_aligned[%base] : buffer -> view<1xf32>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<1xf32>
+  %value = view.load %input_view[0] : view<1xf32> -> f32
+  view.store %value, %output_view[0] : f32, view<1xf32>
+  func.return
+}

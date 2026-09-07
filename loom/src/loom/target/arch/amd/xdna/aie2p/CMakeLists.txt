@@ -487,6 +487,7 @@ iree_execution_test_suite(
     "loom-compile=loom::tools::loom-compile"
   DATA
     "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/f32_carrier.loom"
+    "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/fixed_record_report.loom"
     "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/q4_q5_k_record_contraction.loom"
     "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/split_k.loom"
   LABELS
@@ -576,6 +577,7 @@ loom_cc_library(
     loom::ir
     loom::target::reporting::low
     loom::target::reporting::report
+    loom::util::fact_table
   PUBLIC
 )
 
@@ -620,6 +622,8 @@ loom_cc_library(
   HDRS
     "emit/artifact.h"
   SRCS
+    "emit/array_report.c"
+    "emit/array_report.h"
     "emit/artifact.c"
   DEPS
     ::array_plan
@@ -635,6 +639,7 @@ loom_cc_library(
     loom::codegen::low::descriptors
     loom::codegen::low::diagnostics
     loom::ir
+    loom::ops::encoding
     loom::ops::low
     loom::ops::op_defs
     loom::target::arch::amd::xdna::device_profile
