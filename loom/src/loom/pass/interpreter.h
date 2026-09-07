@@ -9,7 +9,10 @@
 // Executes the compact instruction program produced by program.h. The
 // interpreter owns only transient execution state: per-invocation pass arenas,
 // deterministic symbol snapshots, current anchor context, and diagnostic
-// provenance. The compiled program remains immutable and reusable.
+// provenance. Each invocation establishes non-trapping round-to-nearest-even
+// arithmetic with subnormals preserved around all pass callbacks and restores
+// the caller's floating-point state before returning. The compiled program
+// remains immutable and reusable.
 
 #ifndef LOOM_PASS_INTERPRETER_H_
 #define LOOM_PASS_INTERPRETER_H_

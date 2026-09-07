@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "iree/base/internal/math.h"
+#include "iree/math/trigonometry.h"
 
 static bool loom_float_type_uses_f32_arithmetic(
     loom_scalar_type_t scalar_type) {
@@ -199,15 +200,6 @@ void loom_value_facts_eval_float_ternary(loom_scalar_type_t scalar_type,
 // The quarter-turn divisor is exactly representable, so remquo preserves the
 // periodic position of every finite input while providing the low quotient
 // bits needed to recover the quadrant.
-static float loom_float_reduce_turns_f32(float input, int* out_quadrant) {
-  int quotient = 0;
-  const float residual = remquof(input, 0.25f, &quotient);
-  int quadrant = quotient % 4;
-  if (quadrant < 0) quadrant += 4;
-  *out_quadrant = quadrant;
-  return residual * 6.2831853071795864769252867665590057683943387987502f;
-}
-
 static double loom_float_reduce_turns_f64(double input, int* out_quadrant) {
   int quotient = 0;
   const double residual = remquo(input, 0.25, &quotient);
@@ -220,40 +212,8 @@ static double loom_float_reduce_turns_f64(double input, int* out_quadrant) {
 static float loom_float_eval_turns_f32(float input, const void* user_data) {
   const loom_float_turns_kind_t kind =
       *(const loom_float_turns_kind_t*)user_data;
-  int quadrant = 0;
-  const float angle = loom_float_reduce_turns_f32(input, &quadrant);
-  if (angle == 0.0f) {
-    if (kind == LOOM_FLOAT_TURNS_SIN) {
-      if (quadrant == 1) return 1.0f;
-      if (quadrant == 3) return -1.0f;
-      return copysignf(0.0f, input);
-    }
-    if (quadrant == 0) return 1.0f;
-    if (quadrant == 2) return -1.0f;
-    return 0.0f;
-  }
-  if (kind == LOOM_FLOAT_TURNS_SIN) {
-    switch (quadrant) {
-      case 0:
-        return sinf(angle);
-      case 1:
-        return cosf(angle);
-      case 2:
-        return -sinf(angle);
-      default:
-        return -cosf(angle);
-    }
-  }
-  switch (quadrant) {
-    case 0:
-      return cosf(angle);
-    case 1:
-      return -sinf(angle);
-    case 2:
-      return -cosf(angle);
-    default:
-      return sinf(angle);
-  }
+  return kind == LOOM_FLOAT_TURNS_SIN ? iree_math_sin_turns_f32_approx(input)
+                                      : iree_math_cos_turns_f32_approx(input);
 }
 
 static double loom_float_eval_turns_f64(double input, const void* user_data) {
