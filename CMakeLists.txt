@@ -197,6 +197,7 @@ if(AMDF_BUILD)
   add_subdirectory(libamdf)
 endif()
 add_subdirectory(runtime/src)
+add_subdirectory(experimental EXCLUDE_FROM_ALL)
 
 if(LOOM_BUILD)
   add_subdirectory(loom/py/loom)

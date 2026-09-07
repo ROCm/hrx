@@ -1,0 +1,105 @@
+# Copyright 2026 The IREE Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+load(":build_defs.bzl", "xdna_cc_library", "xdna_cc_test")
+
+package(
+    default_visibility = ["//visibility:private"],
+    features = ["layering_check"],
+    licenses = ["notice"],  # Apache 2.0
+)
+
+xdna_cc_library(
+    name = "amdf_status",
+    srcs = ["amdf_status.c"],
+    hdrs = ["amdf_status.h"],
+    deps = [
+        "//libamdf:headers",
+        "//runtime/src/iree/base",
+    ],
+)
+
+xdna_cc_test(
+    name = "amdf_status_test",
+    srcs = ["amdf_status_test.cc"],
+    deps = [
+        ":amdf_status",
+        "//libamdf:headers",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+xdna_cc_library(
+    name = "executable",
+    srcs = ["executable.c"],
+    hdrs = ["executable.h"],
+    deps = [
+        ":amdf_status",
+        "//libamdf:headers",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/drivers/amd/xdna/image",
+        "//runtime/src/iree/hal/drivers/amd/xdna/image/aie2p:native_image",
+        "//runtime/src/iree/hal/drivers/amd/xdna/image/aie2p:target",
+    ],
+)
+
+xdna_cc_test(
+    name = "executable_test",
+    srcs = ["executable_test.cc"],
+    deps = [
+        ":executable",
+        ":fake_provider",
+        "//libamdf:headers",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/drivers/amd/xdna/image/aie2p:strix_halo",
+        "//runtime/src/iree/hal/drivers/amd/xdna/image/testdata:mul_i32",
+        "//runtime/src/iree/hal/drivers/amd/xdna/image/testing:aie2p_image_fixture",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+xdna_cc_library(
+    name = "prepared_command",
+    srcs = ["prepared_command.c"],
+    hdrs = ["prepared_command.h"],
+    deps = [
+        ":executable",
+        "//libamdf:headers",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+    ],
+)
+
+xdna_cc_test(
+    name = "prepared_command_test",
+    srcs = ["prepared_command_test.cc"],
+    deps = [
+        ":executable",
+        ":fake_provider",
+        ":prepared_command",
+        "//libamdf:headers",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/drivers/amd/xdna/image/aie2p:strix_halo",
+        "//runtime/src/iree/hal/drivers/amd/xdna/image/testdata:mul_i32",
+        "//runtime/src/iree/hal/drivers/amd/xdna/image/testing:aie2p_image_fixture",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+xdna_cc_library(
+    name = "fake_provider",
+    testonly = True,
+    srcs = ["fake_provider.cc"],
+    hdrs = ["fake_provider.h"],
+    deps = ["//libamdf:headers"],
+)
