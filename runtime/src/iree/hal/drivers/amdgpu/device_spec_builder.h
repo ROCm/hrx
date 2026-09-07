@@ -9,6 +9,7 @@
 
 #include "iree/base/api.h"
 #include "iree/hal/allocator.h"
+#include "iree/hal/drivers/amdgpu/queue_execution_resources.h"
 #include "iree/hal/drivers/amdgpu/target/identity.h"
 #include "iree/hal/drivers/amdgpu/util/pm4_capabilities.h"
 #include "iree/hal/utils/device_spec_builder.h"
@@ -45,8 +46,8 @@ typedef struct iree_hal_amdgpu_device_spec_physical_device_params_t {
   uint32_t physical_ordinal;
   // Host queue count initialized for this physical device.
   uint32_t queue_count;
-  // Compute unit count visible on this physical device.
-  uint32_t compute_unit_count;
+  // Derived queue execution-resource topology for this physical device.
+  iree_hal_amdgpu_queue_execution_resource_topology_t queue_execution_resources;
   // Native wavefront size in lanes.
   uint32_t wavefront_size;
   // Maximum resident wave count per compute unit.

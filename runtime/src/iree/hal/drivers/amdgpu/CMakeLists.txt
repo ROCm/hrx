@@ -12,12 +12,29 @@ iree_add_all_subdirs()
 if(IREE_HAL_DRIVER_AMDGPU)
 iree_cc_library(
   NAME
+    queue_execution_resources
+  HDRS
+    "queue_execution_resources.h"
+  SRCS
+    "queue_execution_resources.c"
+  DEPS
+    iree::base
+    iree::hal
+    iree::hal::drivers::amdgpu::target::identity
+  PUBLIC
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_library(
+  NAME
     device_spec_builder
   HDRS
     "device_spec_builder.h"
   SRCS
     "device_spec_builder.c"
   DEPS
+    ::queue_execution_resources
     iree::base
     iree::hal
     iree::hal::drivers::amdgpu::target::identity
@@ -330,6 +347,7 @@ iree_cc_library(
     ::executable_metadata_hsaco
     ::kernarg_layout
     ::profile_events
+    ::queue_execution_resources
     ::source_context
     iree::async
     iree::async::util::proactor_pool
@@ -531,6 +549,27 @@ iree_cc_test(
     iree::hal
     iree::hal::drivers::amdgpu::target::identity
     iree::hal::utils::device_spec_builder
+    iree::testing::gtest
+    iree::testing::gtest_main
+  LABELS
+    "iree-build-requirement=runtime.hal.amdgpu"
+    "iree-run-requirement=runtime.resource.amd_gpu"
+    "runtime-resource=amd-gpu"
+  RESOURCE_GROUP
+    iree-hal-drivers-amdgpu-tests
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_test(
+  NAME
+    queue_execution_resources_test
+  SRCS
+    "queue_execution_resources_test.cc"
+  DEPS
+    ::queue_execution_resources
+    iree::base
+    iree::hal
     iree::testing::gtest
     iree::testing::gtest_main
   LABELS

@@ -93,6 +93,7 @@ iree_amdgpu_hal_cts_testdata(
     "testdata/command_buffer_dispatch_multi_workgroup_test.c"
     "testdata/command_buffer_dispatch_test.c"
     "testdata/executable_test.c"
+    "testdata/execution_queue_mask_test.c"
     "testdata/hostcall_buffer_test.c"
   TESTONLY
 )
@@ -267,6 +268,46 @@ iree_cc_library(
   TESTONLY
   ALWAYSLINK
   PUBLIC
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_library(
+  NAME
+    queue_execution_resource_test
+  SRCS
+    "queue_execution_resource_test.cc"
+  DEPS
+    iree::hal
+    iree::hal::cts::util::test_base
+    iree::hal::drivers::amdgpu::target::identity
+    iree::testing::gtest
+  TESTONLY
+  ALWAYSLINK
+  PUBLIC
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_test(
+  NAME
+    queue_execution_resource_tests
+  SRCS
+    "${PROJECT_SOURCE_DIR}/runtime/src/iree/hal/cts/util/test_main.cc"
+  DEPS
+    ::backends
+    ::queue_execution_resource_test
+    ::testdata_amdgpu
+    iree::base::tooling::flags
+    iree::hal::cts::util::registry
+    iree::hal::cts::util::test_base
+    iree::testing::gtest
+  LABELS
+    "iree-build-requirement=runtime.hal.amdgpu"
+    "iree-run-requirement=runtime.resource.amd_gpu"
+    "runtime-resource=amd-gpu"
+  RESOURCE_GROUP
+    iree-hal-drivers-amdgpu-tests
 )
 endif()
 

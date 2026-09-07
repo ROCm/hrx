@@ -93,7 +93,8 @@ TEST_P(QueueDispatchTest, DispatchWithConstantsAndBindings) {
   EXPECT_THAT(output_data, ContainerEq(std::vector<uint32_t>{13, 16, 19, 22}));
 }
 
-TEST_P(QueueDispatchTest, DynamicallyAcquiredQueueDispatches) {
+TEST_P(QueueDispatchTest,
+       DynamicallyAcquiredQueuesDispatchAtAdvertisedPriorities) {
   const iree_hal_queue_family_t* queue_family =
       iree_hal_queue_family(dispatch_queue_);
   const iree_hal_queue_family_spec_t* family_spec =
@@ -103,12 +104,6 @@ TEST_P(QueueDispatchTest, DynamicallyAcquiredQueueDispatches) {
     GTEST_SKIP()
         << "dispatch queue family does not support dynamic acquisition";
   }
-
-  iree_hal_queue_params_t params;
-  iree_hal_queue_params_initialize(&params);
-  Ref<iree_hal_queue_t> queue;
-  IREE_ASSERT_OK(iree_hal_device_acquire_queue(device_, queue_family, &params,
-                                               queue.out()));
 
   Ref<iree_hal_buffer_t> input_buffer;
   {
@@ -131,18 +126,29 @@ TEST_P(QueueDispatchTest, DynamicallyAcquiredQueueDispatches) {
   const iree_const_byte_span_t constants =
       iree_make_const_byte_span(constant_data, sizeof(constant_data));
 
-  SemaphoreList signal(device_, {iree_hal_queue_family_ordinal(queue_family)},
-                       {1});
-  IREE_ASSERT_OK(iree_hal_queue_dispatch(
-      queue, iree_hal_semaphore_list_empty(), signal, executable_,
-      iree_hal_executable_function_from_index(0),
-      iree_hal_make_static_dispatch_config(1, 1, 1), constants, bindings,
-      IREE_HAL_DISPATCH_FLAG_NONE));
-  IREE_ASSERT_OK(iree_hal_semaphore_list_wait(signal, iree_infinite_timeout(),
-                                              IREE_ASYNC_WAIT_FLAG_NONE));
+  for (iree_host_size_t i = 0; i < family_spec->priority_count; ++i) {
+    const iree_hal_queue_priority_t priority = family_spec->priorities[i];
+    SCOPED_TRACE(priority);
+    iree_hal_queue_params_t params;
+    iree_hal_queue_params_initialize(&params);
+    params.priority = priority;
+    Ref<iree_hal_queue_t> queue;
+    IREE_ASSERT_OK(iree_hal_device_acquire_queue(device_, queue_family, &params,
+                                                 queue.out()));
 
-  std::vector<uint32_t> output_data = ReadBufferData<uint32_t>(output_buffer);
-  EXPECT_THAT(output_data, ContainerEq(std::vector<uint32_t>{13, 23, 33, 43}));
+    SemaphoreList signal(device_, {0}, {1});
+    IREE_ASSERT_OK(iree_hal_queue_dispatch(
+        queue, iree_hal_semaphore_list_empty(), signal, executable_,
+        iree_hal_executable_function_from_index(0),
+        iree_hal_make_static_dispatch_config(1, 1, 1), constants, bindings,
+        IREE_HAL_DISPATCH_FLAG_NONE));
+    IREE_ASSERT_OK(iree_hal_semaphore_list_wait(signal, iree_infinite_timeout(),
+                                                IREE_ASYNC_WAIT_FLAG_NONE));
+
+    std::vector<uint32_t> output_data = ReadBufferData<uint32_t>(output_buffer);
+    EXPECT_THAT(output_data,
+                ContainerEq(std::vector<uint32_t>{13, 23, 33, 43}));
+  }
 }
 
 // Borrowed resource lifetimes are an optimization hint for callers that keep

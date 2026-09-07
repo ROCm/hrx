@@ -1866,7 +1866,8 @@ static iree_status_t iree_hal_amdgpu_logical_device_create_device_spec(
         (uint32_t)physical_device->device_ordinal;
     physical_params->queue_count =
         (uint32_t)physical_device->host_queue_capacity;
-    physical_params->compute_unit_count = physical_device->compute_unit_count;
+    physical_params->queue_execution_resources =
+        physical_device->queue_execution_resources;
     physical_params->wavefront_size = physical_device->wavefront_size;
     physical_params->maximum_waves_per_compute_unit =
         physical_device->maximum_waves_per_compute_unit;

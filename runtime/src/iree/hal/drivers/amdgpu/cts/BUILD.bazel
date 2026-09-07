@@ -76,6 +76,7 @@ iree_amdgpu_hal_cts_testdata(
         "testdata/command_buffer_dispatch_multi_workgroup_test.c",
         "testdata/command_buffer_dispatch_test.c",
         "testdata/executable_test.c",
+        "testdata/execution_queue_mask_test.c",
         "testdata/hostcall_buffer_test.c",
     ],
     identifier = "iree_cts_testdata_amdgpu",
@@ -197,6 +198,33 @@ iree_runtime_cc_library(
         "//runtime/src/iree/hal/drivers/amdgpu/abi",
     ],
     alwayslink = True,
+)
+
+iree_runtime_cc_library(
+    name = "queue_execution_resource_test",
+    testonly = True,
+    srcs = ["queue_execution_resource_test.cc"],
+    deps = [
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/cts/util:test_base",
+        "//runtime/src/iree/hal/drivers/amdgpu/target:identity",
+        "//runtime/src/iree/testing:gtest",
+    ],
+    alwayslink = True,
+)
+
+iree_runtime_cc_test(
+    name = "queue_execution_resource_tests",
+    srcs = ["//runtime/src/iree/hal/cts/util:test_main.cc"],
+    deps = [
+        ":backends",
+        ":queue_execution_resource_test",
+        ":testdata_amdgpu",
+        "//runtime/src/iree/base/tooling:flags",
+        "//runtime/src/iree/hal/cts/util:registry",
+        "//runtime/src/iree/hal/cts/util:test_base",
+        "//runtime/src/iree/testing:gtest",
+    ],
 )
 
 iree_runtime_cc_test(

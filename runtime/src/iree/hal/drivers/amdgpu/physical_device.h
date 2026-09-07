@@ -15,6 +15,7 @@
 #include "iree/hal/drivers/amdgpu/host_queue.h"
 #include "iree/hal/drivers/amdgpu/host_queue_staging.h"
 #include "iree/hal/drivers/amdgpu/physical_device_capabilities.h"
+#include "iree/hal/drivers/amdgpu/queue_execution_resources.h"
 #include "iree/hal/drivers/amdgpu/system.h"
 #include "iree/hal/drivers/amdgpu/target/identity.h"
 #include "iree/hal/drivers/amdgpu/transient_buffer.h"
@@ -230,8 +231,8 @@ typedef struct iree_hal_amdgpu_physical_device_t {
   uint32_t has_physical_device_uuid : 1;
   // NUMA node of the CPU agent nearest to |device_agent|.
   uint32_t host_numa_node;
-  // Number of compute units reported by HSA for this GPU agent.
-  uint32_t compute_unit_count;
+  // Queue execution-resource topology derived for this GPU agent.
+  iree_hal_amdgpu_queue_execution_resource_topology_t queue_execution_resources;
   // Native wavefront size reported by HSA for this GPU agent.
   uint32_t wavefront_size;
   // Maximum resident wave count per compute unit reported by HSA.

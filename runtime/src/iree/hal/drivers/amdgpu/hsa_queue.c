@@ -15,6 +15,12 @@ iree_status_t iree_hal_amdgpu_hsa_queue_create(
         "native compute-unit mask count and storage must both be empty or "
         "both be present");
   }
+  if (IREE_UNLIKELY(params->compute_unit_mask_bit_count % 32u != 0)) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "native compute-unit mask bit count %u is not a multiple of 32",
+        params->compute_unit_mask_bit_count);
+  }
   if (IREE_UNLIKELY(params->packet_count >
                     UINT32_MAX / sizeof(hsa_kernel_dispatch_packet_t))) {
     return iree_make_status(IREE_STATUS_OUT_OF_RANGE,

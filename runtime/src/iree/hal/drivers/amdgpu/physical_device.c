@@ -353,6 +353,15 @@ static iree_status_t iree_hal_amdgpu_physical_device_initialize_identity(
   memset(out_physical_device, 0, sizeof(*out_physical_device));
   out_physical_device->device_agent = device_agent;
   out_physical_device->device_ordinal = device_ordinal;
+  const iree_hal_amdgpu_agent_target_t* agent_target =
+      &system->gpu_agent_targets[device_ordinal];
+  if (IREE_UNLIKELY(agent_target->agent.handle != device_agent.handle)) {
+    return iree_make_status(IREE_STATUS_INTERNAL,
+                            "system GPU target ordinal %" PRIhsz
+                            " does not match physical HSA agent",
+                            device_ordinal);
+  }
+  out_physical_device->agent_target = agent_target;
   out_physical_device->host_memory_pools = *host_memory_pools;
   out_physical_device->host_queue_capacity = options->host_queue_count;
   out_physical_device->host_queue_aql_capacity =
@@ -823,7 +832,7 @@ static iree_status_t iree_hal_amdgpu_physical_device_initialize_signal_pool(
 }
 
 static iree_status_t
-iree_hal_amdgpu_physical_device_initialize_device_library_and_blit_context(
+iree_hal_amdgpu_physical_device_initialize_device_execution(
     iree_hal_amdgpu_system_t* system, hsa_agent_t device_agent,
     iree_host_size_t device_ordinal,
     iree_hal_amdgpu_physical_device_t* out_physical_device) {
@@ -849,9 +858,9 @@ iree_hal_amdgpu_physical_device_initialize_device_library_and_blit_context(
   const uint32_t group_segment_max_size =
       IREE_HAL_AMDGPU_PHYSICAL_DEVICE_GROUP_SEGMENT_MAX_SIZE_DEFAULT;
 
-  // Validate launch metadata before passing it to the blit context. A broken
-  // HSA bring-up that returns garbage here must fail loud with a clear message
-  // rather than letting the blit path silently dispatch with wrong geometry.
+  // Validate execution properties before publishing them or initializing
+  // dependent execution machinery. A broken HSA bring-up must fail loud with
+  // a clear message rather than silently dispatching with wrong geometry.
   if (compute_unit_count == 0) {
     return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
                             "HSA reported 0 compute units for device agent "
@@ -872,7 +881,15 @@ iree_hal_amdgpu_physical_device_initialize_device_library_and_blit_context(
         "ordinal %" PRIhsz,
         device_ordinal);
   }
-  out_physical_device->compute_unit_count = compute_unit_count;
+  uint32_t partition_count = 0;
+  IREE_RETURN_IF_ERROR(iree_hsa_agent_get_info(
+      IREE_LIBHSA(libhsa), device_agent,
+      (hsa_agent_info_t)HSA_AMD_AGENT_INFO_NUM_XCC, &partition_count));
+  IREE_RETURN_IF_ERROR(
+      iree_hal_amdgpu_queue_execution_resource_topology_initialize(
+          out_physical_device->agent_target->primary_isa.identity.version,
+          compute_unit_count, partition_count,
+          &out_physical_device->queue_execution_resources));
   out_physical_device->wavefront_size = wavefront_size;
   out_physical_device->maximum_waves_per_compute_unit =
       maximum_waves_per_compute_unit;
@@ -889,16 +906,8 @@ iree_hal_amdgpu_physical_device_initialize_queue_execution_strategy(
     const iree_hal_amdgpu_physical_device_options_t* options,
     hsa_agent_t device_agent,
     iree_hal_amdgpu_physical_device_t* out_physical_device) {
-  const iree_hal_amdgpu_agent_target_t* agent_target =
-      &system->gpu_agent_targets[out_physical_device->device_ordinal];
-  if (IREE_UNLIKELY(agent_target->agent.handle != device_agent.handle)) {
-    return iree_make_status(IREE_STATUS_INTERNAL,
-                            "system GPU target ordinal %" PRIhsz
-                            " does not match physical HSA agent",
-                            out_physical_device->device_ordinal);
-  }
   const iree_hal_amdgpu_gfxip_version_t gfxip_version =
-      agent_target->primary_isa.identity.version;
+      out_physical_device->agent_target->primary_isa.identity.version;
 
   iree_hal_amdgpu_aql_queue_execution_mode_t aql_queue_execution_mode;
   IREE_RETURN_IF_ERROR(iree_hal_amdgpu_query_aql_queue_execution_mode(
@@ -924,7 +933,6 @@ iree_hal_amdgpu_physical_device_initialize_queue_execution_strategy(
     wait_barrier_strategy = iree_hal_amdgpu_select_wait_barrier_strategy(
         vendor_packet_capabilities);
   }
-  out_physical_device->agent_target = agent_target;
   out_physical_device->aql_queue_execution_mode = aql_queue_execution_mode;
   out_physical_device->vendor_packet_capabilities = vendor_packet_capabilities;
   out_physical_device->wait_barrier_strategy = wait_barrier_strategy;
@@ -1046,9 +1054,8 @@ iree_status_t iree_hal_amdgpu_physical_device_initialize(
         libhsa, host_allocator, out_physical_device);
   }
   if (iree_status_is_ok(status)) {
-    status =
-        iree_hal_amdgpu_physical_device_initialize_device_library_and_blit_context(
-            system, device_agent, device_ordinal, out_physical_device);
+    status = iree_hal_amdgpu_physical_device_initialize_device_execution(
+        system, device_agent, device_ordinal, out_physical_device);
   }
   if (iree_status_is_ok(status)) {
     status =
@@ -1088,7 +1095,8 @@ iree_status_t iree_hal_amdgpu_physical_device_initialize(
   if (iree_status_is_ok(status) && hostcall_provider) {
     const iree_hal_hostcall_provider_device_info_t device_info = {
         .physical_device_ordinal = (uint32_t)device_ordinal,
-        .execution_unit_count = out_physical_device->compute_unit_count,
+        .execution_unit_count =
+            out_physical_device->queue_execution_resources.execution_unit_count,
         .maximum_resident_subgroup_count =
             out_physical_device->maximum_waves_per_compute_unit,
     };
@@ -1261,6 +1269,8 @@ static void iree_hal_amdgpu_physical_device_initialize_host_queue_construction(
           {
               .libhsa = &system->libhsa,
               .gpu_agent = physical_device->device_agent,
+              .execution_resource_topology =
+                  &physical_device->queue_execution_resources,
               .hostcall_buffer =
                   iree_hal_amdgpu_physical_device_hostcall_buffer(
                       physical_device),

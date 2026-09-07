@@ -18,6 +18,7 @@
 #include "iree/hal/drivers/amdgpu/abi/signal.h"
 #include "iree/hal/drivers/amdgpu/abi/tsan.h"
 #include "iree/hal/drivers/amdgpu/device/blit.h"
+#include "iree/hal/drivers/amdgpu/queue_execution_resources.h"
 #include "iree/hal/drivers/amdgpu/queue_scope.h"
 #include "iree/hal/drivers/amdgpu/util/aql_ring.h"
 #include "iree/hal/drivers/amdgpu/util/block_pool.h"
@@ -208,6 +209,9 @@ typedef struct iree_hal_amdgpu_host_queue_params_t {
     const iree_hal_amdgpu_libhsa_t* libhsa;
     // HSA GPU agent on which the native queue is created.
     hsa_agent_t gpu_agent;
+    // Stable execution-resource topology used to lower exact queue parameters.
+    const iree_hal_amdgpu_queue_execution_resource_topology_t*
+        execution_resource_topology;
     // Optional stable opaque device address copied into hostcall arguments.
     void* hostcall_buffer;
     // Component that consumes packets written to the AQL ring.

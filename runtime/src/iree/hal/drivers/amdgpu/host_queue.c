@@ -801,9 +801,39 @@ static void iree_hal_amdgpu_host_queue_error_callback(hsa_status_t status,
   iree_hal_amdgpu_host_queue_record_failure(queue, error);
 }
 
+static iree_status_t iree_hal_amdgpu_host_queue_map_native_priority(
+    iree_hal_queue_priority_t priority,
+    hsa_amd_queue_priority_t* out_native_priority) {
+  hsa_amd_queue_priority_t native_priority = HSA_AMD_QUEUE_PRIORITY_NORMAL;
+  switch (priority) {
+    case -1:
+      native_priority = HSA_AMD_QUEUE_PRIORITY_LOW;
+      break;
+    case IREE_HAL_QUEUE_PRIORITY_NORMAL:
+      native_priority = HSA_AMD_QUEUE_PRIORITY_NORMAL;
+      break;
+    case 1:
+      native_priority = HSA_AMD_QUEUE_PRIORITY_HIGH;
+      break;
+    default:
+      return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                              "unsupported AMDGPU queue priority %" PRId32,
+                              priority);
+  }
+  *out_native_priority = native_priority;
+  return iree_ok_status();
+}
+
 iree_status_t iree_hal_amdgpu_host_queue_initialize(
     const iree_hal_amdgpu_host_queue_params_t* params,
     iree_hal_amdgpu_host_queue_t* out_queue) {
+  if (IREE_UNLIKELY(!params->hardware.execution_resource_topology)) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "AMDGPU host queue requires an execution-resource topology");
+  }
+  IREE_RETURN_IF_ERROR(iree_hal_amdgpu_queue_execution_resource_topology_verify(
+      params->hardware.execution_resource_topology));
   if (!iree_host_size_is_power_of_two(params->capacity.aql_packet_count) ||
       !iree_host_size_is_power_of_two(params->capacity.notification_count) ||
       !iree_host_size_is_power_of_two(params->capacity.kernarg_block_count) ||
@@ -893,13 +923,36 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
   // an atomic fetch_add on the write index, which is well-defined only on
   // MULTI queues.
   hsa_queue_t* hardware_queue = NULL;
+  hsa_amd_queue_priority_t native_priority = HSA_AMD_QUEUE_PRIORITY_NORMAL;
+  const uint32_t native_mask_bit_count =
+      iree_hal_amdgpu_queue_execution_resource_mask_bit_count(
+          params->hardware.execution_resource_topology);
+  const iree_host_size_t native_mask_word_count = native_mask_bit_count / 32u;
+  uint32_t* native_mask = NULL;
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_amdgpu_host_queue_map_native_priority(
+        params->identity.params.priority, &native_priority);
+  }
+  if (iree_status_is_ok(status)) {
+    status = iree_allocator_malloc_array(
+        params->host_allocator, native_mask_word_count, sizeof(*native_mask),
+        (void**)&native_mask);
+  }
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_amdgpu_queue_execution_resource_write_mask(
+        params->hardware.execution_resource_topology,
+        params->identity.params.execution_resources, native_mask_bit_count,
+        native_mask);
+  }
   if (iree_status_is_ok(status)) {
     const iree_hal_amdgpu_hsa_queue_params_t hsa_queue_params = {
         .libhsa = params->hardware.libhsa,
         .agent = params->hardware.gpu_agent,
         .packet_count = params->capacity.aql_packet_count,
         .type = HSA_QUEUE_TYPE_MULTI,
-        .priority = HSA_AMD_QUEUE_PRIORITY_NORMAL,
+        .priority = native_priority,
+        .compute_unit_mask_bit_count = native_mask_bit_count,
+        .compute_unit_mask = native_mask,
         .error_callback = iree_hal_amdgpu_host_queue_error_callback,
         .error_callback_data = out_queue,
         .host_allocator = params->host_allocator,
@@ -907,6 +960,7 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
     status =
         iree_hal_amdgpu_hsa_queue_create(&hsa_queue_params, &hardware_queue);
   }
+  iree_allocator_free(params->host_allocator, native_mask);
 
   // Initialize the AQL ring from the hardware queue.
   if (iree_status_is_ok(status)) {
