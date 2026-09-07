@@ -218,6 +218,7 @@ loom_cc_library(
     loom::codegen::low::target_binding
     loom::ir
     loom::ir::facts
+    loom::ops::combining
     loom::ops::low
     loom::ops::op_defs
     loom::target::arch::amd::xdna::array_facts

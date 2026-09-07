@@ -12,6 +12,7 @@
 #include "iree/base/api.h"
 #include "iree/base/internal/arena.h"
 #include "loom/ir/ir.h"
+#include "loom/ops/combining.h"
 #include "loom/target/arch/amd/xdna/aie2p/emit/leaf_object.h"
 #include "loom/target/arch/amd/xdna/array/facts.h"
 
@@ -88,6 +89,14 @@ typedef struct loom_aie2p_array_worker_t {
   uint32_t lane;
   // Core function executed by the worker.
   loom_symbol_ref_t entry;
+  // Number of source records folded into one output, or zero when recordwise.
+  uint32_t fold_record_count;
+  // Callable output port carrying the folded result.
+  uint32_t fold_output_port;
+  // Elementwise combining operation used by the temporal fold.
+  loom_combining_kind_t fold_kind;
+  // Floating-point permissions applied by the temporal fold.
+  uint8_t fold_fast_math_flags;
   // Physical compute tile selected by the authored placement constraint.
   loom_xdna_tile_coordinate_t coordinate;
 } loom_aie2p_array_worker_t;
@@ -124,6 +133,8 @@ typedef struct loom_aie2p_array_channel_t {
   uint32_t receiver_endpoint_index;
   // Number of records held by the channel ring.
   uint32_t capacity;
+  // Number of ordered records transferred per activation.
+  uint32_t record_count;
   // Byte length of one statically shaped tile record.
   uint32_t record_byte_length;
   // Physical transport selected by planning.

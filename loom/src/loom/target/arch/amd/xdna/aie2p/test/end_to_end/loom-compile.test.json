@@ -73,7 +73,7 @@
           "--root=q4_k_gate_up_array",
           "--format=xdna",
           "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
-          "--config=q4_q5_gate_up.input_size=1024",
+          "--config=q4_q5_gate_up.input_size=32768",
           "--output={tmp}/q4_k_gate_up.xdna",
           "--compile-report=text-summary"
         ]

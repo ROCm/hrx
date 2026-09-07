@@ -5,21 +5,19 @@ aie2p.target<array> @array_target
 aie2p.target<core> @core_target
 
 // Computes one canonical GGML Q4_K gate/up SwiGLU projection. Each projection
-// lane owns one contiguous split-K range and publishes one F32 partial.
-// Explicit two-record channels let both reductions and the nonlinear output
-// stage overlap the next firing without materializing dequantized weights.
+// lane streams one contiguous split-K range through a fixed-size block kernel,
+// folds its recordwise F32 contributions, and publishes one lane partial.
+// Explicit two-record channels overlap DMA, dequantization, and computation
+// without materializing dequantized weights or growing code with K.
 pipeline.def<kernel> public retain target(@array_target) @q4_k_gate_up_array() launch(%gate_weight: buffer, %up_weight: buffer, %activation: buffer, %output: buffer) {
   %input_size = config.get @q4_q5_gate_up.input_size : index
   %compute_lanes = index.constant 2 : index
   %reducer_lanes = index.constant 1 : index
   %ring_capacity = index.constant 2 : index
-  %c128 = index.constant 128 : index
   %c256 = index.constant 256 : index
   %base = index.constant 0 : offset
   %q4_record_count = index.div %input_size, %c256 : index
   %q4_records_per_lane = index.div %q4_record_count, %compute_lanes : index
-  %q8_record_count = index.div %input_size, %c128 : index
-  %q8_records_per_lane = index.div %q8_record_count, %compute_lanes : index
 
   %q4_gate_compute = group.create %compute_lanes : index -> group
   %q4_up_compute = group.create %compute_lanes : index -> group
@@ -29,14 +27,16 @@ pipeline.def<kernel> public retain target(@array_target) @q4_k_gate_up_array() l
 
   %q4_gate_view = buffer.view %gate_weight[%base] : buffer -> view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>
   %q4_up_view = buffer.view %up_weight[%base] : buffer -> view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>
-  %q4_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%q8_records_per_lane]x144xi8>
+  %q4_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%q4_records_per_lane]x2x144xi8>
   %q4_output_view = buffer.view %output[%base] : buffer -> view<1xf32>
 
-  %q4_gate_tiles = pipeline.scatter %q4_gate_view across %q4_gate_compute : view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>, group -> pipeline.flow<tile<[%q4_records_per_lane]x144xi8>>
-  %q4_up_tiles = pipeline.scatter %q4_up_view across %q4_up_compute : view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>, group -> pipeline.flow<tile<[%q4_records_per_lane]x144xi8>>
-  %q4_activation_tiles = pipeline.scatter %q4_activation_view across %q4_gate_compute : view<[%compute_lanes]x[%q8_records_per_lane]x144xi8>, group -> pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>
-  %q4_gate_partials = pipeline.stage @q4_k_projection_branch on %q4_gate_compute(%q4_gate_tiles, %q4_activation_tiles) : (group, pipeline.flow<tile<[%q4_records_per_lane]x144xi8>>, pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
-  %q4_up_partials = pipeline.stage @q4_k_projection_branch on %q4_up_compute(%q4_up_tiles, %q4_activation_tiles) : (group, pipeline.flow<tile<[%q4_records_per_lane]x144xi8>>, pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q4_gate_tiles = pipeline.scatter %q4_gate_view across %q4_gate_compute : view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>, group -> pipeline.flow<tile<144xi8>>
+  %q4_up_tiles = pipeline.scatter %q4_up_view across %q4_up_compute : view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>, group -> pipeline.flow<tile<144xi8>>
+  %q4_activation_tiles = pipeline.scatter %q4_activation_view across %q4_gate_compute : view<[%compute_lanes]x[%q4_records_per_lane]x2x144xi8>, group -> pipeline.flow<tile<2x144xi8>>
+  %q4_gate_contributions = pipeline.stage @q4_k_projection_branch on %q4_gate_compute(%q4_gate_tiles, %q4_activation_tiles) : (group, pipeline.flow<tile<144xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q4_up_contributions = pipeline.stage @q4_k_projection_branch on %q4_up_compute(%q4_up_tiles, %q4_activation_tiles) : (group, pipeline.flow<tile<144xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q4_gate_partials = pipeline.fold<addf> %q4_gate_contributions : pipeline.flow<tile<1xf32>>
+  %q4_up_partials = pipeline.fold<addf> %q4_up_contributions : pipeline.flow<tile<1xf32>>
   %q4_gate_buffered = pipeline.buffer %q4_gate_partials capacity %ring_capacity : (pipeline.flow<tile<1xf32>>, index) -> pipeline.flow<tile<1xf32>>
   %q4_up_buffered = pipeline.buffer %q4_up_partials capacity %ring_capacity : (pipeline.flow<tile<1xf32>>, index) -> pipeline.flow<tile<1xf32>>
   %q4_gate = pipeline.reduce @sum_split_k from %q4_gate_compute(%q4_gate_buffered) to %q4_gate_reducer() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
@@ -54,13 +54,10 @@ pipeline.def<kernel> public retain target(@array_target) @q5_k_gate_up_array() l
   %compute_lanes = index.constant 2 : index
   %reducer_lanes = index.constant 1 : index
   %ring_capacity = index.constant 2 : index
-  %c128 = index.constant 128 : index
   %c256 = index.constant 256 : index
   %base = index.constant 0 : offset
   %q5_record_count = index.div %input_size, %c256 : index
   %q5_records_per_lane = index.div %q5_record_count, %compute_lanes : index
-  %q8_record_count = index.div %input_size, %c128 : index
-  %q8_records_per_lane = index.div %q8_record_count, %compute_lanes : index
 
   %q5_gate_compute = group.create %compute_lanes : index -> group
   %q5_up_compute = group.create %compute_lanes : index -> group
@@ -70,14 +67,16 @@ pipeline.def<kernel> public retain target(@array_target) @q5_k_gate_up_array() l
 
   %q5_gate_view = buffer.view %gate_weight[%base] : buffer -> view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>
   %q5_up_view = buffer.view %up_weight[%base] : buffer -> view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>
-  %q5_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%q8_records_per_lane]x144xi8>
+  %q5_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%q5_records_per_lane]x2x144xi8>
   %q5_output_view = buffer.view %output[%base] : buffer -> view<1xf32>
 
-  %q5_gate_tiles = pipeline.scatter %q5_gate_view across %q5_gate_compute : view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>, group -> pipeline.flow<tile<[%q5_records_per_lane]x176xi8>>
-  %q5_up_tiles = pipeline.scatter %q5_up_view across %q5_up_compute : view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>, group -> pipeline.flow<tile<[%q5_records_per_lane]x176xi8>>
-  %q5_activation_tiles = pipeline.scatter %q5_activation_view across %q5_gate_compute : view<[%compute_lanes]x[%q8_records_per_lane]x144xi8>, group -> pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>
-  %q5_gate_partials = pipeline.stage @q5_k_projection_branch on %q5_gate_compute(%q5_gate_tiles, %q5_activation_tiles) : (group, pipeline.flow<tile<[%q5_records_per_lane]x176xi8>>, pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
-  %q5_up_partials = pipeline.stage @q5_k_projection_branch on %q5_up_compute(%q5_up_tiles, %q5_activation_tiles) : (group, pipeline.flow<tile<[%q5_records_per_lane]x176xi8>>, pipeline.flow<tile<[%q8_records_per_lane]x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q5_gate_tiles = pipeline.scatter %q5_gate_view across %q5_gate_compute : view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>, group -> pipeline.flow<tile<176xi8>>
+  %q5_up_tiles = pipeline.scatter %q5_up_view across %q5_up_compute : view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>, group -> pipeline.flow<tile<176xi8>>
+  %q5_activation_tiles = pipeline.scatter %q5_activation_view across %q5_gate_compute : view<[%compute_lanes]x[%q5_records_per_lane]x2x144xi8>, group -> pipeline.flow<tile<2x144xi8>>
+  %q5_gate_contributions = pipeline.stage @q5_k_projection_branch on %q5_gate_compute(%q5_gate_tiles, %q5_activation_tiles) : (group, pipeline.flow<tile<176xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q5_up_contributions = pipeline.stage @q5_k_projection_branch on %q5_up_compute(%q5_up_tiles, %q5_activation_tiles) : (group, pipeline.flow<tile<176xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q5_gate_partials = pipeline.fold<addf> %q5_gate_contributions : pipeline.flow<tile<1xf32>>
+  %q5_up_partials = pipeline.fold<addf> %q5_up_contributions : pipeline.flow<tile<1xf32>>
   %q5_gate_buffered = pipeline.buffer %q5_gate_partials capacity %ring_capacity : (pipeline.flow<tile<1xf32>>, index) -> pipeline.flow<tile<1xf32>>
   %q5_up_buffered = pipeline.buffer %q5_up_partials capacity %ring_capacity : (pipeline.flow<tile<1xf32>>, index) -> pipeline.flow<tile<1xf32>>
   %q5_gate = pipeline.reduce @sum_split_k from %q5_gate_compute(%q5_gate_buffered) to %q5_gate_reducer() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
@@ -298,63 +297,39 @@ func.def inline target(@core_target) @q5_k_pair_value(%weight: buffer, %weight_o
   func.return %result : f32
 }
 
-// Accumulates one contiguous Q4_K split-K range. Gate and up instances reuse
-// this same tile program and differ only in the weight and output flows wired
-// by the array plan.
+// Computes one Q4_K record contribution. Gate and up instances reuse this same
+// fixed-size tile program; their resident wrappers fold the streamed records.
 func.def target(@core_target) @q4_k_projection_branch(%weight: buffer, %activation: buffer, %partial: buffer) {
   %weight_aligned, %activation_aligned, %partial_aligned = buffer.assume.alignment %weight, %activation, %partial {minimum_alignment = 64} : buffer, buffer, buffer
-  %input_size = config.get @q4_q5_gate_up.input_size : index
   %c0 = index.constant 0 : index
   %c1 = index.constant 1 : index
   %c4 = index.constant 4 : index
-  %c128 = index.constant 128 : index
-  %pair_count0 = index.div %input_size, %c128 : index
-  %pair_count = index.assume %pair_count0 [range(%pair_count0, 8, 256)] : index
-  %weight_record_bytes = index.constant 144 : offset
-  %activation_record_bytes = index.constant 288 : offset
-  %partial_base = index.constant 0 : offset
+  %record_base = index.constant 0 : offset
   %c0_f32 = scalar.constant 0.0 : f32
-  %sum = scf.for %pair_index = [%c0 to %pair_count step %c1](%sum_iter = %c0_f32 : f32) -> (f32) {
-    %record = index.div %pair_index, %c4 : index
-    %pair0 = index.rem %pair_index, %c4 : index
-    %pair = index.assume %pair0 [range(%pair0, 0, 3)] : index
-    %weight_offset = index.scale %record, %weight_record_bytes : index, offset -> offset
-    %activation_offset = index.scale %record, %activation_record_bytes : index, offset -> offset
-    %value = func.call @q4_k_pair_value(%weight_aligned, %weight_offset, %activation_aligned, %activation_offset, %pair) : (buffer, offset, buffer, offset, index) -> (f32)
+  %sum = scf.for %pair = [%c0 to %c4 step %c1](%sum_iter = %c0_f32 : f32) -> (f32) {
+    %value = func.call @q4_k_pair_value(%weight_aligned, %record_base, %activation_aligned, %record_base, %pair) : (buffer, offset, buffer, offset, index) -> (f32)
     %sum_next = scalar.addf %sum_iter, %value : f32
     scf.yield %sum_next : f32
   }
-  %partial_view = buffer.view %partial_aligned[%partial_base] : buffer -> view<1xf32>
+  %partial_view = buffer.view %partial_aligned[%record_base] : buffer -> view<1xf32>
   view.store %sum, %partial_view[0] : f32, view<1xf32>
   func.return
 }
 
-// Accumulates the matching Q5_K split-K range with the same three-port
-// projection contract.
+// Computes one Q5_K record contribution with the same three-port contract.
 func.def target(@core_target) @q5_k_projection_branch(%weight: buffer, %activation: buffer, %partial: buffer) {
   %weight_aligned, %activation_aligned, %partial_aligned = buffer.assume.alignment %weight, %activation, %partial {minimum_alignment = 64} : buffer, buffer, buffer
-  %input_size = config.get @q4_q5_gate_up.input_size : index
   %c0 = index.constant 0 : index
   %c1 = index.constant 1 : index
   %c4 = index.constant 4 : index
-  %c128 = index.constant 128 : index
-  %pair_count0 = index.div %input_size, %c128 : index
-  %pair_count = index.assume %pair_count0 [range(%pair_count0, 8, 256)] : index
-  %weight_record_bytes = index.constant 176 : offset
-  %activation_record_bytes = index.constant 288 : offset
-  %partial_base = index.constant 0 : offset
+  %record_base = index.constant 0 : offset
   %c0_f32 = scalar.constant 0.0 : f32
-  %sum = scf.for %pair_index = [%c0 to %pair_count step %c1](%sum_iter = %c0_f32 : f32) -> (f32) {
-    %record = index.div %pair_index, %c4 : index
-    %pair0 = index.rem %pair_index, %c4 : index
-    %pair = index.assume %pair0 [range(%pair0, 0, 3)] : index
-    %weight_offset = index.scale %record, %weight_record_bytes : index, offset -> offset
-    %activation_offset = index.scale %record, %activation_record_bytes : index, offset -> offset
-    %value = func.call @q5_k_pair_value(%weight_aligned, %weight_offset, %activation_aligned, %activation_offset, %pair) : (buffer, offset, buffer, offset, index) -> (f32)
+  %sum = scf.for %pair = [%c0 to %c4 step %c1](%sum_iter = %c0_f32 : f32) -> (f32) {
+    %value = func.call @q5_k_pair_value(%weight_aligned, %record_base, %activation_aligned, %record_base, %pair) : (buffer, offset, buffer, offset, index) -> (f32)
     %sum_next = scalar.addf %sum_iter, %value : f32
     scf.yield %sum_next : f32
   }
-  %partial_view = buffer.view %partial_aligned[%partial_base] : buffer -> view<1xf32>
+  %partial_view = buffer.view %partial_aligned[%record_base] : buffer -> view<1xf32>
   view.store %sum, %partial_view[0] : f32, view<1xf32>
   func.return
 }

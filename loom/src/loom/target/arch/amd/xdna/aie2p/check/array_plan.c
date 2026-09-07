@@ -246,10 +246,21 @@ static iree_status_t loom_aie2p_array_plan_check_format(
     IREE_RETURN_IF_ERROR(iree_string_builder_append_format(
         builder,
         "worker index=%" PRIhsz " group=%" PRIu32 " lane=%" PRIu32
-        " entry=@%.*s tile=(%u,%u) code-bytes=%" PRIu64 " resources=%" PRIhsz
-        " storage-domains=%" PRIhsz "\n",
+        " entry=@%.*s tile=(%u,%u)",
         i, worker->group_index, worker->lane, (int)entry_name.size,
-        entry_name.data, worker->coordinate.column, worker->coordinate.row,
+        entry_name.data, worker->coordinate.column, worker->coordinate.row));
+    if (worker->fold_record_count != 0) {
+      IREE_RETURN_IF_ERROR(iree_string_builder_append_format(
+          builder,
+          " fold-records=%" PRIu32 " fold-output=%" PRIu32
+          " fold-kind=%u fold-fast-math=0x%02x",
+          worker->fold_record_count, worker->fold_output_port,
+          (unsigned)worker->fold_kind, worker->fold_fast_math_flags));
+    }
+    IREE_RETURN_IF_ERROR(iree_string_builder_append_format(
+        builder,
+        " code-bytes=%" PRIu64 " resources=%" PRIhsz " storage-domains=%" PRIhsz
+        "\n",
         realization->code.byte_length, realization->resource_import_count,
         realization->storage_domain_count));
   }
@@ -262,9 +273,9 @@ static iree_status_t loom_aie2p_array_plan_check_format(
     IREE_RETURN_IF_ERROR(iree_string_builder_append_format(
         builder,
         "channel index=%" PRIhsz " transport=%s record-bytes=%" PRIu32
-        " capacity=%" PRIu32 " sender=",
+        " capacity=%" PRIu32 " records=%" PRIu32 " sender=",
         i, loom_aie2p_array_plan_check_transport_name(channel->transport),
-        channel->record_byte_length, channel->capacity));
+        channel->record_byte_length, channel->capacity, channel->record_count));
     IREE_RETURN_IF_ERROR(
         loom_aie2p_array_plan_check_append_endpoint(plan, sender, builder));
     IREE_RETURN_IF_ERROR(
