@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 
@@ -1055,19 +1056,78 @@ def _immediate(form_name: str, operand: MachineOperand) -> Immediate:
     )
 
 
-def _memory_event_name(access: str, memory: MemoryCycles) -> str:
-    cycle_segment = "_".join(str(cycle) for cycle in memory.cycles)
-    return f"{descriptor_specs._TARGET_KEY}.memory.{access}.c{cycle_segment}"
+@dataclass(frozen=True, slots=True)
+class _MemoryTimingEndpoint:
+    """AIE memory and lock-ordering timing for one itinerary."""
+
+    memory: MemoryCycles
+    lock_ordering_first_cycle: int
+    lock_ordering_last_cycle: int
+    is_tile_memory: bool
+
+
+def _memory_timing_endpoint(itinerary: Itinerary) -> _MemoryTimingEndpoint:
+    if itinerary.memory is None:
+        raise ValueError(f"{itinerary.name}: memory timing requires memory cycles")
+    return _MemoryTimingEndpoint(
+        memory=itinerary.memory,
+        lock_ordering_first_cycle=itinerary.memory.first_cycle,
+        lock_ordering_last_cycle=itinerary.memory.last_cycle,
+        is_tile_memory=itinerary.name.startswith(("II_LDA_TM_", "II_ST_TM_")),
+    )
+
+
+def _memory_event_name(access: str, timing: _MemoryTimingEndpoint) -> str:
+    cycle_segment = "_".join(str(cycle) for cycle in timing.memory.cycles)
+    lock_segment = (
+        "tm"
+        if timing.is_tile_memory
+        else (
+            f"lock{timing.lock_ordering_first_cycle}_{timing.lock_ordering_last_cycle}"
+        )
+    )
+    return (
+        f"{descriptor_specs._TARGET_KEY}.memory.{access}.c{cycle_segment}."
+        f"{lock_segment}"
+    )
 
 
 def _memory_timing_event(spec: descriptor_specs._DescriptorSpec, access: str) -> str:
-    memory = _itinerary(spec).memory
-    if memory is None:
+    itinerary = _itinerary(spec)
+    if itinerary.memory is None:
         raise ValueError(
             f"{spec.form_name}: memory operation uses non-memory itinerary "
             f"{spec.itinerary}"
         )
-    return _memory_event_name(access, memory)
+    return _memory_event_name(access, _memory_timing_endpoint(itinerary))
+
+
+def _lock_issue_separation() -> int:
+    """Returns the common LCKREQ occupancy of every selected lock form."""
+    separations = set()
+    lock_form_count = 0
+    for spec in descriptor_specs._DESCRIPTOR_SPECS:
+        if spec.effects != (descriptor_specs._LOCK_EFFECT,):
+            continue
+        lock_form_count += 1
+        lock_uses = tuple(
+            use for use in pipeline_uses(_itinerary(spec)) if "LCKREQ" in use.resources
+        )
+        if len(lock_uses) != 1:
+            raise ValueError(
+                f"{spec.form_name}: lock itinerary must have one LCKREQ use"
+            )
+        lock_use = lock_uses[0]
+        if lock_use.start_cycle != 0:
+            raise ValueError(
+                f"{spec.form_name}: LCKREQ use must begin at the issue cycle"
+            )
+        separations.add(lock_use.cycles)
+    if lock_form_count == 0 or len(separations) != 1:
+        raise ValueError(
+            "selected AIE2P lock forms must have one common issue separation"
+        )
+    return separations.pop()
 
 
 def _effects(
@@ -1469,13 +1529,18 @@ _REGISTER_ENDPOINTS = tuple(
     )
 )
 _MEMORY_ENDPOINTS = tuple(
-    MemoryCycles(cycles)
-    for cycles in sorted(
+    sorted(
         {
-            itinerary.memory.cycles
-            for itinerary in CORE_SCHEDULE_TABLE.itineraries
-            if itinerary.memory is not None
-        }
+            _memory_timing_endpoint(_itinerary(spec))
+            for spec in descriptor_specs._DESCRIPTOR_SPECS
+            if _itinerary(spec).memory is not None
+        },
+        key=lambda endpoint: (
+            endpoint.memory.cycles,
+            endpoint.lock_ordering_first_cycle,
+            endpoint.lock_ordering_last_cycle,
+            endpoint.is_tile_memory,
+        ),
     )
 )
 
@@ -1492,6 +1557,13 @@ _TIMING_EVENTS = tuple(
                 _memory_event_name(access, memory)
                 for memory in _MEMORY_ENDPOINTS
                 for access in ("read", "write")
+            ),
+            *(
+                event
+                for spec in descriptor_specs._DESCRIPTOR_SPECS
+                for effect in spec.effects
+                for event in (effect.producer_event, effect.consumer_event)
+                if event is not None
             ),
         }
     )
@@ -1563,7 +1635,7 @@ def _event_separations() -> tuple[EventSeparation, ...]:
             stages=(),
             operand_cycles=(),
             bypasses=(),
-            memory=producer,
+            memory=producer.memory,
         )
         for consumer in _MEMORY_ENDPOINTS:
             consumer_itinerary = Itinerary(
@@ -1571,7 +1643,7 @@ def _event_separations() -> tuple[EventSeparation, ...]:
                 stages=(),
                 operand_cycles=(),
                 bypasses=(),
-                memory=consumer,
+                memory=consumer.memory,
             )
             cycles = memory_separation(producer_itinerary, consumer_itinerary)
             result.extend(
@@ -1583,6 +1655,49 @@ def _event_separations() -> tuple[EventSeparation, ...]:
                 )
                 for producer_access in ("read", "write")
                 for consumer_access in ("read", "write")
+            )
+    lock_producer_event = descriptor_specs._LOCK_EFFECT.producer_event
+    lock_consumer_event = descriptor_specs._LOCK_EFFECT.consumer_event
+    if lock_producer_event is None or lock_consumer_event is None:
+        raise ValueError("AIE2P lock effect must define both timing endpoints")
+    result.append(
+        EventSeparation(
+            lock_producer_event,
+            lock_consumer_event,
+            _lock_issue_separation(),
+            ModelQuality.EXACT,
+        )
+    )
+    for memory in _MEMORY_ENDPOINTS:
+        lock_resume_separation = (
+            1
+            if memory.is_tile_memory
+            else descriptor_specs._LOCK_CORE_RESUME_CYCLE
+            - memory.lock_ordering_first_cycle
+            + 1
+        )
+        lock_stall_separation = (
+            memory.lock_ordering_last_cycle
+            - descriptor_specs._LOCK_CORE_STALL_CYCLE
+            + 1
+        )
+        for access in ("read", "write"):
+            memory_event = _memory_event_name(access, memory)
+            result.extend(
+                (
+                    EventSeparation(
+                        lock_producer_event,
+                        memory_event,
+                        lock_resume_separation,
+                        ModelQuality.EXACT,
+                    ),
+                    EventSeparation(
+                        memory_event,
+                        lock_consumer_event,
+                        lock_stall_separation,
+                        ModelQuality.EXACT,
+                    ),
+                )
             )
     return tuple(
         sorted(

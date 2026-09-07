@@ -15,6 +15,9 @@ from loom.target.arch.amd.xdna.aie.schedule import (
 )
 from loom.target.arch.amd.xdna.aie2p.core_descriptor_specs import (
     _DESCRIPTOR_SPECS,
+    _LOCK_CORE_RESUME_CYCLE,
+    _LOCK_CORE_STALL_CYCLE,
+    _LOCK_EFFECT,
     _MACHINE_FORMS,
 )
 from loom.target.arch.amd.xdna.aie2p.core_descriptors import (
@@ -26,7 +29,10 @@ from loom.target.arch.amd.xdna.aie2p.core_descriptors import (
     _bundle_exclusion_resource_name,
     _constraints,
     _itinerary,
+    _lock_issue_separation,
     _low_register_class_name,
+    _memory_event_name,
+    _memory_timing_endpoint,
     _pipeline_resource_name,
     _slot_resource_name,
 )
@@ -38,14 +44,12 @@ from loom.target.low_descriptors import (
     ConstraintKind,
     DescriptorFlag,
     DescriptorOpKind,
-    Effect,
     EffectFlag,
     EffectKind,
     ImmediateFlag,
     ImmediateKind,
     InstructionClass,
     IssueUseKind,
-    MemorySpace,
     OperandFlag,
     OperandRole,
     RegClassAltFlag,
@@ -346,9 +350,7 @@ def test_lock_forms_retain_counting_semaphore_contracts() -> None:
         assert descriptor.asm_forms[0].mnemonic == mnemonic
         assert len(descriptor.operands) == operand_count
         assert len(descriptor.immediates) == immediate_count
-        assert descriptor.effects == (
-            Effect(EffectKind.BARRIER, MemorySpace.WORKGROUP),
-        )
+        assert descriptor.effects == (_LOCK_EFFECT,)
         assert DescriptorFlag.SIDE_EFFECTING in descriptor.flags
         assert DescriptorFlag.DEAD_REMOVABLE not in descriptor.flags
         if immediate_count:
@@ -358,6 +360,60 @@ def test_lock_forms_retain_counting_semaphore_contracts() -> None:
             assert lock_id.bit_width == 6
             assert lock_id.signed_min == 0
             assert lock_id.unsigned_max == 63
+
+
+def test_lock_memory_timing_matches_aie2p_stall_and_resume_oracle() -> None:
+    descriptors = {
+        descriptor.key: descriptor
+        for descriptor in AIE2P_CORE_DESCRIPTOR_SET.descriptors
+    }
+    separations = {
+        (row.producer_event, row.consumer_event): row.minimum_issue_separation_cycles
+        for row in AIE2P_CORE_DESCRIPTOR_SET.event_separations
+    }
+    assert _LOCK_EFFECT.producer_event is not None
+    assert _LOCK_EFFECT.consumer_event is not None
+    assert _lock_issue_separation() == 4
+    assert separations[_LOCK_EFFECT.producer_event, _LOCK_EFFECT.consumer_event] == 4
+
+    memory_spec_count = 0
+    read_modify_write_spec_count = 0
+    for spec in _DESCRIPTOR_SPECS:
+        form = _MACHINE_FORMS[spec.form_name]
+        may_load = has_property(form, "mayLoad")
+        may_store = has_property(form, "mayStore")
+        if not may_load and not may_store:
+            continue
+        memory_spec_count += 1
+        read_modify_write_spec_count += int(may_load and may_store)
+        timing = _memory_timing_endpoint(_itinerary(spec))
+        expected_resume_separation = (
+            1
+            if timing.is_tile_memory
+            else _LOCK_CORE_RESUME_CYCLE - timing.lock_ordering_first_cycle + 1
+        )
+        expected_stall_separation = (
+            timing.lock_ordering_last_cycle - _LOCK_CORE_STALL_CYCLE + 1
+        )
+        descriptor = descriptors[spec.key]
+        for effect in descriptor.effects:
+            if effect.kind not in (EffectKind.READ, EffectKind.WRITE):
+                continue
+            access = "read" if effect.kind is EffectKind.READ else "write"
+            memory_event = _memory_event_name(access, timing)
+            assert effect.producer_event == memory_event
+            assert effect.consumer_event == memory_event
+            assert (
+                separations[_LOCK_EFFECT.producer_event, memory_event]
+                == expected_resume_separation
+            )
+            assert (
+                separations[memory_event, _LOCK_EFFECT.consumer_event]
+                == expected_stall_separation
+            )
+
+    assert memory_spec_count != 0
+    assert read_modify_write_spec_count != 0
 
 
 def test_bundle_resources_exactly_model_every_extendable_physical_slot_set() -> None:
