@@ -2994,18 +2994,12 @@ def test_generator_rejects_out_of_range_schedule_class_separation() -> None:
 
 def test_generator_rejects_out_of_range_schedule_distance() -> None:
     schedule_classes = tuple(
-        replace(schedule_class, schedule_distance_cycles=1 << 16)
-        if schedule_class.name == "test.event.fast"
-        else schedule_class
-        for schedule_class in TEST_LOW_CORE_DESCRIPTOR_SET.schedule_classes
+        replace(schedule_class, schedule_distance_cycles=1 << 16) if schedule_class.name == "test.event.fast" else schedule_class for schedule_class in TEST_LOW_CORE_DESCRIPTOR_SET.schedule_classes
     )
 
     with pytest.raises(
         ValueError,
-        match=re.escape(
-            "descriptor set 'test.low.core' schedule class 'test.event.fast' "
-            "schedule distance does not fit u16"
-        ),
+        match=re.escape("descriptor set 'test.low.core' schedule class 'test.event.fast' schedule distance does not fit u16"),
     ):
         generate_descriptor_set(
             replace(
@@ -3168,16 +3162,16 @@ def test_generator_rejects_unknown_operand_timing_event() -> None:
         generate_descriptor_set(replace(TEST_LOW_CORE_DESCRIPTOR_SET, descriptors=(descriptor,)))
 
 
-def test_generator_rejects_unknown_effect_timing_event() -> None:
+def test_generator_rejects_unknown_effect_endpoint_event() -> None:
     descriptor = next(descriptor for descriptor in TEST_LOW_CORE_DESCRIPTOR_SET.descriptors if descriptor.key == "test.event.memory.read.i32")
     descriptor = replace(
         descriptor,
-        effects=(replace(descriptor.effects[0], timing_event="test.missing"),),
+        effects=(replace(descriptor.effects[0], producer_event="test.missing"),),
     )
 
     with pytest.raises(
         ValueError,
-        match=re.escape("descriptor 'test.event.memory.read.i32' effect 0 references unknown timing event 'test.missing'"),
+        match=re.escape("descriptor 'test.event.memory.read.i32' effect 0 producer references unknown timing event 'test.missing'"),
     ):
         generate_descriptor_set(replace(TEST_LOW_CORE_DESCRIPTOR_SET, descriptors=(descriptor,)))
 
