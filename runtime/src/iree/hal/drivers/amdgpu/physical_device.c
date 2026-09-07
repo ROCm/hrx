@@ -1337,10 +1337,11 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
   if (iree_status_is_ok(status)) {
     // Publishing last means the unwind below has nothing to retire and no
     // partially assigned physical device is ever a delivery target.
-    iree_hal_amdgpu_system_event_publish_queue_targets(
+    status = iree_hal_amdgpu_system_event_publish_queue_targets(
         physical_device->system_event_target, physical_device->host_queues,
         physical_device->host_queue_count);
-  } else {
+  }
+  if (!iree_status_is_ok(status)) {
     iree_hal_amdgpu_physical_device_deassign_frontier(physical_device);
   }
 

@@ -301,11 +301,18 @@ class FakeLogicalDevice {
 // without touching HSA.
 class FakeHostQueues {
  public:
-  explicit FakeHostQueues(iree_host_size_t count) : count_(count) {
+  explicit FakeHostQueues(iree_host_size_t count, uint8_t first_queue_slot = 0)
+      : count_(count) {
+    IREE_ASSERT(count <= UINT8_MAX + 1u - first_queue_slot);
     IREE_CHECK_OK(iree_allocator_malloc(
         iree_allocator_system(), count * sizeof(iree_hal_amdgpu_host_queue_t),
         (void**)&queues_));
     memset(queues_, 0, count * sizeof(iree_hal_amdgpu_host_queue_t));
+    for (iree_host_size_t i = 0; i < count; ++i) {
+      queues_[i].axis = iree_async_axis_make_queue(
+          /*session_epoch=*/1, /*machine_index=*/0, /*device_index=*/0,
+          (uint8_t)(first_queue_slot + i), /*queue_incarnation=*/0);
+    }
   }
 
   ~FakeHostQueues() {
@@ -366,6 +373,12 @@ class SystemEventTest : public ::testing::Test {
     return registration;
   }
 
+  static void Publish(iree_hal_amdgpu_system_event_agent_target_t* target,
+                      const FakeHostQueues& queues) {
+    IREE_CHECK_OK(iree_hal_amdgpu_system_event_publish_queue_targets(
+        target, queues.queues(), queues.count()));
+  }
+
   static hsa_status_t DispatchMemoryError(uint64_t agent_handle,
                                           uint64_t virtual_address) {
     hsa_amd_event_t event = {};
@@ -401,10 +414,9 @@ TEST_F(SystemEventTest, UnmatchedEventIsNotClaimed) {
   device.Initialize(agent_handles, IREE_ARRAYSIZE(agent_handles));
   FakeHostQueues queues(2);
   iree_hal_amdgpu_system_event_registration_t* registration = Register(device);
-  iree_hal_amdgpu_system_event_publish_queue_targets(
-      iree_hal_amdgpu_system_event_registration_lookup_agent(
-          registration, MakeAgent(kAgentHandleA)),
-      queues.queues(), queues.count());
+  Publish(iree_hal_amdgpu_system_event_registration_lookup_agent(
+              registration, MakeAgent(kAgentHandleA)),
+          queues);
 
   EXPECT_EQ(DispatchMemoryFault(kAgentHandleUnknown, kFaultAddress),
             HSA_STATUS_ERROR);
@@ -423,10 +435,9 @@ TEST_F(SystemEventTest, MatchedEventFailsPublishedQueues) {
   device.Initialize(agent_handles, IREE_ARRAYSIZE(agent_handles));
   FakeHostQueues queues(3);
   iree_hal_amdgpu_system_event_registration_t* registration = Register(device);
-  iree_hal_amdgpu_system_event_publish_queue_targets(
-      iree_hal_amdgpu_system_event_registration_lookup_agent(
-          registration, MakeAgent(kAgentHandleA)),
-      queues.queues(), queues.count());
+  Publish(iree_hal_amdgpu_system_event_registration_lookup_agent(
+              registration, MakeAgent(kAgentHandleA)),
+          queues);
 
   EXPECT_EQ(DispatchMemoryFault(kAgentHandleA, kFaultAddress),
             HSA_STATUS_SUCCESS);
@@ -436,6 +447,33 @@ TEST_F(SystemEventTest, MatchedEventFailsPublishedQueues) {
   }
   EXPECT_EQ(device.FailureStatusCode(), IREE_STATUS_ABORTED);
   EXPECT_TRUE(device.FailureStatusMentions("00000000dead0000"));
+
+  iree_hal_amdgpu_system_event_unregister_device(registration);
+}
+
+// Independently allocated queues are published as discontiguous slots. Retiring
+// one pointer is a quiescence boundary for that queue without withdrawing fault
+// delivery from another live queue on the same agent.
+TEST_F(SystemEventTest, SelectiveRetirementPreservesOtherQueueTargets) {
+  const uint64_t agent_handles[] = {kAgentHandleA};
+  FakeLogicalDevice device;
+  device.Initialize(agent_handles, IREE_ARRAYSIZE(agent_handles));
+  FakeHostQueues retired_queue(1, /*first_queue_slot=*/3);
+  FakeHostQueues live_queue(1, /*first_queue_slot=*/19);
+  iree_hal_amdgpu_system_event_registration_t* registration = Register(device);
+  iree_hal_amdgpu_system_event_agent_target_t* target =
+      iree_hal_amdgpu_system_event_registration_lookup_agent(
+          registration, MakeAgent(kAgentHandleA));
+  Publish(target, retired_queue);
+  Publish(target, live_queue);
+
+  iree_hal_amdgpu_system_event_retire_queue_target(target,
+                                                   retired_queue.queues());
+  EXPECT_EQ(DispatchMemoryFault(kAgentHandleA, kFaultAddress),
+            HSA_STATUS_SUCCESS);
+  EXPECT_EQ(retired_queue.ErrorStatusCode(0), IREE_STATUS_OK);
+  EXPECT_EQ(live_queue.ErrorStatusCode(0), IREE_STATUS_ABORTED);
+  EXPECT_EQ(device.FailureStatusCode(), IREE_STATUS_ABORTED);
 
   iree_hal_amdgpu_system_event_unregister_device(registration);
 }
@@ -469,14 +507,12 @@ TEST_F(SystemEventTest, FanoutCoversEveryAgentOfTheRegistration) {
   FakeHostQueues queues_a(2);
   FakeHostQueues queues_b(2);
   iree_hal_amdgpu_system_event_registration_t* registration = Register(device);
-  iree_hal_amdgpu_system_event_publish_queue_targets(
-      iree_hal_amdgpu_system_event_registration_lookup_agent(
-          registration, MakeAgent(kAgentHandleA)),
-      queues_a.queues(), queues_a.count());
-  iree_hal_amdgpu_system_event_publish_queue_targets(
-      iree_hal_amdgpu_system_event_registration_lookup_agent(
-          registration, MakeAgent(kAgentHandleB)),
-      queues_b.queues(), queues_b.count());
+  Publish(iree_hal_amdgpu_system_event_registration_lookup_agent(
+              registration, MakeAgent(kAgentHandleA)),
+          queues_a);
+  Publish(iree_hal_amdgpu_system_event_registration_lookup_agent(
+              registration, MakeAgent(kAgentHandleB)),
+          queues_b);
 
   EXPECT_EQ(DispatchMemoryFault(kAgentHandleB, kFaultAddress),
             HSA_STATUS_SUCCESS);
@@ -509,14 +545,12 @@ TEST_F(SystemEventTest, FanoutStopsAtTheRegistrationBoundary) {
       Register(faulting_device);
   iree_hal_amdgpu_system_event_registration_t* other_registration =
       Register(other_device);
-  iree_hal_amdgpu_system_event_publish_queue_targets(
-      iree_hal_amdgpu_system_event_registration_lookup_agent(
-          faulting_registration, MakeAgent(kAgentHandleA)),
-      faulting_queues.queues(), faulting_queues.count());
-  iree_hal_amdgpu_system_event_publish_queue_targets(
-      iree_hal_amdgpu_system_event_registration_lookup_agent(
-          other_registration, MakeAgent(kAgentHandleB)),
-      other_queues.queues(), other_queues.count());
+  Publish(iree_hal_amdgpu_system_event_registration_lookup_agent(
+              faulting_registration, MakeAgent(kAgentHandleA)),
+          faulting_queues);
+  Publish(iree_hal_amdgpu_system_event_registration_lookup_agent(
+              other_registration, MakeAgent(kAgentHandleB)),
+          other_queues);
 
   EXPECT_EQ(DispatchMemoryFault(kAgentHandleA, kFaultAddress),
             HSA_STATUS_SUCCESS);
@@ -544,8 +578,7 @@ TEST_F(SystemEventTest, RetiredTargetsStopQueueDeliveryAndStillClaim) {
   iree_hal_amdgpu_system_event_agent_target_t* target =
       iree_hal_amdgpu_system_event_registration_lookup_agent(
           registration, MakeAgent(kAgentHandleA));
-  iree_hal_amdgpu_system_event_publish_queue_targets(target, queues.queues(),
-                                                     queues.count());
+  Publish(target, queues);
   iree_hal_amdgpu_system_event_retire_queue_targets(target);
   // Retirement is idempotent without any record that it already ran.
   iree_hal_amdgpu_system_event_retire_queue_targets(target);
@@ -569,10 +602,9 @@ TEST_F(SystemEventTest, RetiredDeviceStatusStillDeliversToPublishedQueues) {
   device.Initialize(agent_handles, IREE_ARRAYSIZE(agent_handles));
   FakeHostQueues queues(2);
   iree_hal_amdgpu_system_event_registration_t* registration = Register(device);
-  iree_hal_amdgpu_system_event_publish_queue_targets(
-      iree_hal_amdgpu_system_event_registration_lookup_agent(
-          registration, MakeAgent(kAgentHandleA)),
-      queues.queues(), queues.count());
+  Publish(iree_hal_amdgpu_system_event_registration_lookup_agent(
+              registration, MakeAgent(kAgentHandleA)),
+          queues);
   iree_hal_amdgpu_system_event_retire_device_status(registration);
 
   EXPECT_EQ(DispatchMemoryFault(kAgentHandleA, kFaultAddress),
@@ -598,8 +630,7 @@ TEST_F(SystemEventTest, FullyRetiredRegistrationDoesNotClaim) {
   iree_hal_amdgpu_system_event_agent_target_t* target =
       iree_hal_amdgpu_system_event_registration_lookup_agent(
           registration, MakeAgent(kAgentHandleA));
-  iree_hal_amdgpu_system_event_publish_queue_targets(target, queues.queues(),
-                                                     queues.count());
+  Publish(target, queues);
   iree_hal_amdgpu_system_event_retire_device_status(registration);
   iree_hal_amdgpu_system_event_retire_queue_targets(target);
   // Retirement is idempotent without any record that it already ran.
@@ -626,8 +657,7 @@ TEST_F(SystemEventTest, RemovedRegistrationDoesNotClaim) {
   iree_hal_amdgpu_system_event_agent_target_t* target =
       iree_hal_amdgpu_system_event_registration_lookup_agent(
           registration, MakeAgent(kAgentHandleA));
-  iree_hal_amdgpu_system_event_publish_queue_targets(target, queues.queues(),
-                                                     queues.count());
+  Publish(target, queues);
   iree_hal_amdgpu_system_event_retire_queue_targets(target);
   iree_hal_amdgpu_system_event_unregister_device(registration);
 
@@ -646,10 +676,9 @@ TEST_F(SystemEventTest, FirstFailureWinsAcrossRepeatedEvents) {
   device.Initialize(agent_handles, IREE_ARRAYSIZE(agent_handles));
   FakeHostQueues queues(1);
   iree_hal_amdgpu_system_event_registration_t* registration = Register(device);
-  iree_hal_amdgpu_system_event_publish_queue_targets(
-      iree_hal_amdgpu_system_event_registration_lookup_agent(
-          registration, MakeAgent(kAgentHandleA)),
-      queues.queues(), queues.count());
+  Publish(iree_hal_amdgpu_system_event_registration_lookup_agent(
+              registration, MakeAgent(kAgentHandleA)),
+          queues);
 
   EXPECT_EQ(DispatchMemoryFault(kAgentHandleA, kFaultAddress),
             HSA_STATUS_SUCCESS);
@@ -677,14 +706,12 @@ TEST_F(SystemEventTest, RegistrationsSharingAnAgentAreIndependent) {
       Register(first_device);
   iree_hal_amdgpu_system_event_registration_t* second_registration =
       Register(second_device);
-  iree_hal_amdgpu_system_event_publish_queue_targets(
-      iree_hal_amdgpu_system_event_registration_lookup_agent(
-          first_registration, MakeAgent(kAgentHandleA)),
-      first_queues.queues(), first_queues.count());
-  iree_hal_amdgpu_system_event_publish_queue_targets(
-      iree_hal_amdgpu_system_event_registration_lookup_agent(
-          second_registration, MakeAgent(kAgentHandleA)),
-      second_queues.queues(), second_queues.count());
+  Publish(iree_hal_amdgpu_system_event_registration_lookup_agent(
+              first_registration, MakeAgent(kAgentHandleA)),
+          first_queues);
+  Publish(iree_hal_amdgpu_system_event_registration_lookup_agent(
+              second_registration, MakeAgent(kAgentHandleA)),
+          second_queues);
 
   EXPECT_EQ(DispatchMemoryFault(kAgentHandleA, kFaultAddress),
             HSA_STATUS_SUCCESS);
@@ -695,11 +722,10 @@ TEST_F(SystemEventTest, RegistrationsSharingAnAgentAreIndependent) {
 
   // Removing the first registration must leave the second delivering.
   iree_hal_amdgpu_system_event_unregister_device(first_registration);
-  FakeHostQueues late_queues(1);
-  iree_hal_amdgpu_system_event_publish_queue_targets(
-      iree_hal_amdgpu_system_event_registration_lookup_agent(
-          second_registration, MakeAgent(kAgentHandleA)),
-      late_queues.queues(), late_queues.count());
+  FakeHostQueues late_queues(1, /*first_queue_slot=*/1);
+  Publish(iree_hal_amdgpu_system_event_registration_lookup_agent(
+              second_registration, MakeAgent(kAgentHandleA)),
+          late_queues);
   EXPECT_EQ(DispatchMemoryFault(kAgentHandleA, kSecondFaultAddress),
             HSA_STATUS_SUCCESS);
   EXPECT_EQ(late_queues.ErrorStatusCode(0), IREE_STATUS_ABORTED);
@@ -739,10 +765,9 @@ TEST_F(SystemEventTest, MemoryErrorEventIsNotClaimed) {
   device.Initialize(agent_handles, IREE_ARRAYSIZE(agent_handles));
   FakeHostQueues queues(2);
   iree_hal_amdgpu_system_event_registration_t* registration = Register(device);
-  iree_hal_amdgpu_system_event_publish_queue_targets(
-      iree_hal_amdgpu_system_event_registration_lookup_agent(
-          registration, MakeAgent(kAgentHandleA)),
-      queues.queues(), queues.count());
+  Publish(iree_hal_amdgpu_system_event_registration_lookup_agent(
+              registration, MakeAgent(kAgentHandleA)),
+          queues);
 
   EXPECT_EQ(DispatchMemoryError(kAgentHandleA, kFaultAddress),
             HSA_STATUS_ERROR);
@@ -778,10 +803,9 @@ TEST_F(SystemEventTest, HsaShutdownRearmsHandlerRegistration) {
   // Delivery still works through the reinstalled handler.
   FakeHostQueues queues(1);
   iree_hal_amdgpu_system_event_registration_t* third = Register(device);
-  iree_hal_amdgpu_system_event_publish_queue_targets(
-      iree_hal_amdgpu_system_event_registration_lookup_agent(
-          third, MakeAgent(kAgentHandleA)),
-      queues.queues(), queues.count());
+  Publish(iree_hal_amdgpu_system_event_registration_lookup_agent(
+              third, MakeAgent(kAgentHandleA)),
+          queues);
   EXPECT_EQ(DispatchMemoryFault(kAgentHandleA, kFaultAddress),
             HSA_STATUS_SUCCESS);
   EXPECT_EQ(queues.ErrorStatusCode(0), IREE_STATUS_ABORTED);
@@ -792,8 +816,8 @@ TEST_F(SystemEventTest, HsaShutdownRearmsHandlerRegistration) {
 // that never registered still assigns, deassigns and tears down.
 TEST_F(SystemEventTest, NullTargetOperationsAreNoOps) {
   FakeHostQueues queues(1);
-  iree_hal_amdgpu_system_event_publish_queue_targets(NULL, queues.queues(),
-                                                     queues.count());
+  Publish(NULL, queues);
+  iree_hal_amdgpu_system_event_retire_queue_target(NULL, queues.queues());
   iree_hal_amdgpu_system_event_retire_queue_targets(NULL);
   iree_hal_amdgpu_system_event_retire_device_status(NULL);
   iree_hal_amdgpu_system_event_unregister_device(NULL);
