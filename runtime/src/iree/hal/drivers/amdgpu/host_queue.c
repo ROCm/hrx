@@ -962,12 +962,31 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
   }
   iree_allocator_free(params->host_allocator, native_mask);
 
-  // Initialize the AQL ring from the hardware queue.
+  // Initialize the AQL ring from the hardware queue. HSA may return a queue
+  // with a different capacity than requested, notably for cooperative queues,
+  // so every AQL-indexed sidecar must use the achieved capacity.
+  uint32_t actual_aql_packet_count = params->capacity.aql_packet_count;
   if (iree_status_is_ok(status)) {
     out_queue->hardware_queue = hardware_queue;
-    iree_hal_amdgpu_aql_ring_initialize(
-        params->hardware.libhsa, (iree_amd_queue_t*)hardware_queue,
-        params->hardware.aql_execution_mode, &out_queue->aql_ring);
+    actual_aql_packet_count = hardware_queue->size;
+    if (IREE_UNLIKELY(
+            !iree_host_size_is_power_of_two(actual_aql_packet_count))) {
+      status = iree_make_status(
+          IREE_STATUS_FAILED_PRECONDITION,
+          "HSA returned an invalid AQL queue capacity of %u packets",
+          actual_aql_packet_count);
+    } else if (IREE_UNLIKELY(params->capacity.kernarg_block_count / 2u <
+                             actual_aql_packet_count)) {
+      status = iree_make_status(
+          IREE_STATUS_RESOURCE_EXHAUSTED,
+          "HSA returned an AQL queue larger than the queue-owned kernarg "
+          "ring can support (kernarg_blocks=%u, aql_packets=%u)",
+          params->capacity.kernarg_block_count, actual_aql_packet_count);
+    } else {
+      iree_hal_amdgpu_aql_ring_initialize(
+          params->hardware.libhsa, (iree_amd_queue_t*)hardware_queue,
+          params->hardware.aql_execution_mode, &out_queue->aql_ring);
+    }
   }
 
   // Initialize the kernarg ring from the selected HSA memory pool.
@@ -1003,8 +1022,7 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
        IREE_HAL_AMDGPU_VENDOR_PACKET_CAPABILITY_AQL_PM4_IB)) {
     status = iree_hal_amdgpu_host_queue_allocate_pm4_ib_slots(
         params->hardware.libhsa, params->hardware.gpu_agent,
-        params->memory.pm4_ib_pool, params->capacity.aql_packet_count,
-        out_queue);
+        params->memory.pm4_ib_pool, actual_aql_packet_count, out_queue);
   }
 
   // Initialize the notification ring (creates epoch signal + entry buffer).
