@@ -9,7 +9,6 @@
 #include "iree/async/frontier.h"
 #include "iree/async/frontier_tracker.h"
 #include "iree/async/util/proactor_pool.h"
-#include "iree/hal/drivers/amdgpu/abi/signal.h"
 #include "iree/hal/drivers/amdgpu/allocator.h"
 #include "iree/hal/drivers/amdgpu/api.h"
 #include "iree/hal/drivers/amdgpu/aql_command_buffer.h"
@@ -1443,22 +1442,9 @@ static bool iree_hal_amdgpu_logical_device_query_pool_epoch(
     void* user_data, iree_async_axis_t axis, uint64_t epoch) {
   iree_hal_amdgpu_logical_device_t* logical_device =
       (iree_hal_amdgpu_logical_device_t*)user_data;
-  hsa_signal_t epoch_signal = {0};
-  if (!iree_hal_amdgpu_epoch_signal_table_lookup(
-          logical_device->host_queue_epoch_table, axis, &epoch_signal)) {
-    return false;
-  }
-  iree_amd_signal_t* signal =
-      (iree_amd_signal_t*)(uintptr_t)epoch_signal.handle;
-  const iree_hsa_signal_value_t current_value = iree_atomic_load(
-      (iree_atomic_int64_t*)&signal->value, iree_memory_order_acquire);
-  if (IREE_UNLIKELY(current_value < 0 ||
-                    current_value > IREE_HAL_AMDGPU_EPOCH_INITIAL_VALUE)) {
-    return false;
-  }
-  const uint64_t current_epoch =
-      (uint64_t)IREE_HAL_AMDGPU_EPOCH_INITIAL_VALUE - (uint64_t)current_value;
-  return current_epoch >= epoch;
+  return logical_device->frontier_tracker &&
+         iree_async_frontier_tracker_query_epoch(
+             logical_device->frontier_tracker, axis, epoch);
 }
 
 bool iree_hal_amdgpu_logical_device_lookup_host_queue_epoch_wait(
