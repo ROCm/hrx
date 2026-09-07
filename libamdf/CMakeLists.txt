@@ -15,7 +15,7 @@ set(IREE_IMPLICIT_DEFS_CC_DEPS)
 include("${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_library.cmake")
 include("${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_package.cmake")
 
-if(AMDF_BUILD)
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
 amdf_declare_library(
   NAME
     amdf
@@ -24,7 +24,7 @@ endif()
 
 iree_add_all_subdirs()
 
-if(AMDF_BUILD)
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
 amdf_library(
   NAME
     amdf

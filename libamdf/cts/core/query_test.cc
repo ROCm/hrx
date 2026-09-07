@@ -21,6 +21,12 @@ TEST(QueryApiTest, NegotiatesSupportedVersion) {
   ASSERT_NE(api, nullptr);
   EXPECT_EQ(api->structure_size, sizeof(amdf_api_t));
   EXPECT_EQ(api->abi_version, AMDF_ABI_VERSION_1);
+  EXPECT_NE(api->instance_create, nullptr);
+  EXPECT_NE(api->instance_destroy, nullptr);
+  EXPECT_NE(api->endpoint_enumerate, nullptr);
+  EXPECT_NE(api->endpoint_open, nullptr);
+  EXPECT_NE(api->endpoint_query_info, nullptr);
+  EXPECT_NE(api->endpoint_close, nullptr);
 }
 
 TEST(QueryApiTest, ReturnsStableImmutableTable) {

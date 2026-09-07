@@ -8,9 +8,18 @@
 
 #include <stddef.h>
 
+#include "libamdf/src/endpoint.h"
+#include "libamdf/src/instance.h"
+
 static const amdf_api_t amdf_api_v1 = {
     .structure_size = sizeof(amdf_api_t),
     .abi_version = AMDF_ABI_VERSION_1,
+    .instance_create = amdf_instance_create,
+    .instance_destroy = amdf_instance_destroy,
+    .endpoint_enumerate = amdf_endpoint_enumerate,
+    .endpoint_open = amdf_endpoint_open,
+    .endpoint_query_info = amdf_endpoint_query_info,
+    .endpoint_close = amdf_endpoint_close,
 };
 
 amdf_status_t AMDF_CALL amdf_query_api(amdf_abi_version_t minimum_version,

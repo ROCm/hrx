@@ -12,8 +12,9 @@ iree_add_all_subdirs()
 if(AMDF_BUILD)
 iree_cc_library(
   NAME
-    query_tests
+    core_tests
   SRCS
+    "discovery_test.cc"
     "query_test.cc"
   DEPS
     amdf::headers
@@ -25,14 +26,14 @@ iree_cc_library(
 )
 endif()
 
-if(AMDF_BUILD)
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
 iree_cc_test(
   NAME
     static
   SRCS
     "${PROJECT_SOURCE_DIR}/libamdf/cts/util/test_main.cc"
   DEPS
-    ::query_tests
+    ::core_tests
     amdf::amdf_static
     amdf::headers
     iree::third_party::google_test
@@ -43,7 +44,7 @@ iree_cc_test(
 )
 endif()
 
-if(AMDF_BUILD)
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
 iree_cc_test(
   NAME
     shared
@@ -52,7 +53,7 @@ iree_cc_test(
   DATA
     amdf::amdf
   DEPS
-    ::query_tests
+    ::core_tests
     amdf::amdf
     amdf::headers
     iree::third_party::google_test
@@ -63,7 +64,7 @@ iree_cc_test(
 )
 endif()
 
-if(AMDF_BUILD)
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
 iree_cc_test(
   NAME
     dynamic
@@ -72,7 +73,7 @@ iree_cc_test(
   DATA
     amdf::amdf
   DEPS
-    ::query_tests
+    ::core_tests
     amdf::headers
     iree::third_party::google_test
     libamdf::cts::util::dynamic_provider

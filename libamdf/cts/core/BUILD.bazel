@@ -14,9 +14,12 @@ package(
 )
 
 amdf_cc_library(
-    name = "query_tests",
+    name = "core_tests",
     testonly = True,
-    srcs = ["query_test.cc"],
+    srcs = [
+        "discovery_test.cc",
+        "query_test.cc",
+    ],
     deps = [
         "//libamdf/cts/util:provider_headers",
         "//third_party:google_test",
@@ -26,6 +29,7 @@ amdf_cc_library(
 
 amdf_cts_test_suite(
     name = "core",
-    suites = [":query_tests"],
+    suites = [":core_tests"],
+    target_compatible_with = ["@platforms//os:windows"],
     visibility = ["//visibility:public"],
 )

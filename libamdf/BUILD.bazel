@@ -29,6 +29,7 @@ amdf_library(
     name = "amdf",
     hdrs = ["include/amdf/amdf.h"],
     components = ["//libamdf/src:core"],
+    target_compatible_with = ["@platforms//os:windows"],
     win_def_file = "//libamdf/build_tools/cmake:amdf_exports.def",
 )
 

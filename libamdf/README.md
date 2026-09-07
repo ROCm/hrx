@@ -10,6 +10,15 @@ version and returns an immutable API table. Querying the table performs no
 allocation, system call, device discovery, dependent-library load, or other
 observable initialization.
 
+An explicit provider instance owns all dependent native libraries and can
+enumerate fixed-stride summaries of independently selectable AMD execution
+endpoints. Opening an endpoint caches immutable identity for later GPU or XDNA
+qualification without creating a device, address space, paging queue,
+allocation, executable, or hardware queue. The Windows provider implements
+this query-only layer with public KMT adapter APIs. Builds without a native
+platform provider expose the public headers but do not produce provider
+artifacts.
+
 The build produces two link modes from one implementation:
 
 - `//libamdf:amdf` and `amdf::amdf` consume the shared library.
@@ -28,7 +37,7 @@ Configure and test Bazel explicitly without enabling the legacy AMDGPU HAL:
 ```bash
 python dev.py bazel configure -DAMDF_BUILD=ON
 iree-bazel-test //libamdf/cts/...
-iree-bazel-run //libamdf/examples:query_api
+iree-bazel-run //libamdf/examples:enumerate
 ```
 
 The equivalent CMake build is:

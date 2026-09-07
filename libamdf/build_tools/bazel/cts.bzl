@@ -8,13 +8,19 @@
 
 load(":cc_test.bzl", "amdf_cc_test")
 
-def amdf_cts_test_suite(name, suites, tags = None, visibility = None):
+def amdf_cts_test_suite(
+        name,
+        suites,
+        tags = None,
+        target_compatible_with = None,
+        visibility = None):
     """Runs a CTS corpus through static, shared, and loaded providers.
 
     Args:
       name: Aggregate test-suite target name.
       suites: Test-only libraries containing the common test corpus.
       tags: Additional tags applied to every generated test target.
+      target_compatible_with: Constraints required by every test mode.
       visibility: Visibility of the aggregate test suite.
     """
     tags = tags or []
@@ -28,6 +34,7 @@ def amdf_cts_test_suite(name, suites, tags = None, visibility = None):
         name = "static",
         srcs = test_main,
         tags = tags,
+        target_compatible_with = target_compatible_with,
         deps = common_deps + [
             "//libamdf/cts/util:linked_provider",
             "//libamdf:amdf_static",
@@ -38,6 +45,7 @@ def amdf_cts_test_suite(name, suites, tags = None, visibility = None):
         srcs = test_main,
         data = ["//libamdf:amdf_shared_artifact"],
         tags = tags,
+        target_compatible_with = target_compatible_with,
         deps = common_deps + [
             "//libamdf/cts/util:linked_provider",
             "//libamdf:amdf",
@@ -51,6 +59,7 @@ def amdf_cts_test_suite(name, suites, tags = None, visibility = None):
         ],
         data = ["//libamdf:amdf_shared_artifact"],
         tags = tags,
+        target_compatible_with = target_compatible_with,
         deps = common_deps + ["//libamdf/cts/util:dynamic_provider"],
     )
     native.test_suite(

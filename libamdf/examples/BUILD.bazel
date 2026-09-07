@@ -13,7 +13,8 @@ package(
 )
 
 amdf_cc_binary(
-    name = "query_api",
-    srcs = ["query_api.c"],
+    name = "enumerate",
+    srcs = ["enumerate.c"],
+    target_compatible_with = ["@platforms//os:windows"],
     deps = ["//libamdf:amdf"],
 )
