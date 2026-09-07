@@ -13,12 +13,11 @@ package(
 )
 
 amdf_cc_library(
-    name = "platform",
-    hdrs = [
-        "endpoint.h",
-        "instance.h",
-    ],
-    visibility = [
-        "//libamdf/src:__subpackages__",
+    name = "device",
+    hdrs = ["device.h"],
+    visibility = ["//libamdf/src/xdna:__subpackages__"],
+    deps = [
+        "//libamdf/src/platform",
+        "//libamdf/src/xdna:endpoint_profile",
     ],
 )

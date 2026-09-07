@@ -10,6 +10,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "libamdf/src/pci.h"
+
 #define AMDF_WINDOWS_DRIVER_DESCRIPTION_CAPACITY                \
   (sizeof(((D3DKMT_DRIVER_DESCRIPTION*)0)->DriverDescription) / \
    sizeof(((D3DKMT_DRIVER_DESCRIPTION*)0)->DriverDescription[0]))
@@ -18,9 +20,6 @@
 
 _Static_assert(AMDF_WINDOWS_DRIVER_DESCRIPTION_CAPACITY <= UINT32_MAX,
                "driver description length must fit in uint32_t");
-
-#define AMDF_PCI_VENDOR_ID_AMD_ATI 0x1002u
-#define AMDF_PCI_VENDOR_ID_AMD_CPU 0x1022u
 
 static uint64_t amdf_windows_luid_encode(LUID luid) {
   return ((uint64_t)(uint32_t)luid.HighPart << 32) | luid.LowPart;
@@ -148,10 +147,6 @@ amdf_status_t amdf_windows_query_endpoint_info(const amdf_kmt_api_t* api,
     endpoint_info.structure_size = sizeof(endpoint_info);
     endpoint_info.id = amdf_windows_endpoint_id_encode(
         adapter_luid, physical_adapter_index, &device_ids.DeviceIds);
-    endpoint_info.engine_kind =
-        device_ids.DeviceIds.VendorID == AMDF_PCI_VENDOR_ID_AMD_ATI
-            ? AMDF_ENGINE_KIND_GPU
-            : AMDF_ENGINE_KIND_UNKNOWN;
     if (adapter_type.DisplaySupported) {
       endpoint_info.type_flags |= AMDF_ENDPOINT_TYPE_FLAG_DISPLAY_SUPPORTED;
     }
@@ -169,16 +164,11 @@ amdf_status_t amdf_windows_query_endpoint_info(const amdf_kmt_api_t* api,
     endpoint_info.pci.subsystem_vendor_id = device_ids.DeviceIds.SubVendorID;
     endpoint_info.pci.subsystem_device_id = device_ids.DeviceIds.SubSystemID;
     endpoint_info.pci.revision_id = device_ids.DeviceIds.RevisionID;
+    endpoint_info.engine_kind = amdf_pci_classify_engine(&endpoint_info.pci);
     status = amdf_windows_copy_endpoint_name(&description, endpoint_info.name);
   }
   if (amdf_status_is_ok(status)) {
     *out_info = endpoint_info;
   }
   return status;
-}
-
-bool amdf_windows_endpoint_info_is_amd(
-    const amdf_endpoint_info_t* endpoint_info) {
-  return endpoint_info->pci.vendor_id == AMDF_PCI_VENDOR_ID_AMD_ATI ||
-         endpoint_info->pci.vendor_id == AMDF_PCI_VENDOR_ID_AMD_CPU;
 }

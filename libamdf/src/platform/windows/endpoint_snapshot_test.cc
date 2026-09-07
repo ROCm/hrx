@@ -36,6 +36,9 @@ enum class FailurePoint {
 struct FakeKmt {
   FailurePoint failure_point = FailurePoint::kNone;
   uint32_t amd_physical_adapter_count = 1;
+  uint32_t amd_vendor_id = 0x1002u;
+  uint32_t amd_device_id = 0x1000u;
+  uint32_t amd_revision_id = 1;
   uint32_t enumeration_call_count = 0;
   uint32_t close_call_count = 0;
 };
@@ -99,12 +102,17 @@ NTSTATUS APIENTRY FakeQueryAdapterInfo(const D3DKMT_QUERYADAPTERINFO* query) {
       }
       auto* ids =
           static_cast<D3DKMT_QUERY_DEVICE_IDS*>(query->pPrivateDriverData);
-      ids->DeviceIds.VendorID =
-          query->hAdapter == kAmdAdapter ? 0x1002u : 0x8086u;
-      ids->DeviceIds.DeviceID = 0x1000u + ids->PhysicalAdapterIndex;
+      ids->DeviceIds.VendorID = query->hAdapter == kAmdAdapter
+                                    ? current_fake->amd_vendor_id
+                                    : 0x8086u;
+      ids->DeviceIds.DeviceID =
+          query->hAdapter == kAmdAdapter
+              ? current_fake->amd_device_id + ids->PhysicalAdapterIndex
+              : 0x1000u + ids->PhysicalAdapterIndex;
       ids->DeviceIds.SubVendorID = ids->DeviceIds.VendorID;
       ids->DeviceIds.SubSystemID = 0x2000u;
-      ids->DeviceIds.RevisionID = 1;
+      ids->DeviceIds.RevisionID =
+          query->hAdapter == kAmdAdapter ? current_fake->amd_revision_id : 1;
       ids->DeviceIds.BusType = 1;
       return kSuccess;
     }
@@ -182,6 +190,36 @@ TEST_F(EndpointSnapshotTest, ReturnsOnlyAmdEndpointsAndClosesSnapshot) {
   EXPECT_EQ(summaries[0].engine_kind, AMDF_ENGINE_KIND_GPU);
   EXPECT_EQ(fake_.enumeration_call_count, 2u);
   EXPECT_EQ(fake_.close_call_count, 2u);
+}
+
+TEST_F(EndpointSnapshotTest, ClassifiesKnownXdnaEndpoint) {
+  fake_.amd_vendor_id = 0x1022u;
+  fake_.amd_device_id = 0x17F0u;
+  fake_.amd_revision_id = 0x10u;
+  amdf_endpoint_summary_t summary = {};
+  uint32_t endpoint_count = 0;
+
+  const amdf_status_t status = amdf_windows_endpoint_snapshot_enumerate(
+      &api_, 1, &summary, &endpoint_count);
+
+  EXPECT_TRUE(amdf_status_is_ok(status));
+  ASSERT_EQ(endpoint_count, 1u);
+  EXPECT_EQ(summary.engine_kind, AMDF_ENGINE_KIND_XDNA);
+}
+
+TEST_F(EndpointSnapshotTest, LeavesUnknownAmdIdentityUnclassified) {
+  fake_.amd_vendor_id = 0x1022u;
+  fake_.amd_device_id = 0x17F0u;
+  fake_.amd_revision_id = 0x12u;
+  amdf_endpoint_summary_t summary = {};
+  uint32_t endpoint_count = 0;
+
+  const amdf_status_t status = amdf_windows_endpoint_snapshot_enumerate(
+      &api_, 1, &summary, &endpoint_count);
+
+  EXPECT_TRUE(amdf_status_is_ok(status));
+  ASSERT_EQ(endpoint_count, 1u);
+  EXPECT_EQ(summary.engine_kind, AMDF_ENGINE_KIND_UNKNOWN);
 }
 
 TEST_F(EndpointSnapshotTest, CountsWithoutOutputStorage) {

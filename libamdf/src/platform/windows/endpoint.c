@@ -4,21 +4,15 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "libamdf/src/platform/endpoint.h"
+#include "libamdf/src/platform/windows/endpoint.h"
 
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "libamdf/src/pci.h"
 #include "libamdf/src/platform/windows/endpoint_properties.h"
 #include "libamdf/src/platform/windows/instance.h"
-
-struct amdf_platform_endpoint_t {
-  // Platform instance borrowed by the retained adapter handle.
-  amdf_platform_instance_t* instance;
-  // Query-only KMT adapter handle owned by this endpoint.
-  D3DKMT_HANDLE adapter;
-};
 
 static amdf_status_t amdf_windows_close_endpoint_adapter(
     amdf_platform_endpoint_t* endpoint) {
@@ -42,6 +36,8 @@ amdf_status_t amdf_platform_endpoint_open(
   LUID adapter_luid;
   uint32_t physical_adapter_index = 0;
   amdf_windows_endpoint_id_decode(id, &adapter_luid, &physical_adapter_index);
+  endpoint->physical_adapter_index = physical_adapter_index;
+  endpoint->id = *id;
   D3DKMT_OPENADAPTERFROMLUID open_adapter = {0};
   open_adapter.AdapterLuid = adapter_luid;
   amdf_status_t status =
@@ -68,7 +64,7 @@ amdf_status_t amdf_platform_endpoint_open(
         &endpoint_info);
   }
   if (amdf_status_is_ok(status) &&
-      (!amdf_windows_endpoint_info_is_amd(&endpoint_info) ||
+      (!amdf_pci_is_amd(&endpoint_info.pci) ||
        !amdf_endpoint_id_is_equal(id, &endpoint_info.id))) {
     status = amdf_make_api_status(AMDF_STATUS_CODE_NOT_FOUND);
   }

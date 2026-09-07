@@ -8,6 +8,7 @@
 #define AMDF_SRC_ENDPOINT_H_
 
 #include "amdf/amdf.h"
+#include "libamdf/src/platform/endpoint.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,8 +23,26 @@ amdf_status_t AMDF_CALL amdf_endpoint_open(amdf_instance_t* instance,
 amdf_status_t AMDF_CALL amdf_endpoint_query_info(
     amdf_endpoint_t* endpoint, amdf_endpoint_info_t* out_info);
 
+// Copies one immutable endpoint-local queue-family record.
+amdf_status_t AMDF_CALL amdf_endpoint_query_queue_family_info(
+    amdf_endpoint_t* endpoint, uint32_t queue_family_ordinal,
+    amdf_queue_family_info_t* out_info);
+
 // Closes an endpoint and releases its instance borrow.
 amdf_status_t AMDF_CALL amdf_endpoint_close(amdf_endpoint_t* endpoint);
+
+// Returns immutable endpoint information borrowed from `endpoint`.
+const amdf_endpoint_info_t* amdf_endpoint_get_cached_info(
+    const amdf_endpoint_t* endpoint);
+
+// Returns the borrowed platform endpoint.
+amdf_platform_endpoint_t* amdf_endpoint_get_platform(amdf_endpoint_t* endpoint);
+
+// Registers a materialized device borrowing this endpoint.
+amdf_status_t amdf_endpoint_register_device(amdf_endpoint_t* endpoint);
+
+// Unregisters one previously registered device.
+void amdf_endpoint_unregister_device(amdf_endpoint_t* endpoint);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -20,6 +20,7 @@ amdf_cc_library(
     srcs = ["kmt_api.c"],
     hdrs = ["kmt_api.h"],
     target_compatible_with = WINDOWS_COMPATIBILITY,
+    visibility = ["//libamdf/src:__subpackages__"],
 )
 
 amdf_cc_library(
@@ -27,7 +28,10 @@ amdf_cc_library(
     srcs = ["endpoint_properties.c"],
     hdrs = ["endpoint_properties.h"],
     target_compatible_with = WINDOWS_COMPATIBILITY,
-    deps = [":kmt_api"],
+    deps = [
+        ":kmt_api",
+        "//libamdf/src:pci",
+    ],
 )
 
 amdf_cc_library(
@@ -38,6 +42,7 @@ amdf_cc_library(
     deps = [
         ":endpoint_properties",
         ":kmt_api",
+        "//libamdf/src:pci",
     ],
 )
 
@@ -56,7 +61,9 @@ amdf_cc_library(
 amdf_cc_library(
     name = "endpoint",
     srcs = ["endpoint.c"],
+    hdrs = ["endpoint.h"],
     target_compatible_with = WINDOWS_COMPATIBILITY,
+    visibility = ["//libamdf/src:__subpackages__"],
     deps = [
         ":endpoint_properties",
         ":instance",

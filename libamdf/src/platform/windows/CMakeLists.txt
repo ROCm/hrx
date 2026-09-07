@@ -34,6 +34,7 @@ iree_cc_library(
   DEPS
     ::kmt_api
     amdf::headers
+    libamdf::src::pci
   PUBLIC
 )
 endif()
@@ -50,6 +51,7 @@ iree_cc_library(
     ::endpoint_properties
     ::kmt_api
     amdf::headers
+    libamdf::src::pci
   PUBLIC
 )
 endif()
@@ -75,6 +77,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
 iree_cc_library(
   NAME
     endpoint
+  HDRS
+    "endpoint.h"
   SRCS
     "endpoint.c"
   DEPS

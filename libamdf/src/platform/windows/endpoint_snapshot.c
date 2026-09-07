@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "libamdf/src/pci.h"
 #include "libamdf/src/platform/windows/endpoint_properties.h"
 
 static amdf_status_t amdf_windows_close_snapshot_adapters(
@@ -89,8 +90,7 @@ amdf_status_t amdf_windows_endpoint_snapshot_enumerate(
       status = amdf_windows_query_endpoint_info(
           api, adapters[adapter_index].hAdapter,
           adapters[adapter_index].AdapterLuid, physical_adapter_index, &info);
-      if (!amdf_status_is_ok(status) ||
-          !amdf_windows_endpoint_info_is_amd(&info)) {
+      if (!amdf_status_is_ok(status) || !amdf_pci_is_amd(&info.pci)) {
         continue;
       }
       if (endpoint_count == UINT32_MAX) {

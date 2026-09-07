@@ -8,8 +8,10 @@
 
 #include <stddef.h>
 
+#include "libamdf/src/device.h"
 #include "libamdf/src/endpoint.h"
 #include "libamdf/src/instance.h"
+#include "libamdf/src/provider/extension.h"
 
 static const amdf_api_t amdf_api_v1 = {
     .structure_size = sizeof(amdf_api_t),
@@ -20,6 +22,9 @@ static const amdf_api_t amdf_api_v1 = {
     .endpoint_open = amdf_endpoint_open,
     .endpoint_query_info = amdf_endpoint_query_info,
     .endpoint_close = amdf_endpoint_close,
+    .query_extension = amdf_extension_query,
+    .endpoint_query_queue_family_info = amdf_endpoint_query_queue_family_info,
+    .device_destroy = amdf_device_destroy,
 };
 
 amdf_status_t AMDF_CALL amdf_query_api(amdf_abi_version_t minimum_version,

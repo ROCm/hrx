@@ -132,6 +132,15 @@ enum amdf_structure_type_e {
   AMDF_STRUCTURE_TYPE_INSTANCE_CREATE_INFO = 1,
   /// An `amdf_endpoint_info_t` output structure.
   AMDF_STRUCTURE_TYPE_ENDPOINT_INFO = 2,
+  /// An `amdf_queue_family_info_t` output structure.
+  AMDF_STRUCTURE_TYPE_QUEUE_FAMILY_INFO = 3,
+};
+
+/// Identifier of an optional API table compiled into the providing library.
+typedef uint32_t amdf_extension_id_t;
+enum amdf_extension_id_e {
+  /// XDNA endpoint qualification and execution services.
+  AMDF_EXTENSION_XDNA = 1,
 };
 
 /// Common prefix of every extensible input structure.
@@ -160,6 +169,9 @@ typedef struct amdf_instance_t amdf_instance_t;
 /// Query-only handle to one independently selectable execution endpoint.
 typedef struct amdf_endpoint_t amdf_endpoint_t;
 
+/// Live engine context and address domain materialized from an endpoint.
+typedef struct amdf_device_t amdf_device_t;
+
 /// Parameters used to create an independent provider instance.
 typedef struct amdf_instance_create_info_t {
   /// Must be `AMDF_STRUCTURE_TYPE_INSTANCE_CREATE_INFO`.
@@ -186,6 +198,22 @@ static inline bool amdf_endpoint_id_is_equal(const amdf_endpoint_id_t* lhs,
   return lhs->words[0] == rhs->words[0] && lhs->words[1] == rhs->words[1];
 }
 
+/// Opaque identity of one live materialized device.
+///
+/// The value is meaningful only while the device and its provider instance
+/// remain live. It is intended for correlation and compatibility checks, not
+/// persistence or native-handle recovery.
+typedef struct amdf_device_id_t {
+  /// Provider-defined identity words.
+  uint64_t words[2];
+} amdf_device_id_t;
+
+/// Returns true when two device identities contain the same opaque value.
+static inline bool amdf_device_id_is_equal(const amdf_device_id_t* lhs,
+                                           const amdf_device_id_t* rhs) {
+  return lhs->words[0] == rhs->words[0] && lhs->words[1] == rhs->words[1];
+}
+
 /// Broad execution-engine class of an endpoint.
 typedef uint32_t amdf_engine_kind_t;
 enum amdf_engine_kind_e {
@@ -208,6 +236,30 @@ enum amdf_endpoint_type_flag_bits_e {
   AMDF_ENDPOINT_TYPE_FLAG_COMPUTE_ONLY = 1u << 2,
   /// The endpoint is implemented entirely in software.
   AMDF_ENDPOINT_TYPE_FLAG_SOFTWARE_DEVICE = 1u << 3,
+};
+
+/// Native command representation accepted by a queue family.
+typedef uint32_t amdf_queue_command_type_t;
+enum amdf_queue_command_type_e {
+  /// No command representation. Advertised families never use this value.
+  AMDF_QUEUE_COMMAND_TYPE_UNKNOWN = 0,
+  /// Native AMD GPU PM4 command streams.
+  AMDF_QUEUE_COMMAND_TYPE_GPU_PM4 = 1,
+  /// Native AMD GPU SDMA command streams.
+  AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA = 2,
+  /// Native AMD GPU AQL packets reaching hardware without CPU translation.
+  AMDF_QUEUE_COMMAND_TYPE_GPU_AQL = 3,
+  /// Native AMD XDNA execution commands.
+  AMDF_QUEUE_COMMAND_TYPE_XDNA = 4,
+};
+
+/// Queue publication mechanisms implemented by a provider.
+typedef uint32_t amdf_queue_publication_modes_t;
+enum amdf_queue_publication_mode_bits_e {
+  /// Commands are published directly through caller-mapped queue state.
+  AMDF_QUEUE_PUBLICATION_MODE_USER = 1u << 0,
+  /// Commands are accepted through a bounded provider call.
+  AMDF_QUEUE_PUBLICATION_MODE_KERNEL = 1u << 1,
 };
 
 /// Capacity in bytes of a NUL-terminated endpoint diagnostic name.
@@ -242,6 +294,28 @@ typedef struct amdf_endpoint_summary_t {
   char name[AMDF_ENDPOINT_NAME_CAPACITY];
 } amdf_endpoint_summary_t;
 
+/// Immutable properties of one endpoint-local native queue family.
+///
+/// A family identifies one command representation independently from the
+/// mechanisms available to publish it. Advertising a publication mode is a
+/// promise that a later queue constructor can create that command/publication
+/// pair for the opened endpoint; it is not a list of theoretical hardware
+/// capabilities.
+typedef struct amdf_queue_family_info_t {
+  /// Must be `AMDF_STRUCTURE_TYPE_QUEUE_FAMILY_INFO`.
+  amdf_structure_type_t type;
+  /// Must be at least `sizeof(amdf_queue_family_info_t)`.
+  uint32_t structure_size;
+  /// Optional output extension chain. No extensions are defined in ABI v1.
+  void* next;
+  /// Dense ordinal accepted by later queue creation operations.
+  uint32_t ordinal;
+  /// Native command representation accepted by queues in this family.
+  amdf_queue_command_type_t command_type;
+  /// User- and kernel-mode publication paths implemented by the provider.
+  amdf_queue_publication_modes_t publication_modes;
+} amdf_queue_family_info_t;
+
 /// Immutable properties of one opened endpoint.
 typedef struct amdf_endpoint_info_t {
   /// Must be `AMDF_STRUCTURE_TYPE_ENDPOINT_INFO`.
@@ -260,6 +334,8 @@ typedef struct amdf_endpoint_info_t {
   amdf_pci_info_t pci;
   /// NUL-terminated UTF-8 diagnostic name. Never use this for classification.
   char name[AMDF_ENDPOINT_NAME_CAPACITY];
+  /// Number of immutable endpoint-local native queue families.
+  uint32_t queue_family_count;
 } amdf_endpoint_info_t;
 
 /// Immutable entry-point table for one negotiated ABI version.
@@ -328,6 +404,44 @@ typedef struct amdf_api_t {
   /// device wait. Failure leaves the endpoint live so destruction can be
   /// retried.
   amdf_status_t(AMDF_CALL* endpoint_close)(amdf_endpoint_t* endpoint);
+
+  /// Acquires an immutable optional API table compiled into this library.
+  ///
+  /// Extension availability describes the library composition and never
+  /// depends on endpoint enumeration or active hardware. Hardware support is
+  /// reported by operations on the returned table. `minimum_version` and
+  /// `maximum_version` form an inclusive range. An unknown or excluded
+  /// extension returns `AMDF_STATUS_CODE_UNSUPPORTED`; a compiled extension
+  /// with no version in range returns `AMDF_STATUS_CODE_VERSION_MISMATCH`.
+  /// Failure sets `out_extension_api` to `NULL` when it is non-NULL.
+  ///
+  /// This operation is thread-safe, bounded constant time, and inert. It
+  /// performs no allocation, system call, device discovery, dependent-library
+  /// load, or other observable initialization. The returned table remains
+  /// valid until the providing library is unloaded.
+  amdf_status_t(AMDF_CALL* query_extension)(amdf_extension_id_t extension_id,
+                                            uint32_t minimum_version,
+                                            uint32_t maximum_version,
+                                            const void** out_extension_api);
+
+  /// Copies one immutable queue-family record cached while opening `endpoint`.
+  ///
+  /// `queue_family_ordinal` must be less than the endpoint's reported family
+  /// count. The operation is thread-safe and performs no system call,
+  /// allocation, device initialization, queue creation, retry, sleep, or
+  /// device wait. The caller initializes `out_info` and its complete extension
+  /// chain. No output is modified on failure.
+  amdf_status_t(AMDF_CALL* endpoint_query_queue_family_info)(
+      amdf_endpoint_t* endpoint, uint32_t queue_family_ordinal,
+      amdf_queue_family_info_t* out_info);
+
+  /// Destroys a materialized device after all of its children are destroyed.
+  ///
+  /// The caller must have exclusive access. Returns
+  /// `AMDF_STATUS_CODE_BUSY` without native mutation while a child remains
+  /// live. Destruction performs no implicit device wait. A native teardown
+  /// failure leaves the device live so destruction can be retried.
+  amdf_status_t(AMDF_CALL* device_destroy)(amdf_device_t* device);
 } amdf_api_t;
 
 /// Function type used to acquire the immutable API table.

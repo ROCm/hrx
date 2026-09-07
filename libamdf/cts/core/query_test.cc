@@ -4,6 +4,7 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
+#include <cstddef>
 #include <cstdint>
 
 #include "amdf/amdf.h"
@@ -11,6 +12,19 @@
 #include "util/provider.h"
 
 namespace {
+
+static_assert(offsetof(amdf_endpoint_info_t, queue_family_count) ==
+              offsetof(amdf_endpoint_info_t, name) +
+                  AMDF_ENDPOINT_NAME_CAPACITY);
+static_assert(sizeof(amdf_endpoint_info_t) == 192);
+static_assert(offsetof(amdf_queue_family_info_t, ordinal) ==
+              sizeof(amdf_output_structure_t));
+static_assert(offsetof(amdf_queue_family_info_t, command_type) == 20);
+static_assert(offsetof(amdf_queue_family_info_t, publication_modes) == 24);
+static_assert(sizeof(amdf_queue_family_info_t) == 32);
+static_assert(offsetof(amdf_api_t, device_destroy) +
+                  sizeof(amdf_api_t::device_destroy) ==
+              sizeof(amdf_api_t));
 
 TEST(QueryApiTest, NegotiatesSupportedVersion) {
   const amdf_api_t* api = nullptr;
@@ -27,6 +41,9 @@ TEST(QueryApiTest, NegotiatesSupportedVersion) {
   EXPECT_NE(api->endpoint_open, nullptr);
   EXPECT_NE(api->endpoint_query_info, nullptr);
   EXPECT_NE(api->endpoint_close, nullptr);
+  EXPECT_NE(api->query_extension, nullptr);
+  EXPECT_NE(api->endpoint_query_queue_family_info, nullptr);
+  EXPECT_NE(api->device_destroy, nullptr);
 }
 
 TEST(QueryApiTest, ReturnsStableImmutableTable) {
@@ -66,6 +83,46 @@ TEST(QueryApiTest, RejectsUnsupportedVersionAndClearsOutput) {
   EXPECT_EQ(amdf_status_domain(status), AMDF_STATUS_DOMAIN_API);
   EXPECT_EQ(amdf_status_code(status), AMDF_STATUS_CODE_VERSION_MISMATCH);
   EXPECT_EQ(api, nullptr);
+}
+
+TEST(QueryExtensionTest, RejectsNullOutput) {
+  const amdf_api_t* api = nullptr;
+  ASSERT_TRUE(amdf_status_is_ok(amdf_cts_provider_query_api()(
+      AMDF_ABI_VERSION_1, AMDF_ABI_VERSION_LATEST, &api)));
+
+  const amdf_status_t status =
+      api->query_extension(AMDF_EXTENSION_XDNA, 1, UINT32_MAX, nullptr);
+
+  EXPECT_EQ(amdf_status_domain(status), AMDF_STATUS_DOMAIN_API);
+  EXPECT_EQ(amdf_status_code(status), AMDF_STATUS_CODE_INVALID_ARGUMENT);
+}
+
+TEST(QueryExtensionTest, RejectsReversedVersionRangeAndClearsOutput) {
+  const amdf_api_t* api = nullptr;
+  ASSERT_TRUE(amdf_status_is_ok(amdf_cts_provider_query_api()(
+      AMDF_ABI_VERSION_1, AMDF_ABI_VERSION_LATEST, &api)));
+  const void* extension_api = reinterpret_cast<const void*>(uintptr_t{1});
+
+  const amdf_status_t status =
+      api->query_extension(AMDF_EXTENSION_XDNA, 2, 1, &extension_api);
+
+  EXPECT_EQ(amdf_status_domain(status), AMDF_STATUS_DOMAIN_API);
+  EXPECT_EQ(amdf_status_code(status), AMDF_STATUS_CODE_INVALID_ARGUMENT);
+  EXPECT_EQ(extension_api, nullptr);
+}
+
+TEST(QueryExtensionTest, RejectsUnknownExtensionAndClearsOutput) {
+  const amdf_api_t* api = nullptr;
+  ASSERT_TRUE(amdf_status_is_ok(amdf_cts_provider_query_api()(
+      AMDF_ABI_VERSION_1, AMDF_ABI_VERSION_LATEST, &api)));
+  const void* extension_api = reinterpret_cast<const void*>(uintptr_t{1});
+
+  const amdf_status_t status =
+      api->query_extension(UINT32_MAX, 1, UINT32_MAX, &extension_api);
+
+  EXPECT_EQ(amdf_status_domain(status), AMDF_STATUS_DOMAIN_API);
+  EXPECT_EQ(amdf_status_code(status), AMDF_STATUS_CODE_UNSUPPORTED);
+  EXPECT_EQ(extension_api, nullptr);
 }
 
 TEST(StatusTest, PreservesDomainAndCode) {

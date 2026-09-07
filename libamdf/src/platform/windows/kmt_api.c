@@ -20,6 +20,18 @@ static amdf_status_t amdf_kmt_resolve_procedures(amdf_kmt_api_t* api) {
       api->module, "D3DKMTOpenAdapterFromLuid");
   api->query_adapter_info = (PFND3DKMT_QUERYADAPTERINFO)GetProcAddress(
       api->module, "D3DKMTQueryAdapterInfo");
+  api->create_device =
+      (PFND3DKMT_CREATEDEVICE)GetProcAddress(api->module, "D3DKMTCreateDevice");
+  api->destroy_device = (PFND3DKMT_DESTROYDEVICE)GetProcAddress(
+      api->module, "D3DKMTDestroyDevice");
+  api->create_paging_queue = (PFND3DKMT_CREATEPAGINGQUEUE)GetProcAddress(
+      api->module, "D3DKMTCreatePagingQueue");
+  api->destroy_paging_queue = (PFND3DKMT_DESTROYPAGINGQUEUE)GetProcAddress(
+      api->module, "D3DKMTDestroyPagingQueue");
+  api->create_context_virtual = (PFND3DKMT_CREATECONTEXTVIRTUAL)GetProcAddress(
+      api->module, "D3DKMTCreateContextVirtual");
+  api->destroy_context = (PFND3DKMT_DESTROYCONTEXT)GetProcAddress(
+      api->module, "D3DKMTDestroyContext");
   api->close_adapter =
       (PFND3DKMT_CLOSEADAPTER)GetProcAddress(api->module, "D3DKMTCloseAdapter");
   if (api->enumerate_adapters == NULL || api->open_adapter_from_luid == NULL ||
@@ -27,6 +39,13 @@ static amdf_status_t amdf_kmt_resolve_procedures(amdf_kmt_api_t* api) {
     return amdf_make_status(AMDF_STATUS_DOMAIN_WIN32, ERROR_PROC_NOT_FOUND);
   }
   return AMDF_STATUS_OK;
+}
+
+bool amdf_kmt_api_supports_device_contexts(const amdf_kmt_api_t* api) {
+  return api->create_device != NULL && api->destroy_device != NULL &&
+         api->create_paging_queue != NULL &&
+         api->destroy_paging_queue != NULL &&
+         api->create_context_virtual != NULL && api->destroy_context != NULL;
 }
 
 amdf_status_t amdf_kmt_api_initialize(amdf_kmt_api_t* out_api) {

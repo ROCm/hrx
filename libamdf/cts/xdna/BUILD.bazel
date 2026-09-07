@@ -1,0 +1,33 @@
+# Copyright 2026 The IREE Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+load("//libamdf/build_tools/bazel:cc.bzl", "amdf_cc_library")
+load("//libamdf/build_tools/bazel:cts.bzl", "amdf_cts_test_suite")
+
+package(
+    default_visibility = ["//visibility:private"],
+    features = ["layering_check"],
+    licenses = ["notice"],  # Apache 2.0
+)
+
+amdf_cc_library(
+    name = "xdna_tests",
+    testonly = True,
+    srcs = ["xdna_extension_test.cc"],
+    deps = [
+        "//libamdf/cts/util:provider_headers",
+        "//third_party:google_test",
+    ],
+    alwayslink = True,
+)
+
+amdf_cts_test_suite(
+    name = "xdna",
+    suites = [":xdna_tests"],
+    tags = ["manual"],
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//visibility:public"],
+)

@@ -27,10 +27,6 @@ amdf_status_t amdf_windows_query_endpoint_info(const amdf_kmt_api_t* api,
                                                uint32_t physical_adapter_index,
                                                amdf_endpoint_info_t* out_info);
 
-// Returns true when an endpoint belongs to a supported AMD PCI vendor.
-bool amdf_windows_endpoint_info_is_amd(
-    const amdf_endpoint_info_t* endpoint_info);
-
 // Decodes the native location carried by an opaque Windows endpoint ID.
 void amdf_windows_endpoint_id_decode(const amdf_endpoint_id_t* id,
                                      LUID* out_adapter_luid,

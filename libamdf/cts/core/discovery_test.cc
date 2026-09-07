@@ -43,6 +43,13 @@ amdf_endpoint_info_t MakeEndpointInfo() {
   return info;
 }
 
+amdf_queue_family_info_t MakeQueueFamilyInfo() {
+  amdf_queue_family_info_t info = {};
+  info.type = AMDF_STRUCTURE_TYPE_QUEUE_FAMILY_INFO;
+  info.structure_size = sizeof(info);
+  return info;
+}
+
 TEST(InstanceTest, ValidatesCreateInfoBeforePlatformInitialization) {
   const amdf_api_t* api = QueryApi();
   ASSERT_NE(api, nullptr);
@@ -217,6 +224,79 @@ TEST_F(DiscoveryTest, OpensEndpointAndReturnsCachedProperties) {
   EXPECT_TRUE(info.pci.vendor_id == 0x1002u || info.pci.vendor_id == 0x1022u);
 }
 
+TEST_F(DiscoveryTest, QueriesImmutableQueueFamilies) {
+  std::vector<amdf_endpoint_summary_t> summaries;
+  ASSERT_TRUE(amdf_status_is_ok(Enumerate(&summaries)));
+  if (summaries.empty()) {
+    GTEST_SKIP() << "no AMD endpoints present";
+  }
+  ASSERT_TRUE(amdf_status_is_ok(
+      api_->endpoint_open(instance_, &summaries[0].id, &endpoint_)));
+
+  amdf_endpoint_info_t endpoint_info = MakeEndpointInfo();
+  ASSERT_TRUE(
+      amdf_status_is_ok(api_->endpoint_query_info(endpoint_, &endpoint_info)));
+  for (uint32_t ordinal = 0; ordinal < endpoint_info.queue_family_count;
+       ++ordinal) {
+    amdf_queue_family_info_t family_info = MakeQueueFamilyInfo();
+    ASSERT_TRUE(amdf_status_is_ok(api_->endpoint_query_queue_family_info(
+        endpoint_, ordinal, &family_info)));
+    EXPECT_EQ(family_info.ordinal, ordinal);
+    EXPECT_NE(family_info.command_type, AMDF_QUEUE_COMMAND_TYPE_UNKNOWN);
+    EXPECT_NE(family_info.publication_modes, 0u);
+    EXPECT_EQ(
+        family_info.publication_modes & ~(AMDF_QUEUE_PUBLICATION_MODE_USER |
+                                          AMDF_QUEUE_PUBLICATION_MODE_KERNEL),
+        0u);
+  }
+
+  amdf_queue_family_info_t family_info = MakeQueueFamilyInfo();
+  family_info.ordinal = UINT32_MAX;
+  family_info.command_type = UINT32_MAX;
+  family_info.publication_modes = UINT32_MAX;
+  const amdf_queue_family_info_t original_info = family_info;
+  const amdf_status_t status = api_->endpoint_query_queue_family_info(
+      endpoint_, endpoint_info.queue_family_count, &family_info);
+  EXPECT_EQ(amdf_status_domain(status), AMDF_STATUS_DOMAIN_API);
+  EXPECT_EQ(amdf_status_code(status), AMDF_STATUS_CODE_OUT_OF_RANGE);
+  EXPECT_EQ(std::memcmp(&family_info, &original_info, sizeof(family_info)), 0);
+
+  const amdf_status_t maximum_status = api_->endpoint_query_queue_family_info(
+      endpoint_, UINT32_MAX, &family_info);
+  EXPECT_EQ(amdf_status_domain(maximum_status), AMDF_STATUS_DOMAIN_API);
+  EXPECT_EQ(amdf_status_code(maximum_status), AMDF_STATUS_CODE_OUT_OF_RANGE);
+  EXPECT_EQ(std::memcmp(&family_info, &original_info, sizeof(family_info)), 0);
+}
+
+TEST_F(DiscoveryTest, RejectsMalformedQueueFamilyQueryWithoutMutation) {
+  std::vector<amdf_endpoint_summary_t> summaries;
+  ASSERT_TRUE(amdf_status_is_ok(Enumerate(&summaries)));
+  if (summaries.empty()) {
+    GTEST_SKIP() << "no AMD endpoints present";
+  }
+  ASSERT_TRUE(amdf_status_is_ok(
+      api_->endpoint_open(instance_, &summaries[0].id, &endpoint_)));
+
+  EXPECT_EQ(amdf_status_code(
+                api_->endpoint_query_queue_family_info(endpoint_, 0, nullptr)),
+            AMDF_STATUS_CODE_INVALID_ARGUMENT);
+
+  amdf_queue_family_info_t family_info = {};
+  family_info.structure_size = sizeof(family_info);
+  family_info.ordinal = UINT32_MAX;
+  EXPECT_EQ(amdf_status_code(api_->endpoint_query_queue_family_info(
+                endpoint_, 0, &family_info)),
+            AMDF_STATUS_CODE_INVALID_ARGUMENT);
+  EXPECT_EQ(family_info.ordinal, UINT32_MAX);
+
+  family_info.type = AMDF_STRUCTURE_TYPE_QUEUE_FAMILY_INFO;
+  family_info.next = &family_info;
+  EXPECT_EQ(amdf_status_code(api_->endpoint_query_queue_family_info(
+                endpoint_, 0, &family_info)),
+            AMDF_STATUS_CODE_UNSUPPORTED);
+  EXPECT_EQ(family_info.ordinal, UINT32_MAX);
+}
+
 TEST_F(DiscoveryTest, RejectsMalformedInfoWithoutMutation) {
   std::vector<amdf_endpoint_summary_t> summaries;
   ASSERT_TRUE(amdf_status_is_ok(Enumerate(&summaries)));
@@ -285,6 +365,9 @@ TEST_F(DiscoveryTest, ValidatesEndpointArguments) {
   EXPECT_EQ(amdf_status_code(api_->endpoint_open(instance_, &id, nullptr)),
             AMDF_STATUS_CODE_INVALID_ARGUMENT);
   EXPECT_EQ(amdf_status_code(api_->endpoint_query_info(nullptr, nullptr)),
+            AMDF_STATUS_CODE_INVALID_ARGUMENT);
+  EXPECT_EQ(amdf_status_code(
+                api_->endpoint_query_queue_family_info(nullptr, 0, nullptr)),
             AMDF_STATUS_CODE_INVALID_ARGUMENT);
   EXPECT_EQ(amdf_status_code(api_->endpoint_close(nullptr)),
             AMDF_STATUS_CODE_INVALID_ARGUMENT);

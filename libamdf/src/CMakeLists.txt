@@ -50,23 +50,87 @@ iree_cc_library(
 )
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
+if(AMDF_BUILD)
 iree_cc_library(
   NAME
-    core
+    pci
   HDRS
-    "endpoint.h"
+    "pci.h"
+  SRCS
+    "pci.c"
+  DEPS
+    amdf::headers
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD)
+iree_cc_library(
+  NAME
+    instance
+  HDRS
     "instance.h"
   SRCS
-    "amdf.c"
-    "endpoint.c"
     "instance.c"
   DEPS
     ::child_tracker
     ::structure
     amdf::headers
     libamdf::src::platform
-    libamdf::src::platform::windows
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD)
+iree_cc_library(
+  NAME
+    endpoint
+  HDRS
+    "endpoint.h"
+  SRCS
+    "endpoint.c"
+  DEPS
+    ::child_tracker
+    ::instance
+    ::structure
+    amdf::headers
+    libamdf::src::platform
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD)
+iree_cc_library(
+  NAME
+    device
+  HDRS
+    "device.h"
+  SRCS
+    "device.c"
+  DEPS
+    ::child_tracker
+    ::endpoint
+    amdf::headers
+  PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
+set(_core_platform_deps "")
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+  list(APPEND _core_platform_deps libamdf::src::platform::windows)
+endif()
+iree_cc_library(
+  NAME
+    core
+  DEPS
+    ::device
+    ::endpoint
+    ::instance
+    ::pci
+    ::structure
+    amdf::headers
+    ${_core_platform_deps}
   PUBLIC
 )
 endif()
@@ -79,6 +143,22 @@ iree_cc_test(
     "atomics_test.cc"
   DEPS
     ::atomics
+    amdf::headers
+    iree::third_party::google_test
+    iree::third_party::google_test_main
+  LABELS
+    "iree-build-requirement=libamdf"
+)
+endif()
+
+if(AMDF_BUILD)
+iree_cc_test(
+  NAME
+    pci_test
+  SRCS
+    "pci_test.cc"
+  DEPS
+    ::pci
     amdf::headers
     iree::third_party::google_test
     iree::third_party::google_test_main

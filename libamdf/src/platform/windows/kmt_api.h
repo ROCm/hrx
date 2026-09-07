@@ -37,15 +37,30 @@ typedef struct amdf_kmt_api_t {
   PFND3DKMT_OPENADAPTERFROMLUID open_adapter_from_luid;
   // Queries immutable adapter and physical-device properties.
   PFND3DKMT_QUERYADAPTERINFO query_adapter_info;
+  // Creates one logical KMT device from an opened adapter.
+  PFND3DKMT_CREATEDEVICE create_device;
+  // Destroys one logical KMT device.
+  PFND3DKMT_DESTROYDEVICE destroy_device;
+  // Creates the paging queue used by a logical device.
+  PFND3DKMT_CREATEPAGINGQUEUE create_paging_queue;
+  // Destroys one paging queue and its associated synchronization object.
+  PFND3DKMT_DESTROYPAGINGQUEUE destroy_paging_queue;
+  // Creates one virtual execution context.
+  PFND3DKMT_CREATECONTEXTVIRTUAL create_context_virtual;
+  // Destroys one virtual execution context.
+  PFND3DKMT_DESTROYCONTEXT destroy_context;
   // Closes an adapter handle.
   PFND3DKMT_CLOSEADAPTER close_adapter;
 } amdf_kmt_api_t;
 
-// Loads GDI and resolves the complete KMT procedure table.
+// Loads GDI and resolves required and optional KMT procedures once.
 amdf_status_t amdf_kmt_api_initialize(amdf_kmt_api_t* out_api);
 
 // Unloads GDI after every KMT child handle has been closed.
 amdf_status_t amdf_kmt_api_deinitialize(amdf_kmt_api_t* api);
+
+// Returns true when the complete device/paging/context procedure set exists.
+bool amdf_kmt_api_supports_device_contexts(const amdf_kmt_api_t* api);
 
 // Queries one typed block of adapter information.
 amdf_status_t amdf_kmt_query_adapter_info(const amdf_kmt_api_t* api,

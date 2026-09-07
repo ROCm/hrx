@@ -29,27 +29,66 @@ amdf_cc_library(
     name = "structure",
     srcs = ["structure.c"],
     hdrs = ["structure.h"],
+    visibility = ["//libamdf/src:__subpackages__"],
 )
 
 amdf_cc_library(
-    name = "core",
-    srcs = [
-        "amdf.c",
-        "endpoint.c",
-        "instance.c",
-    ],
-    hdrs = [
-        "endpoint.h",
-        "instance.h",
-    ],
-    target_compatible_with = ["@platforms//os:windows"],
-    visibility = ["//libamdf:__pkg__"],
+    name = "pci",
+    srcs = ["pci.c"],
+    hdrs = ["pci.h"],
+    visibility = ["//libamdf/src:__subpackages__"],
+)
+
+amdf_cc_library(
+    name = "instance",
+    srcs = ["instance.c"],
+    hdrs = ["instance.h"],
+    visibility = ["//libamdf/src:__subpackages__"],
     deps = [
         ":child_tracker",
         ":structure",
         "//libamdf/src/platform",
-        "//libamdf/src/platform/windows",
     ],
+)
+
+amdf_cc_library(
+    name = "endpoint",
+    srcs = ["endpoint.c"],
+    hdrs = ["endpoint.h"],
+    visibility = ["//libamdf/src:__subpackages__"],
+    deps = [
+        ":child_tracker",
+        ":instance",
+        ":structure",
+        "//libamdf/src/platform",
+    ],
+)
+
+amdf_cc_library(
+    name = "device",
+    srcs = ["device.c"],
+    hdrs = ["device.h"],
+    visibility = ["//libamdf/src:__subpackages__"],
+    deps = [
+        ":child_tracker",
+        ":endpoint",
+    ],
+)
+
+amdf_cc_library(
+    name = "core",
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//libamdf/src/provider:__pkg__"],
+    deps = [
+        ":device",
+        ":endpoint",
+        ":instance",
+        ":pci",
+        ":structure",
+    ] + select({
+        "@platforms//os:windows": ["//libamdf/src/platform/windows"],
+        "//conditions:default": [],
+    }),
 )
 
 amdf_cc_test(
@@ -57,6 +96,16 @@ amdf_cc_test(
     srcs = ["atomics_test.cc"],
     deps = [
         ":atomics",
+        "//third_party:google_test",
+        "//third_party:google_test_main",
+    ],
+)
+
+amdf_cc_test(
+    name = "pci_test",
+    srcs = ["pci_test.cc"],
+    deps = [
+        ":pci",
         "//third_party:google_test",
         "//third_party:google_test_main",
     ],
