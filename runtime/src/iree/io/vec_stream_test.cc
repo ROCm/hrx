@@ -6,6 +6,7 @@
 
 #include "iree/io/vec_stream.h"
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -476,6 +477,29 @@ TEST(VecStreamTest, ReadExact) {
                                          read_buffer, NULL)),
               StatusIs(StatusCode::kOutOfRange));
   EXPECT_EQ(iree_io_stream_offset(stream.get()), 0);
+}
+
+TEST(VecStreamTest, ReadExactAcrossBlockBoundary) {
+  std::vector<uint8_t> data(2048);
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<uint8_t>(i);
+  }
+  IREE_ASSERT_OK_AND_ASSIGN(auto stream,
+                            CreateStream(IREE_IO_STREAM_MODE_READABLE |
+                                         IREE_IO_STREAM_MODE_WRITABLE));
+  IREE_ASSERT_OK(iree_io_stream_write(stream.get(), data.size(), data.data()));
+
+  constexpr iree_io_stream_pos_t kReadOffset = 900;
+  constexpr iree_host_size_t kReadLength = 300;
+  IREE_ASSERT_OK(
+      iree_io_stream_seek(stream.get(), IREE_IO_STREAM_SEEK_SET, kReadOffset));
+  std::vector<uint8_t> actual(kReadLength);
+  IREE_ASSERT_OK(iree_io_stream_read(stream.get(), actual.size(), actual.data(),
+                                     /*out_buffer_length=*/NULL));
+
+  EXPECT_TRUE(
+      std::equal(actual.begin(), actual.end(), data.begin() + kReadOffset));
+  EXPECT_EQ(iree_io_stream_offset(stream.get()), kReadOffset + kReadLength);
 }
 
 TEST(VecStreamTest, Write) {
