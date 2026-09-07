@@ -34,6 +34,32 @@ iree_hal_replay_file_range_t iree_hal_replay_dump_record_payload_range(
   return range;
 }
 
+iree_status_t iree_hal_replay_dump_dynamic_queue_layout(
+    const iree_hal_replay_file_record_t* record,
+    const iree_hal_replay_dynamic_queue_object_payload_t* payload,
+    iree_host_size_t* out_execution_resources_offset) {
+  if (IREE_UNLIKELY(payload->execution_resource_count > IREE_HOST_SIZE_MAX)) {
+    return iree_make_status(
+        IREE_STATUS_OUT_OF_RANGE,
+        "replay dynamic queue execution-resource count overflows host size");
+  }
+  iree_host_size_t execution_resources_size = 0;
+  iree_host_size_t expected_payload_size = 0;
+  if (IREE_UNLIKELY(!iree_host_size_checked_mul(
+                        (iree_host_size_t)payload->execution_resource_count,
+                        sizeof(uint32_t), &execution_resources_size) ||
+                    !iree_host_size_checked_add(sizeof(*payload),
+                                                execution_resources_size,
+                                                &expected_payload_size) ||
+                    record->payload.data_length != expected_payload_size)) {
+    return iree_make_status(
+        IREE_STATUS_DATA_LOSS,
+        "replay dynamic queue object payload length mismatch");
+  }
+  *out_execution_resources_offset = sizeof(*payload);
+  return iree_ok_status();
+}
+
 const char* iree_hal_replay_dump_file_reference_type_string(
     iree_hal_replay_file_reference_type_t reference_type) {
   switch (reference_type) {

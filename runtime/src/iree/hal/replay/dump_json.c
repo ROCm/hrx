@@ -604,6 +604,34 @@ static iree_status_t iree_hal_replay_dump_append_json_payload(
           ",\"queue_ordinal\":%" PRIu32 "}",
           payload.family_ordinal, payload.queue_ordinal);
     }
+    case IREE_HAL_REPLAY_PAYLOAD_TYPE_DYNAMIC_QUEUE_OBJECT: {
+      if (record->payload.data_length <
+          sizeof(iree_hal_replay_dynamic_queue_object_payload_t)) {
+        return iree_make_status(IREE_STATUS_DATA_LOSS,
+                                "replay dynamic queue payload is short");
+      }
+      iree_hal_replay_dynamic_queue_object_payload_t payload;
+      memcpy(&payload, record->payload.data, sizeof(payload));
+      iree_host_size_t execution_resources_offset = 0;
+      IREE_RETURN_IF_ERROR(iree_hal_replay_dump_dynamic_queue_layout(
+          record, &payload, &execution_resources_offset));
+      IREE_RETURN_IF_ERROR(iree_string_builder_append_format(
+          builder,
+          ",\"payload\":{\"family_ordinal\":%" PRIu32 ",\"priority\":%" PRId32
+          ",\"features\":%" PRIu64 ",\"execution_resources\":[",
+          payload.family_ordinal, payload.priority, payload.features));
+      for (iree_host_size_t i = 0;
+           i < (iree_host_size_t)payload.execution_resource_count; ++i) {
+        uint32_t resource_ordinal = 0;
+        memcpy(&resource_ordinal,
+               record->payload.data + execution_resources_offset +
+                   i * sizeof(resource_ordinal),
+               sizeof(resource_ordinal));
+        IREE_RETURN_IF_ERROR(iree_string_builder_append_format(
+            builder, i ? ",%" PRIu32 : "%" PRIu32, resource_ordinal));
+      }
+      return iree_string_builder_append_cstring(builder, "]}");
+    }
     case IREE_HAL_REPLAY_PAYLOAD_TYPE_FILE_OBJECT: {
       if (record->payload.data_length <
           sizeof(iree_hal_replay_file_object_payload_t)) {

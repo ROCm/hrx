@@ -87,6 +87,8 @@ IREE_API_EXPORT const char* iree_hal_replay_operation_code_string(
       return "device.create_semaphore";
     case IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_QUERY_QUEUE_POOL_BACKEND:
       return "device.query_queue_pool_backend";
+    case IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_ACQUIRE_QUEUE:
+      return "device.acquire_queue";
     case IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_PROFILING_BEGIN:
       return "device.profiling_begin";
     case IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_PROFILING_FLUSH:
@@ -237,6 +239,8 @@ IREE_API_EXPORT const char* iree_hal_replay_payload_type_string(
       return "command_buffer_atomic_rmw";
     case IREE_HAL_REPLAY_PAYLOAD_TYPE_PROVISIONED_QUEUE_OBJECT:
       return "provisioned_queue_object";
+    case IREE_HAL_REPLAY_PAYLOAD_TYPE_DYNAMIC_QUEUE_OBJECT:
+      return "dynamic_queue_object";
     case IREE_HAL_REPLAY_PAYLOAD_TYPE_QUEUE_TRANSFER:
       return "queue_transfer";
     case IREE_HAL_REPLAY_PAYLOAD_TYPE_QUEUE_READ:
