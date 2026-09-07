@@ -202,6 +202,10 @@ between Bazel and CMake.
 
 | Option | Values | CMake | Bazel portable | Bazel native |
 | --- | --- | --- | --- | --- |
+| `AMDF_BUILD` | `ON`, `OFF` | Enables the portable libamdf shared/static libraries, examples, and tests. Defaults to `IREE_HAL_DRIVER_AMDGPU`. | Enables or disables the libamdf package scope. Defaults to the configured AMDGPU HAL driver state. | `--//libamdf/config:enabled=<bool>` |
+| `AMDF_FAMILY_RDNA` | `ON`, `OFF` | Admits RDNA implementation packages to libamdf. | Adds or removes `rdna` from the libamdf implementation-family scope. | `--//libamdf/config:families=<complete-family-list>` |
+| `AMDF_FAMILY_CDNA` | `ON`, `OFF` | Admits CDNA implementation packages to libamdf. | Adds or removes `cdna` from the libamdf implementation-family scope. | `--//libamdf/config:families=<complete-family-list>` |
+| `AMDF_FAMILY_XDNA` | `ON`, `OFF` | Admits XDNA implementation packages to libamdf. | Adds or removes `xdna` from the libamdf implementation-family scope. | `--//libamdf/config:families=<complete-family-list>` |
 | `IREE_HAL_DRIVER_AMDGPU` | `ON`, `OFF` | Builds the AMDGPU runtime HAL driver. | Adds or removes `amdgpu` from the runtime driver registry and recursive package scope. | `--//runtime/config/hal:drivers=<complete-driver-list>` |
 | `IREE_HAL_DRIVER_TASK` | `ON`, `OFF` | Builds the task runtime HAL driver. | Adds or removes `task` from the runtime driver registry. | `--//runtime/config/hal:drivers=<complete-driver-list>` |
 | `IREE_HAL_DRIVER_VULKAN` | `ON`, `OFF` | Builds the Vulkan runtime HAL driver. | Adds or removes `vulkan` from the runtime driver registry and recursive package scope. | `--//runtime/config/hal:drivers=<complete-driver-list>` |
@@ -225,6 +229,22 @@ The portable spelling is shorter for common cases:
 ```bash
 python dev.py bazel configure -DIREE_HAL_DRIVER_AMDGPU=ON
 ```
+
+libamdf can also be built independently of the legacy AMDGPU HAL and ROCm
+dependency stack:
+
+```bash
+python dev.py bazel configure -DAMDF_BUILD=ON
+iree-bazel-test //libamdf/cts/...
+
+iree-cmake-configure -DAMDF_BUILD=ON -DIREE_HAL_DRIVER_AMDGPU=OFF -DLIBHRX_BUILD=OFF -DLOOM_BUILD=OFF
+iree-cmake-build libamdf/all
+iree-cmake-test -R '^libamdf/'
+```
+
+The native family setting is a complete list. For example, an XDNA-only source
+configuration uses `--//libamdf/config:families=xdna`; the portable equivalent
+sets `AMDF_FAMILY_RDNA=OFF` and `AMDF_FAMILY_CDNA=OFF`.
 
 ### External HAL drivers
 

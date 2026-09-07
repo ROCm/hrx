@@ -1,0 +1,32 @@
+// Copyright 2026 The IREE Authors
+//
+// Licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+#include "amdf/amdf.h"
+
+#include <stddef.h>
+
+static const amdf_api_t amdf_api_v1 = {
+    .structure_size = sizeof(amdf_api_t),
+    .abi_version = AMDF_ABI_VERSION_1,
+};
+
+amdf_status_t AMDF_CALL amdf_query_api(amdf_abi_version_t minimum_version,
+                                       amdf_abi_version_t maximum_version,
+                                       const amdf_api_t** out_api) {
+  if (out_api == NULL) {
+    return amdf_make_api_status(AMDF_STATUS_CODE_INVALID_ARGUMENT);
+  }
+  *out_api = NULL;
+  if (minimum_version > maximum_version) {
+    return amdf_make_api_status(AMDF_STATUS_CODE_INVALID_ARGUMENT);
+  }
+  if (minimum_version > AMDF_ABI_VERSION_1 ||
+      maximum_version < AMDF_ABI_VERSION_1) {
+    return amdf_make_api_status(AMDF_STATUS_CODE_VERSION_MISMATCH);
+  }
+  *out_api = &amdf_api_v1;
+  return AMDF_STATUS_OK;
+}

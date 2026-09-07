@@ -47,6 +47,7 @@ package_group(
     name = "test_framework_users",
     packages = [
         "//build_tools/...",
+        "//libamdf/...",
         "//libhrx/...",
         "//loom/...",
         "//runtime/...",

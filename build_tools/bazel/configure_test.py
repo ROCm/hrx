@@ -123,10 +123,76 @@ class ConfigureBazelTest(unittest.TestCase):
             "build --//runtime/config/hal:drivers=task,amdgpu",
             config,
         )
+        self.assertIn("build --//libamdf/config:enabled=true", config)
+        self.assertIn(
+            "build --//libamdf/config:families=rdna,cdna,xdna",
+            config,
+        )
         self.assertIn("common --repo_env=IREE_DEPENDENCY_MODE=pinned", config)
         self.assertIn("common --repo_env=IREE_HAL_AMDGPU_DEVICE_TOOLCHAIN=rocm", config)
         self.assert_rocm_path(config, rocm_root)
         self.assertNotIn("--deleted_packages", config)
+
+    def test_libamdf_is_disabled_without_amdgpu_by_default(self):
+        args = self.configure_bazel.parse_arguments([])
+        config = self.configure_bazel.generate_config(args)
+
+        self.assertIn("build --//libamdf/config:enabled=false", config)
+        self.assertIn(
+            "build --//libamdf/config:families=rdna,cdna,xdna",
+            config,
+        )
+
+    def test_libamdf_can_be_enabled_without_amdgpu(self):
+        args = self.configure_bazel.parse_arguments(["-DAMDF_BUILD=ON"])
+        config = self.configure_bazel.generate_config(args)
+
+        self.assertIn("build --//libamdf/config:enabled=true", config)
+        self.assertIn("build --//runtime/config/hal:drivers=task", config)
+
+    def test_libamdf_explicit_disable_overrides_amdgpu_default(self):
+        args = self.configure_bazel.parse_arguments(
+            ["-DIREE_HAL_DRIVER_AMDGPU=ON", "-DAMDF_BUILD=OFF"]
+        )
+        config = self.configure_bazel.generate_config(args)
+
+        self.assertIn("build --//libamdf/config:enabled=false", config)
+
+    def test_libamdf_portable_family_options_select_packages(self):
+        args = self.configure_bazel.parse_arguments(
+            ["-DAMDF_FAMILY_CDNA=OFF", "-DAMDF_FAMILY_XDNA=OFF"]
+        )
+        config = self.configure_bazel.generate_config(args)
+
+        self.assertIn("build --//libamdf/config:families=rdna", config)
+
+    def test_libamdf_native_options_select_library_and_families(self):
+        args = self.configure_bazel.parse_arguments(
+            [
+                "--//libamdf/config:enabled=true",
+                "--//libamdf/config:families=cdna,xdna",
+            ]
+        )
+        config = self.configure_bazel.generate_config(args)
+
+        self.assertIn("build --//libamdf/config:enabled=true", config)
+        self.assertIn("build --//libamdf/config:families=cdna,xdna", config)
+
+    def test_libamdf_portable_and_native_options_conflict(self):
+        args = self.configure_bazel.parse_arguments(
+            ["-DAMDF_BUILD=ON", "--//libamdf/config:enabled=true"]
+        )
+
+        with self.assertRaisesRegex(SystemExit, "Do not mix portable"):
+            self.configure_bazel.generate_config(args)
+
+    def test_libamdf_rejects_unknown_native_family(self):
+        args = self.configure_bazel.parse_arguments(
+            ["--//libamdf/config:families=banana"]
+        )
+
+        with self.assertRaisesRegex(SystemExit, "Unknown libamdf family"):
+            self.configure_bazel.generate_config(args)
 
     def test_native_bazel_options_configure_amdgpu(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

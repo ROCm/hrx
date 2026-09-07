@@ -8,7 +8,7 @@ import bazel_to_cmake_config
 
 BAZEL_TO_CMAKE_REPO_ROOT = True
 
-DEFAULT_ROOT_DIRS = ["runtime/src/iree", "libhrx", "loom"]
+DEFAULT_ROOT_DIRS = ["runtime/src/iree", "libamdf", "libhrx", "loom"]
 
 REPO_MAP = {
     "@hrx": "",
@@ -18,6 +18,7 @@ PROJECTS = bazel_to_cmake_config.include_projects(
     __file__,
     [
         "runtime/.bazel_to_cmake.cfg.py",
+        "libamdf/.bazel_to_cmake.cfg.py",
         "libhrx/.bazel_to_cmake.cfg.py",
         "loom/.bazel_to_cmake.cfg.py",
     ],

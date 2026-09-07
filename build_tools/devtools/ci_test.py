@@ -492,6 +492,9 @@ class CiTest(unittest.TestCase):
         self.assertNotIn("//runtime/...", build_step.argv)
         self.assertIn("//loom/...", test_step.argv)
         self.assertNotIn("//runtime/...", test_step.argv)
+        for target in ci_config.AMDF_BAZEL_TARGETS:
+            self.assertIn(target, build_step.argv)
+            self.assertIn(target, test_step.argv)
 
     def test_bazel_loom_amdgpu_command_runs_compile_coverage_without_driver(self):
         args = ci.parse_arguments(["iree-bazel-loom-amdgpu"])
@@ -709,6 +712,9 @@ class CiTest(unittest.TestCase):
         for target in ("//runtime/...", "//loom/..."):
             self.assertIn(target, build_step.argv)
             self.assertIn(target, test_step.argv)
+        for target in ci_config.AMDF_BAZEL_TARGETS:
+            self.assertIn(target, build_step.argv)
+            self.assertIn(target, test_step.argv)
         for target in ci_config.AMDGPU_BAZEL_TARGET_EXCLUDES:
             self.assertIn(target, build_step.argv)
             self.assertIn(target, test_step.argv)
@@ -755,6 +761,9 @@ class CiTest(unittest.TestCase):
         self.assertIn("--config=tsan", tsan_build.argv)
         self.assertIn("--config=tsan", tsan_test.argv)
         for target in ("//runtime/...", "//loom/..."):
+            self.assertIn(target, tsan_build.argv)
+            self.assertIn(target, tsan_test.argv)
+        for target in ci_config.AMDF_BAZEL_TARGETS:
             self.assertIn(target, tsan_build.argv)
             self.assertIn(target, tsan_test.argv)
         self.assertTrue(
@@ -1644,7 +1653,7 @@ fi
             )
         )
         build_steps = [step for step in steps if step.name.startswith("Build IREE")]
-        for target in ci_config.AMDGPU_CMAKE_DRIVER_TARGETS:
+        for target in ci_config.AMDGPU_CMAKE_BUILD_TARGETS:
             self.assertTrue(any(target in step.argv for step in build_steps))
         resource_target = ci.cmake_runtime_resource_build_target(
             ci_config.AMDGPU_CTEST_RESOURCE_LABEL_REGEX
@@ -1657,8 +1666,9 @@ fi
                 for arg in step.argv
             )
         )
-        self.assertTrue(
-            any("-R '^iree/hal/drivers/amdgpu/'" in line for line in command_lines)
+        package_test_regex = ci.combine_ctest_regex(
+            ci_config.AMDGPU_CTEST_PACKAGE_REGEX,
+            ci_config.AMDF_CTEST_REGEX,
         )
         self.assertTrue(
             any(
@@ -1676,10 +1686,11 @@ fi
             for step in steps
             if step.name == "Test IREE CMake AMDGPU package tests"
         )
+        self.assertIn(package_test_regex, package_test.argv)
         self.assertEqual(self.ctest_exclude_regexes(package_test), [])
         self.assertEqual(
             self.ctest_exclude_regexes(resource_test),
-            [ci.combine_ctest_regex("^iree/hal/drivers/amdgpu/")],
+            [ci.combine_ctest_regex(package_test_regex)],
         )
         self.assertIn(ci_config.CTEST_MANUAL_LABEL_EXCLUDE_REGEX, resource_test.argv)
 
@@ -1746,7 +1757,7 @@ fi
             any("-DIREE_BUILD_BENCHMARKS=OFF" in line for line in command_lines)
         )
         build_steps = [step for step in steps if step.name.startswith("Build IREE")]
-        for target in ci_config.AMDGPU_CMAKE_DRIVER_TARGETS:
+        for target in ci_config.AMDGPU_CMAKE_BUILD_TARGETS:
             self.assertTrue(any(target in step.argv for step in build_steps))
         resource_target = ci.cmake_runtime_resource_build_target(
             ci_config.AMDGPU_CTEST_RESOURCE_LABEL_REGEX

@@ -517,7 +517,9 @@ def amdgpu_build_and_test_steps(
     xfail_targets: tuple[str, ...] = (),
 ) -> list[CiStep]:
     config_name = f" / {config.upper()}" if config is not None else ""
-    scoped_targets = targets + ci_config.AMDGPU_BAZEL_TARGET_EXCLUDES
+    scoped_targets = (
+        targets + ci_config.AMDF_BAZEL_TARGETS + ci_config.AMDGPU_BAZEL_TARGET_EXCLUDES
+    )
     bazel_options = amdgpu_bazel_options(target_selector)
     host_sanitizer_tag_filters = (
         (f"-{ci_config.HOST_TSAN_INCOMPATIBLE_TEST_LABEL}",) if config == "tsan" else ()
@@ -669,7 +671,7 @@ def cmake_amdgpu_steps(
         xfail_regex = ci_config.AMDGPU_SANITIZERS_CTEST_EXCLUDE_REGEX
     else:
         xfail_regex = ci_config.AMDGPU_CTEST_EXCLUDE_REGEX
-    build_targets = ci_config.AMDGPU_CMAKE_DRIVER_TARGETS
+    build_targets = ci_config.AMDGPU_CMAKE_BUILD_TARGETS
     if tests_enabled:
         build_targets += (
             cmake_runtime_resource_build_target(
@@ -692,18 +694,22 @@ def cmake_amdgpu_steps(
     if not tests_enabled:
         return steps
 
+    package_test_regex = combine_ctest_regex(
+        ci_config.AMDGPU_CTEST_PACKAGE_REGEX,
+        ci_config.AMDF_CTEST_REGEX,
+    )
     steps.append(
         cmake_test_step(
             command_name,
             f"Test IREE CMake AMDGPU package tests{sanitizer_name}",
-            regex="^iree/hal/drivers/amdgpu/",
+            regex=package_test_regex,
             exclude_regex=xfail_regex,
             env=sanitizer_env(sanitizer) + amdgpu_libhsa_test_env(),
             parallelism=1,
         )
     )
     resource_exclude_regex = combine_ctest_regex(
-        "^iree/hal/drivers/amdgpu/",
+        package_test_regex,
         xfail_regex,
     )
     resource_label_exclude_regex = ci_config.CTEST_MANUAL_LABEL_EXCLUDE_REGEX

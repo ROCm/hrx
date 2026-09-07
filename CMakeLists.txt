@@ -113,6 +113,7 @@ list(APPEND CMAKE_MODULE_PATH
 include("${CMAKE_CURRENT_LIST_DIR}/MODULE.cmake.lock")
 
 include("${CMAKE_CURRENT_LIST_DIR}/runtime/project.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/libamdf/project.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/libhrx/project.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/loom/project.cmake")
 
@@ -192,6 +193,9 @@ endif()
 add_subdirectory(build_tools/cmake)
 add_subdirectory(build_tools/embed_data)
 add_subdirectory(build_tools/spirv)
+if(AMDF_BUILD)
+  add_subdirectory(libamdf)
+endif()
 add_subdirectory(runtime/src)
 
 if(LOOM_BUILD)
