@@ -1094,6 +1094,58 @@ TEST(ReplayExecuteTest, ObservesScopeEvents) {
   EXPECT_EQ(events[1], "end:execute");
 }
 
+TEST(ReplayExecuteTest, ReplaysDynamicQueueAcquisition) {
+  std::vector<uint8_t> storage(32768, 0);
+  iree_hal_replay_recorder_t* recorder = CreateHostAllocationRecorder(&storage);
+
+  iree_hal_device_group_t* source_group = CreateTaskDeviceGroup();
+  iree_hal_device_group_t* wrapped_group = nullptr;
+  IREE_ASSERT_OK(iree_hal_replay_wrap_device_group(
+      recorder, source_group, iree_allocator_system(), &wrapped_group));
+  iree_hal_device_t* wrapped_device =
+      iree_hal_device_group_device_at(wrapped_group, 0);
+  const iree_hal_queue_family_t* queue_family =
+      iree_hal_device_queue_family(wrapped_device, /*family_ordinal=*/0);
+  ASSERT_NE(nullptr, queue_family);
+
+  iree_hal_queue_params_t queue_params;
+  iree_hal_queue_params_initialize(&queue_params);
+  iree_hal_queue_t* queue = nullptr;
+  IREE_ASSERT_OK(iree_hal_device_acquire_queue(wrapped_device, queue_family,
+                                               &queue_params, &queue));
+
+  iree_hal_semaphore_t* semaphore = nullptr;
+  IREE_ASSERT_OK(iree_hal_semaphore_create(
+      wrapped_device, iree_hal_make_queue_family_affinity(0),
+      /*initial_value=*/0, IREE_HAL_SEMAPHORE_FLAG_DEFAULT, &semaphore));
+  iree_hal_semaphore_t* signal_semaphores[] = {semaphore};
+  uint64_t signal_values[] = {1};
+  const iree_hal_semaphore_list_t signal_list = {
+      .count = IREE_ARRAYSIZE(signal_semaphores),
+      .semaphores = signal_semaphores,
+      .payload_values = signal_values,
+  };
+  IREE_ASSERT_OK(iree_hal_queue_barrier(queue, iree_hal_semaphore_list_empty(),
+                                        signal_list,
+                                        IREE_HAL_QUEUE_BARRIER_FLAG_NONE));
+  IREE_ASSERT_OK(iree_hal_semaphore_wait(semaphore, /*value=*/1,
+                                         iree_infinite_timeout(),
+                                         IREE_ASYNC_WAIT_FLAG_NONE));
+
+  iree_hal_semaphore_release(semaphore);
+  iree_hal_queue_release(queue);
+  IREE_ASSERT_OK(iree_hal_replay_recorder_close(recorder));
+  iree_hal_replay_recorder_release(recorder);
+  iree_hal_device_group_release(wrapped_group);
+  iree_hal_device_group_release(source_group);
+
+  iree_hal_device_group_t* replay_group = CreateTaskDeviceGroup();
+  IREE_EXPECT_OK(iree_hal_replay_execute_file(GetCapturedFileContents(storage),
+                                              replay_group, /*options=*/nullptr,
+                                              iree_allocator_system()));
+  iree_hal_device_group_release(replay_group);
+}
+
 TEST(ReplayExecuteTest, ExecutesPreparedPlanRepeatedly) {
   std::vector<uint8_t> storage(32768, 0);
   iree_hal_replay_recorder_t* recorder = CreateHostAllocationRecorder(&storage);

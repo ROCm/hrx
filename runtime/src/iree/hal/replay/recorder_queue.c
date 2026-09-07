@@ -1354,9 +1354,12 @@ static iree_status_t iree_hal_replay_recorder_queue_prepare_transfer(
 
 static void iree_hal_replay_recorder_queue_destroy(
     iree_hal_queue_t* base_queue) {
-  // The proxy is embedded in its wrapper device allocation and has no
-  // independently owned state.
-  (void)base_queue;
+  iree_hal_replay_recorder_queue_t* queue =
+      (iree_hal_replay_recorder_queue_t*)base_queue;
+  if (iree_allocator_is_null(queue->storage_allocator)) return;
+  iree_allocator_t storage_allocator = queue->storage_allocator;
+  iree_hal_queue_release(queue->base_queue);
+  iree_allocator_free(storage_allocator, queue);
 }
 
 static iree_status_t iree_hal_replay_recorder_queue_allocate_alloca_storage(
@@ -1991,9 +1994,29 @@ void iree_hal_replay_recorder_queue_initialize(
                             &iree_hal_replay_recorder_queue_vtable,
                             &out_queue->base);
   out_queue->host_allocator = host_allocator;
+  out_queue->storage_allocator = iree_allocator_null();
   out_queue->recorder = recorder;
   out_queue->base_queue = base_queue;
   out_queue->placement_device = placement_device;
   out_queue->device_id = device_id;
   out_queue->queue_id = queue_id;
+}
+
+iree_status_t iree_hal_replay_recorder_queue_allocate(
+    const iree_hal_queue_family_t* queue_family,
+    iree_hal_replay_recorder_t* recorder, iree_hal_replay_object_id_t device_id,
+    iree_hal_replay_object_id_t queue_id, iree_hal_queue_t* base_queue,
+    iree_hal_device_t* placement_device, iree_allocator_t host_allocator,
+    iree_hal_replay_recorder_queue_t** out_queue) {
+  iree_hal_replay_recorder_queue_t* queue = NULL;
+  IREE_RETURN_IF_ERROR(
+      iree_allocator_malloc(host_allocator, sizeof(*queue), (void**)&queue));
+  memset(queue, 0, sizeof(*queue));
+  iree_hal_replay_recorder_queue_initialize(
+      queue_family, recorder, device_id, queue_id, base_queue, placement_device,
+      host_allocator, queue);
+  queue->storage_allocator = host_allocator;
+  iree_hal_queue_retain(queue->base_queue);
+  *out_queue = queue;
+  return iree_ok_status();
 }

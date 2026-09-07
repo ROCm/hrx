@@ -713,13 +713,13 @@ IREE_API_EXPORT iree_status_t iree_hal_device_wait_semaphores(
 // IREE_STATUS_FAILED_PRECONDITION. Unsupported requested data must fail loudly
 // instead of returning success with no profile output.
 //
-// Callers must externally serialize begin/end with queue submission, command
-// buffer recording that may later observe the session, and concurrent
-// begin/flush/end calls on the same device. Unless the backend explicitly
-// documents dynamic profiling toggles, there must be no in-flight queue work
-// when begin or end is called. This lets producers keep ordinary queue hot
-// paths to cheap explicit profiling checks instead of locks or atomics around
-// every operation.
+// Callers must externally serialize begin/end with queue acquisition/release,
+// queue submission, command buffer recording that may later observe the
+// session, and concurrent begin/flush/end calls on the same device. Unless the
+// backend explicitly documents dynamic profiling toggles, there must be no
+// in-flight queue work when begin or end is called. This lets producers keep
+// ordinary queue hot paths to cheap explicit profiling checks instead of locks
+// or atomics around every operation.
 //
 // Flush and end must not invoke sink callbacks while holding queue locks,
 // semaphore callback locks, task-worker hot-loop locks, or a profiling mutation

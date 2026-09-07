@@ -281,7 +281,7 @@ IREE_API_EXPORT iree_status_t iree_hal_task_device_spec_create(
       .atomic_capabilities = params->atomic_capabilities,
       .zero_compute_atomic_capabilities =
           params->zero_compute_atomic_capabilities,
-      .flags = IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_NONE,
+      .flags = IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION,
   };
   iree_hal_device_queue_spec_t queues = {
       .family_count = 1,

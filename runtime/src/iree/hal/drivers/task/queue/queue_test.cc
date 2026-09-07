@@ -4,6 +4,8 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
+#include "iree/hal/drivers/task/queue/queue.h"
+
 #include "iree/async/frontier_tracker.h"
 #include "iree/async/util/proactor_pool.h"
 #include "iree/hal/device_group.h"
@@ -123,6 +125,46 @@ TEST_P(TaskQueueShutdownTest, ReleasesDeviceGroupWithAcceptedExecuteInFlight) {
     iree_hal_command_buffer_release(command_buffer);
     iree_hal_device_group_release(device_group);
   }
+}
+
+TEST_P(TaskQueueShutdownTest, ReusedDynamicQueueSlotAdvancesIncarnation) {
+  iree_hal_device_group_t* device_group = nullptr;
+  IREE_ASSERT_OK(CreateDeviceGroup(&device_group));
+  iree_hal_device_t* device = iree_hal_device_group_device_at(device_group, 0);
+  const iree_hal_queue_family_t* queue_family =
+      iree_hal_device_queue_family(device, /*family_ordinal=*/0);
+  ASSERT_NE(nullptr, queue_family);
+
+  iree_hal_queue_params_t params;
+  iree_hal_queue_params_initialize(&params);
+  iree_hal_queue_t* queue_a = nullptr;
+  IREE_ASSERT_OK(
+      iree_hal_device_acquire_queue(device, queue_family, &params, &queue_a));
+  iree_hal_queue_t* queue_b = nullptr;
+  IREE_ASSERT_OK(
+      iree_hal_device_acquire_queue(device, queue_family, &params, &queue_b));
+  const iree_async_axis_t axis_a = ((iree_hal_task_queue_t*)queue_a)->axis;
+  const iree_async_axis_t axis_b = ((iree_hal_task_queue_t*)queue_b)->axis;
+  EXPECT_NE(iree_async_axis_queue_index(axis_a),
+            iree_async_axis_queue_index(axis_b));
+  EXPECT_NE(axis_a, axis_b);
+
+  iree_hal_queue_release(queue_a);
+  queue_a = nullptr;
+
+  iree_hal_queue_t* queue_c = nullptr;
+  IREE_ASSERT_OK(
+      iree_hal_device_acquire_queue(device, queue_family, &params, &queue_c));
+  const iree_async_axis_t axis_c = ((iree_hal_task_queue_t*)queue_c)->axis;
+  EXPECT_EQ(iree_async_axis_queue_index(axis_a),
+            iree_async_axis_queue_index(axis_c));
+  EXPECT_EQ(iree_async_axis_queue_incarnation(axis_a) + 1,
+            iree_async_axis_queue_incarnation(axis_c));
+  EXPECT_NE(axis_a, axis_c);
+
+  iree_hal_queue_release(queue_c);
+  iree_hal_queue_release(queue_b);
+  iree_hal_device_group_release(device_group);
 }
 
 INSTANTIATE_TEST_SUITE_P(WorkerCounts, TaskQueueShutdownTest,

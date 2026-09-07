@@ -180,6 +180,79 @@ static iree_hal_queue_t* iree_hal_replay_device_queue(
   return &device->queues[family->queue_offset + queue_ordinal].base;
 }
 
+static iree_status_t iree_hal_replay_device_acquire_queue(
+    iree_hal_device_t* base_device, const iree_hal_queue_family_t* queue_family,
+    const iree_hal_queue_params_t* params, iree_hal_queue_t** out_queue) {
+  iree_hal_replay_device_t* device = iree_hal_replay_device_cast(base_device);
+  const iree_hal_queue_family_ordinal_t family_ordinal =
+      iree_hal_queue_family_ordinal(queue_family);
+  const iree_hal_queue_family_t* base_queue_family =
+      iree_hal_device_queue_family(device->base_device, family_ordinal);
+  if (IREE_UNLIKELY(family_ordinal >= device->queue_family_count ||
+                    queue_family !=
+                        &device->queue_families[family_ordinal].base ||
+                    !base_queue_family)) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "queue family does not belong to this device");
+  }
+
+  iree_host_size_t execution_resource_data_length = 0;
+  if (IREE_UNLIKELY(!iree_host_size_checked_mul(
+          params->execution_resources.count,
+          sizeof(*params->execution_resources.ordinals),
+          &execution_resource_data_length))) {
+    return iree_make_status(
+        IREE_STATUS_RESOURCE_EXHAUSTED,
+        "dynamic queue execution-resource payload size overflow");
+  }
+
+  iree_hal_replay_object_id_t queue_id = IREE_HAL_REPLAY_OBJECT_ID_NONE;
+  IREE_RETURN_IF_ERROR(
+      iree_hal_replay_recorder_reserve_object_id(device->recorder, &queue_id));
+
+  const iree_hal_replay_dynamic_queue_object_payload_t payload = {
+      .family_ordinal = family_ordinal,
+      .priority = params->priority,
+      .features = params->features,
+      .execution_resource_count = params->execution_resources.count,
+  };
+  const iree_const_byte_span_t payload_iovecs[] = {
+      iree_make_const_byte_span(&payload, sizeof(payload)),
+      iree_make_const_byte_span(params->execution_resources.ordinals,
+                                execution_resource_data_length),
+  };
+
+  iree_hal_replay_pending_record_t pending_record;
+  IREE_RETURN_IF_ERROR(iree_hal_replay_recorder_begin_operation(
+      device->recorder, device->device_id, device->device_id, queue_id,
+      IREE_HAL_REPLAY_OBJECT_TYPE_DEVICE,
+      IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_ACQUIRE_QUEUE,
+      IREE_HAL_REPLAY_PAYLOAD_TYPE_DYNAMIC_QUEUE_OBJECT, &pending_record));
+
+  iree_hal_queue_t* base_queue = NULL;
+  iree_status_t status = iree_hal_device_acquire_queue(
+      device->base_device, base_queue_family, params, &base_queue);
+  iree_hal_replay_recorder_queue_t* queue = NULL;
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_replay_recorder_queue_allocate(
+        queue_family, device->recorder, device->device_id, queue_id, base_queue,
+        base_device, device->host_allocator, &queue);
+  }
+  iree_hal_queue_release(base_queue);
+
+  status = iree_hal_replay_recorder_end_creation_operation(
+      &pending_record, status, IREE_ARRAYSIZE(payload_iovecs), payload_iovecs,
+      IREE_HAL_REPLAY_OBJECT_TYPE_QUEUE, queue_id,
+      IREE_HAL_REPLAY_PAYLOAD_TYPE_DYNAMIC_QUEUE_OBJECT,
+      IREE_ARRAYSIZE(payload_iovecs), payload_iovecs);
+  if (iree_status_is_ok(status)) {
+    *out_queue = &queue->base;
+  } else {
+    iree_hal_queue_release(queue ? &queue->base : NULL);
+  }
+  return status;
+}
+
 static iree_status_t iree_hal_replay_device_sample_observation(
     iree_hal_device_t* base_device,
     iree_hal_device_observation_flags_t requested_flags,
@@ -713,6 +786,7 @@ static const iree_hal_device_vtable_t iree_hal_replay_device_vtable = {
     .device_spec = iree_hal_replay_device_spec,
     .queue_family = iree_hal_replay_device_queue_family,
     .queue = iree_hal_replay_device_queue,
+    .acquire_queue = iree_hal_replay_device_acquire_queue,
     .sample_observation = iree_hal_replay_device_sample_observation,
     .topology_info = iree_hal_replay_device_topology_info,
     .refine_topology_edge = iree_hal_replay_device_refine_topology_edge,
