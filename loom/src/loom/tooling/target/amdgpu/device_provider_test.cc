@@ -272,7 +272,10 @@ class AmdgpuDeviceProviderTest : public ::testing::Test {
   void InitializeDevice() {
     device_.device_spec = device_spec_.get();
     iree_hal_resource_initialize(&kFakeHalDeviceVtable, &device_.resource);
-    iree_hal_queue_family_initialize(/*ordinal=*/0, &dispatch_queue_family_);
+    const iree_hal_queue_family_spec_t* queue_family_spec =
+        &iree_hal_device_spec_queues(device_spec_.get())->families[0];
+    iree_hal_queue_family_initialize(/*ordinal=*/0, queue_family_spec,
+                                     &dispatch_queue_family_);
     dispatch_queue_.queue_family = &dispatch_queue_family_;
     runtime_.device = reinterpret_cast<iree_hal_device_t*>(&device_);
     runtime_.dispatch_queue = &dispatch_queue_;

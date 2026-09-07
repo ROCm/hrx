@@ -17,6 +17,15 @@
 namespace iree::hal::amdgpu {
 namespace {
 
+static constexpr iree_hal_queue_priority_t kQueuePriority =
+    IREE_HAL_QUEUE_PRIORITY_NORMAL;
+static const iree_hal_queue_family_spec_t kQueueFamilySpec = {
+    /*.name=*/IREE_SV("test"),
+    /*.provisioned_queue_count=*/1,
+    /*.priority_count=*/1,
+    /*.priorities=*/&kQueuePriority,
+};
+
 struct CommandBufferDeleter {
   void operator()(iree_hal_command_buffer_t* command_buffer) const {
     iree_hal_command_buffer_release(command_buffer);
@@ -36,7 +45,8 @@ class AqlCommandBufferTest : public ::testing::Test {
                                                 &profile_metadata_);
     IREE_ASSERT_OK(iree_hal_amdgpu_aql_program_block_pool_initialize(
         block_size_, iree_allocator_system(), &block_pool_));
-    iree_hal_queue_family_initialize(/*ordinal=*/0, &queue_family_);
+    iree_hal_queue_family_initialize(/*ordinal=*/0, &kQueueFamilySpec,
+                                     &queue_family_);
   }
 
   void TearDown() override {

@@ -6,6 +6,8 @@
 
 #include "iree/hal/queue.h"
 
+#include <string.h>
+
 #include "iree/hal/buffer.h"
 #include "iree/hal/command_buffer.h"
 #include "iree/hal/detail.h"
@@ -21,17 +23,33 @@
 // iree_hal_queue_family_t
 //===----------------------------------------------------------------------===//
 
+IREE_API_EXPORT void iree_hal_queue_params_initialize(
+    iree_hal_queue_params_t* out_params) {
+  IREE_ASSERT_ARGUMENT(out_params);
+  memset(out_params, 0, sizeof(*out_params));
+  out_params->priority = IREE_HAL_QUEUE_PRIORITY_NORMAL;
+}
+
 IREE_API_EXPORT iree_hal_queue_family_ordinal_t
 iree_hal_queue_family_ordinal(const iree_hal_queue_family_t* queue_family) {
   IREE_ASSERT_ARGUMENT(queue_family);
   return queue_family->ordinal;
 }
 
+IREE_API_EXPORT const iree_hal_queue_family_spec_t* iree_hal_queue_family_spec(
+    const iree_hal_queue_family_t* queue_family) {
+  IREE_ASSERT_ARGUMENT(queue_family);
+  return queue_family->spec;
+}
+
 IREE_API_EXPORT void iree_hal_queue_family_initialize(
     iree_hal_queue_family_ordinal_t ordinal,
+    const iree_hal_queue_family_spec_t* spec,
     iree_hal_queue_family_t* out_queue_family) {
+  IREE_ASSERT_ARGUMENT(spec);
   IREE_ASSERT_ARGUMENT(out_queue_family);
   out_queue_family->ordinal = ordinal;
+  out_queue_family->spec = spec;
 }
 
 //===----------------------------------------------------------------------===//
@@ -44,6 +62,24 @@ IREE_API_EXPORT const iree_hal_queue_family_t* iree_hal_queue_family(
     const iree_hal_queue_t* queue) {
   IREE_ASSERT_ARGUMENT(queue);
   return queue->queue_family;
+}
+
+IREE_API_EXPORT iree_hal_queue_priority_t
+iree_hal_queue_priority(const iree_hal_queue_t* queue) {
+  IREE_ASSERT_ARGUMENT(queue);
+  return queue->priority;
+}
+
+IREE_API_EXPORT iree_hal_queue_feature_flags_t
+iree_hal_queue_features(const iree_hal_queue_t* queue) {
+  IREE_ASSERT_ARGUMENT(queue);
+  return queue->features;
+}
+
+IREE_API_EXPORT iree_hal_queue_execution_resource_list_t
+iree_hal_queue_execution_resources(const iree_hal_queue_t* queue) {
+  IREE_ASSERT_ARGUMENT(queue);
+  return queue->execution_resources;
 }
 
 static iree_status_t iree_hal_queue_validate_semaphore_list(
@@ -1017,10 +1053,15 @@ IREE_API_EXPORT iree_status_t iree_hal_queue_write(
 
 IREE_API_EXPORT void iree_hal_queue_initialize(
     const iree_hal_queue_family_t* queue_family,
+    const iree_hal_queue_params_t* params,
     const iree_hal_queue_vtable_t* vtable, iree_hal_queue_t* out_queue) {
   IREE_ASSERT_ARGUMENT(queue_family);
+  IREE_ASSERT_ARGUMENT(params);
   IREE_ASSERT_ARGUMENT(vtable);
   IREE_ASSERT_ARGUMENT(out_queue);
   iree_hal_resource_initialize(vtable, &out_queue->resource);
   out_queue->queue_family = queue_family;
+  out_queue->priority = params->priority;
+  out_queue->features = params->features;
+  out_queue->execution_resources = params->execution_resources;
 }

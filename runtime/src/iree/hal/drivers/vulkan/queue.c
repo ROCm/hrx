@@ -6467,8 +6467,10 @@ iree_status_t iree_hal_vulkan_queue_initialize(
   IREE_ASSERT_ARGUMENT(out_queue);
   memset(out_queue, 0, sizeof(*out_queue));
 
-  iree_hal_queue_initialize(params->queue_family, &iree_hal_vulkan_queue_vtable,
-                            &out_queue->base);
+  iree_hal_queue_params_t queue_params;
+  iree_hal_queue_params_initialize(&queue_params);
+  iree_hal_queue_initialize(params->queue_family, &queue_params,
+                            &iree_hal_vulkan_queue_vtable, &out_queue->base);
   out_queue->device = params->device;
   out_queue->syms = *params->syms;
   out_queue->debug_utils = *params->debug_utils;

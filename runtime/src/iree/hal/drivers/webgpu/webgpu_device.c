@@ -165,7 +165,6 @@ iree_status_t iree_hal_webgpu_device_create(
   memset(device, 0, total_size);
   iree_hal_resource_initialize(&iree_hal_webgpu_device_vtable,
                                &device->resource);
-  iree_hal_queue_family_initialize(/*ordinal=*/0, &device->queue_family);
   iree_string_view_append_to_buffer(
       identifier, &device->identifier,
       (char*)device + total_size - identifier.size);
@@ -187,6 +186,12 @@ iree_status_t iree_hal_webgpu_device_create(
   if (iree_status_is_ok(status)) {
     status = iree_hal_webgpu_device_spec_create(identifier, host_allocator,
                                                 &device->device_spec);
+  }
+  if (iree_status_is_ok(status)) {
+    const iree_hal_device_queue_spec_t* queue_spec =
+        iree_hal_device_spec_queues(device->device_spec);
+    iree_hal_queue_family_initialize(/*ordinal=*/0, &queue_spec->families[0],
+                                     &device->queue_family);
   }
 
   // Create the builtin compute pipelines for fill/copy operations.

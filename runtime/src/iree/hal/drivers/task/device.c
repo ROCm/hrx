@@ -332,7 +332,10 @@ iree_status_t iree_hal_task_device_create(
   }
 
   if (iree_status_is_ok(status)) {
-    iree_hal_queue_family_initialize(/*ordinal=*/0, &device->queue_family);
+    const iree_hal_device_queue_spec_t* queue_spec =
+        iree_hal_device_spec_queues(device->device_spec);
+    iree_hal_queue_family_initialize(/*ordinal=*/0, &queue_spec->families[0],
+                                     &device->queue_family);
 
     iree_arena_block_pool_initialize(4096, host_allocator,
                                      &device->small_block_pool);
@@ -348,6 +351,8 @@ iree_status_t iree_hal_task_device_create(
     }
 
     device->queue_count = 0;
+    iree_hal_queue_params_t queue_params;
+    iree_hal_queue_params_initialize(&queue_params);
     for (iree_host_size_t i = 0; i < queue_count; ++i) {
       // Select a NUMA-correct proactor for this queue based on its executor's
       // node assignment. Falls back to the first proactor in the pool if the
@@ -361,10 +366,10 @@ iree_status_t iree_hal_task_device_create(
 
       status = iree_hal_task_queue_initialize(
           device->identifier, (iree_hal_device_t*)device, &device->queue_family,
-          params->queue_scope_flags, queue_executors[i], queue_proactor,
-          params->inline_transfer_threshold, &device->small_block_pool,
-          &device->large_block_pool, device->device_allocator,
-          &device->queues[i]);
+          &queue_params, params->queue_scope_flags, queue_executors[i],
+          queue_proactor, params->inline_transfer_threshold,
+          &device->small_block_pool, &device->large_block_pool,
+          device->device_allocator, &device->queues[i]);
       if (!iree_status_is_ok(status)) break;
       ++device->queue_count;
     }

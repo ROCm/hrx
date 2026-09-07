@@ -353,9 +353,6 @@ static iree_status_t iree_hal_amdgpu_physical_device_initialize_identity(
   memset(out_physical_device, 0, sizeof(*out_physical_device));
   out_physical_device->device_agent = device_agent;
   out_physical_device->device_ordinal = device_ordinal;
-  iree_hal_queue_family_initialize(
-      (iree_hal_queue_family_ordinal_t)device_ordinal,
-      &out_physical_device->queue_family);
   out_physical_device->host_memory_pools = *host_memory_pools;
   out_physical_device->host_queue_capacity = options->host_queue_count;
   out_physical_device->host_queue_aql_capacity =
@@ -1232,6 +1229,8 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
     device_signal_memory_pool =
         physical_device->coarse_block_pools.small.memory_pool;
   }
+  iree_hal_queue_params_t queue_params;
+  iree_hal_queue_params_initialize(&queue_params);
   // Raw profiling completion signals are user-signal-shaped CP timestamp
   // targets. Native AQL queues retire them on the device. ROCr's PM4-emulated
   // queues may retire them from the host translation worker when the device
@@ -1276,7 +1275,7 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
     iree_thread_affinity_set_group_any(physical_device->host_numa_node,
                                        &completion_thread_affinity);
     status = iree_hal_amdgpu_host_queue_initialize(
-        &physical_device->queue_family, libhsa, logical_device,
+        &physical_device->queue_family, &queue_params, libhsa, logical_device,
         iree_hal_amdgpu_physical_device_hostcall_buffer(physical_device),
         proactor, physical_device->device_agent,
         &kernarg_ring_memory.descriptor, host_memory_pools->fine_pool,

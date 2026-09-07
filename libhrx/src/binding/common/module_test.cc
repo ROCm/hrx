@@ -19,6 +19,15 @@
 
 namespace {
 
+static constexpr iree_hal_queue_priority_t kQueuePriority =
+    IREE_HAL_QUEUE_PRIORITY_NORMAL;
+static const iree_hal_queue_family_spec_t kQueueFamilySpec = {
+    /*.name=*/IREE_SV("test"),
+    /*.provisioned_queue_count=*/1,
+    /*.priority_count=*/1,
+    /*.priorities=*/&kQueuePriority,
+};
+
 struct FakeFunction {
   std::string name;
   iree_hal_executable_function_info_t info = {};
@@ -31,7 +40,8 @@ struct FakeFunction {
 class FakeExecutable {
  public:
   FakeExecutable() {
-    iree_hal_queue_family_initialize(/*ordinal=*/0, &queue_family_);
+    iree_hal_queue_family_initialize(/*ordinal=*/0, &kQueueFamilySpec,
+                                     &queue_family_);
     iree_hal_executable_initialize(&queue_family_, &kVtable, &base_);
   }
 

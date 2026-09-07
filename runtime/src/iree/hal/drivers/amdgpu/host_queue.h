@@ -702,6 +702,7 @@ void iree_hal_amdgpu_host_queue_enqueue_post_drain_action(
 // them on the CPU.
 iree_status_t iree_hal_amdgpu_host_queue_initialize(
     const iree_hal_queue_family_t* queue_family,
+    const iree_hal_queue_params_t* queue_params,
     const iree_hal_amdgpu_libhsa_t* libhsa, iree_hal_device_t* logical_device,
     void* hostcall_buffer, iree_async_proactor_t* proactor,
     hsa_agent_t gpu_agent,

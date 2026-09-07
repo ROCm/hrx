@@ -609,6 +609,7 @@ struct iree_hal_task_queue_t {
 iree_status_t iree_hal_task_queue_initialize(
     iree_string_view_t identifier, iree_hal_device_t* device,
     const iree_hal_queue_family_t* queue_family,
+    const iree_hal_queue_params_t* queue_params,
     iree_task_scope_flags_t scope_flags, iree_task_executor_t* executor,
     iree_async_proactor_t* proactor,
     iree_device_size_t inline_transfer_threshold,

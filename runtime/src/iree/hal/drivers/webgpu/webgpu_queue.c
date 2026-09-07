@@ -271,8 +271,10 @@ iree_status_t iree_hal_webgpu_queue_initialize(
   if (!iree_status_is_ok(status)) {
     iree_arena_block_pool_deinitialize(&out_queue->block_pool);
   } else {
-    iree_hal_queue_initialize(queue_family, &iree_hal_webgpu_queue_vtable,
-                              &out_queue->base);
+    iree_hal_queue_params_t queue_params;
+    iree_hal_queue_params_initialize(&queue_params);
+    iree_hal_queue_initialize(queue_family, &queue_params,
+                              &iree_hal_webgpu_queue_vtable, &out_queue->base);
   }
   return status;
 }

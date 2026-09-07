@@ -580,7 +580,8 @@ static iree_status_t iree_hal_replay_wrap_device(
     const uint32_t family_queue_count =
         base_queue_spec->families[i].provisioned_queue_count;
     iree_hal_replay_queue_family_t* queue_family = &device->queue_families[i];
-    iree_hal_queue_family_initialize(family_ordinal, &queue_family->base);
+    iree_hal_queue_family_initialize(
+        family_ordinal, &base_queue_spec->families[i], &queue_family->base);
     queue_family->queue_offset = flat_queue_ordinal;
     queue_family->queue_count = family_queue_count;
     for (uint32_t j = 0; j < family_queue_count && iree_status_is_ok(status);

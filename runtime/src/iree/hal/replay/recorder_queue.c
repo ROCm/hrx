@@ -1982,8 +1982,14 @@ void iree_hal_replay_recorder_queue_initialize(
   IREE_ASSERT_ARGUMENT(base_queue);
   IREE_ASSERT_ARGUMENT(placement_device);
   IREE_ASSERT_ARGUMENT(out_queue);
-  iree_hal_queue_initialize(
-      queue_family, &iree_hal_replay_recorder_queue_vtable, &out_queue->base);
+  const iree_hal_queue_params_t queue_params = {
+      .priority = iree_hal_queue_priority(base_queue),
+      .features = iree_hal_queue_features(base_queue),
+      .execution_resources = iree_hal_queue_execution_resources(base_queue),
+  };
+  iree_hal_queue_initialize(queue_family, &queue_params,
+                            &iree_hal_replay_recorder_queue_vtable,
+                            &out_queue->base);
   out_queue->host_allocator = host_allocator;
   out_queue->recorder = recorder;
   out_queue->base_queue = base_queue;

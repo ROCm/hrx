@@ -459,8 +459,14 @@ class ReplayAtomicExecutionTest : public ::testing::Test {
     queue_vtable_.atomic_rmw = CapturingQueueAtomicRmw;
     queue_vtable_.transfer = CapturingQueueTransfer;
     queue_vtable_.flush = CapturingQueueFlush;
-    iree_hal_queue_initialize(iree_hal_queue_family(task_queue), &queue_vtable_,
-                              &queue_.base);
+    iree_hal_queue_params_t queue_params;
+    iree_hal_queue_params_initialize(&queue_params);
+    queue_params.priority = iree_hal_queue_priority(task_queue);
+    queue_params.features = iree_hal_queue_features(task_queue);
+    queue_params.execution_resources =
+        iree_hal_queue_execution_resources(task_queue);
+    iree_hal_queue_initialize(iree_hal_queue_family(task_queue), &queue_params,
+                              &queue_vtable_, &queue_.base);
     execute_options_ = iree_hal_replay_execute_options_default();
     IREE_ASSERT_OK(iree_hal_replay_executor_initialize(
         &executor_, iree_const_byte_span_empty(), /*object_capacity=*/8,

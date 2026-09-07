@@ -801,6 +801,7 @@ static void iree_hal_amdgpu_host_queue_error_callback(hsa_status_t status,
 
 iree_status_t iree_hal_amdgpu_host_queue_initialize(
     const iree_hal_queue_family_t* queue_family,
+    const iree_hal_queue_params_t* queue_params,
     const iree_hal_amdgpu_libhsa_t* libhsa, iree_hal_device_t* logical_device,
     void* hostcall_buffer, iree_async_proactor_t* proactor,
     hsa_agent_t gpu_agent,
@@ -826,6 +827,7 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
     uint32_t upload_capacity, iree_allocator_t host_allocator,
     iree_hal_amdgpu_host_queue_t* out_queue) {
   IREE_ASSERT_ARGUMENT(queue_family);
+  IREE_ASSERT_ARGUMENT(queue_params);
   IREE_ASSERT_ARGUMENT(libhsa);
   IREE_ASSERT_ARGUMENT(logical_device);
   IREE_ASSERT_ARGUMENT(proactor);
@@ -859,7 +861,8 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
   IREE_TRACE_ZONE_BEGIN(z0);
 
   memset(out_queue, 0, sizeof(*out_queue));
-  iree_hal_queue_initialize(queue_family, &iree_hal_amdgpu_host_queue_vtable,
+  iree_hal_queue_initialize(queue_family, queue_params,
+                            &iree_hal_amdgpu_host_queue_vtable,
                             &out_queue->base);
   out_queue->libhsa = libhsa;
   out_queue->logical_device = logical_device;
