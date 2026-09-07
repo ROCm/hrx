@@ -255,6 +255,7 @@ loom_cc_library(
     ::value_facts
     iree::base
     iree::base::internal::arena
+    iree::base::internal::fpu_state
     loom::error::error_defs
     loom::ir
     loom::ops::op_defs

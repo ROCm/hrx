@@ -221,6 +221,7 @@ loom_cc_library(
         "//loom/src/loom/ops/pass",
         "//runtime/src/iree/base",
         "//runtime/src/iree/base/internal:arena",
+        "//runtime/src/iree/base/internal:fpu_state",
     ],
 )
 

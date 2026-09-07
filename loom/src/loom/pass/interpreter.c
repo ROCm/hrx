@@ -8,6 +8,7 @@
 
 #include <string.h>
 
+#include "iree/base/internal/fpu_state.h"
 #include "loom/error/error_catalog.h"
 #include "loom/ir/context.h"
 #include "loom/ir/module.h"
@@ -70,6 +71,13 @@ typedef struct loom_pass_interpreter_diagnostic_counter_t {
   // Number of remark diagnostics emitted by the current pass invocation.
   uint32_t remark_count;
 } loom_pass_interpreter_diagnostic_counter_t;
+
+// Establishes the deterministic arithmetic profile used by compiler-owned
+// floating evaluation. This also clears FTZ selected by IREE task workers.
+static iree_fpu_state_t loom_pass_interpreter_push_fpu_state(void) {
+  return iree_fpu_state_push(IREE_FPU_STATE_FLAG_MASK_EXCEPTIONS |
+                             IREE_FPU_STATE_FLAG_ROUND_TO_NEAREST);
+}
 
 typedef struct loom_pass_interpreter_symbol_snapshot_entry_t {
   // Symbol entry captured before entering a pass.for body.
@@ -1035,6 +1043,7 @@ iree_status_t loom_pass_interpreter_run_module(
     return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                             "expected module-root pass program");
   }
+  const iree_fpu_state_t fpu_state = loom_pass_interpreter_push_fpu_state();
   *out_result = (loom_pass_run_result_t){0};
   loom_pass_interpreter_state_t state = {
       .program = program,
@@ -1051,6 +1060,7 @@ iree_status_t loom_pass_interpreter_run_module(
   iree_status_t status = loom_pass_interpreter_execute_range(
       &state, &frame, 0, program->instruction_count, &changed);
   loom_pass_value_fact_owner_deinitialize(&state.value_facts);
+  iree_fpu_state_pop(fpu_state);
   return status;
 }
 
@@ -1063,6 +1073,7 @@ iree_status_t loom_pass_interpreter_run_function(
     return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                             "expected function-root pass program");
   }
+  const iree_fpu_state_t fpu_state = loom_pass_interpreter_push_fpu_state();
   *out_result = (loom_pass_run_result_t){0};
   loom_pass_interpreter_state_t state = {
       .program = program,
@@ -1089,5 +1100,6 @@ iree_status_t loom_pass_interpreter_run_function(
   iree_status_t status = loom_pass_interpreter_execute_range(
       &state, &frame, 0, program->instruction_count, &changed);
   loom_pass_value_fact_owner_deinitialize(&state.value_facts);
+  iree_fpu_state_pop(fpu_state);
   return status;
 }

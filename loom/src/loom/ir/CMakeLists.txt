@@ -22,6 +22,7 @@ loom_cc_library(
     ::ir
     iree::base
     iree::base::internal
+    iree::math
   PUBLIC
 )
 
