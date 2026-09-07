@@ -24,10 +24,20 @@ typedef struct iree_hal_amdgpu_hsa_queue_params_t {
   uint32_t packet_count;
   // Native producer and dispatch behavior of the queue.
   hsa_queue_type32_t type;
+  // Native dispatch and wavefront scheduling priority.
+  hsa_amd_queue_priority_t priority;
+  // Number of bits in |compute_unit_mask|. Zero leaves the native queue
+  // unmasked.
+  uint32_t compute_unit_mask_bit_count;
+  // Exact native compute-unit mask applied before publication. NULL exactly
+  // when |compute_unit_mask_bit_count| is zero.
+  const uint32_t* compute_unit_mask;
   // Callback invoked by HSA for asynchronous queue errors.
   void (*error_callback)(hsa_status_t status, hsa_queue_t* source, void* data);
   // Application data passed to |error_callback|.
   void* error_callback_data;
+  // Allocator used for temporary achieved-mask verification storage.
+  iree_allocator_t host_allocator;
 } iree_hal_amdgpu_hsa_queue_params_t;
 
 // Creates an unpublished native HSA queue with the exact |params|.

@@ -330,7 +330,8 @@ typedef struct iree_hal_amdgpu_host_queue_t {
   // and every reader may clone from it without further coordination.
   iree_atomic_intptr_t error_status;
 
-  // Hardware AQL queue created via hsa_queue_create. Owned by this queue.
+  // Hardware AQL queue created through the AMD queue descriptor API. Owned by
+  // this queue.
   hsa_queue_t* hardware_queue;
 
   // Cached AQL ring state for zero-indirection packet submission.

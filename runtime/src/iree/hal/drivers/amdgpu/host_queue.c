@@ -899,8 +899,10 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
         .agent = params->hardware.gpu_agent,
         .packet_count = params->capacity.aql_packet_count,
         .type = HSA_QUEUE_TYPE_MULTI,
+        .priority = HSA_AMD_QUEUE_PRIORITY_NORMAL,
         .error_callback = iree_hal_amdgpu_host_queue_error_callback,
         .error_callback_data = out_queue,
+        .host_allocator = params->host_allocator,
     };
     status =
         iree_hal_amdgpu_hsa_queue_create(&hsa_queue_params, &hardware_queue);

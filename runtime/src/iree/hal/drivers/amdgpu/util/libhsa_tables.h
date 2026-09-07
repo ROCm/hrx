@@ -441,6 +441,12 @@ IREE_HAL_AMDGPU_LIBHSA_LEAK_CHECK_DISABLED_PFN(
     ARGS(agent, size, type, callback, data, private_segment_size,
          group_segment_size, queue))
 
+IREE_HAL_AMDGPU_LIBHSA_LEAK_CHECK_DISABLED_PFN(
+    TRACE_ALWAYS, hsa_status_t, hsa_amd_queue_create,
+    DECL(hsa_agent_t agent, hsa_amd_queue_create_desc_t* descs,
+         uint32_t num_descs),
+    ARGS(agent, descs, num_descs))
+
 IREE_HAL_AMDGPU_LIBHSA_PFN(
     TRACE_ALWAYS, hsa_status_t, hsa_soft_queue_create,
     DECL(hsa_region_t region, uint32_t size, hsa_queue_type32_t type,
@@ -469,6 +475,12 @@ IREE_HAL_AMDGPU_LIBHSA_PFN(TRACE_ALWAYS, hsa_status_t,
                            DECL(const hsa_queue_t* queue,
                                 uint32_t num_cu_mask_count,
                                 const uint32_t* cu_mask),
+                           ARGS(queue, num_cu_mask_count, cu_mask))
+
+IREE_HAL_AMDGPU_LIBHSA_PFN(TRACE_ALWAYS, hsa_status_t,
+                           hsa_amd_queue_cu_get_mask,
+                           DECL(const hsa_queue_t* queue,
+                                uint32_t num_cu_mask_count, uint32_t* cu_mask),
                            ARGS(queue, num_cu_mask_count, cu_mask))
 
 IREE_HAL_AMDGPU_LIBHSA_PFN(TRACE_ALWAYS, hsa_status_t,
