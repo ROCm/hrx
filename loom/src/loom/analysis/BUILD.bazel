@@ -394,6 +394,7 @@ loom_cc_library(
         "//loom/src/loom/ops:op_defs",
         "//loom/src/loom/ops:type_registry",
         "//loom/src/loom/ops/buffer",
+        "//loom/src/loom/ops/encoding",
         "//loom/src/loom/ops/group",
         "//loom/src/loom/ops/pipeline",
         "//loom/src/loom/util:fact_table",

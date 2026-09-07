@@ -25,14 +25,14 @@ pipeline.def<kernel> public retain target(@array_target) @q4_k_gate_up_array() l
   %q4_up_reducer = group.create %reducer_lanes : index -> group
   %q4_output_stage = group.create %reducer_lanes : index -> group
 
-  %q4_gate_view = buffer.view %gate_weight[%base] : buffer -> view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>
-  %q4_up_view = buffer.view %up_weight[%base] : buffer -> view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>
-  %q4_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%q4_records_per_lane]x2x144xi8>
+  %q4_gate_view = buffer.view %gate_weight[%base] : buffer -> view<[%compute_lanes]x[%q4_records_per_lane]x144xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q4_k>>
+  %q4_up_view = buffer.view %up_weight[%base] : buffer -> view<[%compute_lanes]x[%q4_records_per_lane]x144xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q4_k>>
+  %q4_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%q4_records_per_lane]x2x144xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q8_1_x4>>
   %q4_output_view = buffer.view %output[%base] : buffer -> view<1xf32>
 
-  %q4_gate_tiles = pipeline.scatter %q4_gate_view across %q4_gate_compute : view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>, group -> pipeline.flow<tile<144xi8>>
-  %q4_up_tiles = pipeline.scatter %q4_up_view across %q4_up_compute : view<[%compute_lanes]x[%q4_records_per_lane]x144xi8>, group -> pipeline.flow<tile<144xi8>>
-  %q4_activation_tiles = pipeline.scatter %q4_activation_view across %q4_gate_compute : view<[%compute_lanes]x[%q4_records_per_lane]x2x144xi8>, group -> pipeline.flow<tile<2x144xi8>>
+  %q4_gate_tiles = pipeline.scatter %q4_gate_view across %q4_gate_compute : view<[%compute_lanes]x[%q4_records_per_lane]x144xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q4_k>>, group -> pipeline.flow<tile<144xi8>>
+  %q4_up_tiles = pipeline.scatter %q4_up_view across %q4_up_compute : view<[%compute_lanes]x[%q4_records_per_lane]x144xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q4_k>>, group -> pipeline.flow<tile<144xi8>>
+  %q4_activation_tiles = pipeline.scatter %q4_activation_view across %q4_gate_compute : view<[%compute_lanes]x[%q4_records_per_lane]x2x144xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q8_1_x4>>, group -> pipeline.flow<tile<2x144xi8>>
   %q4_gate_contributions = pipeline.stage @q4_k_projection_branch on %q4_gate_compute(%q4_gate_tiles, %q4_activation_tiles) : (group, pipeline.flow<tile<144xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
   %q4_up_contributions = pipeline.stage @q4_k_projection_branch on %q4_up_compute(%q4_up_tiles, %q4_activation_tiles) : (group, pipeline.flow<tile<144xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
   %q4_gate_partials = pipeline.fold<addf> %q4_gate_contributions : pipeline.flow<tile<1xf32>>
@@ -65,14 +65,14 @@ pipeline.def<kernel> public retain target(@array_target) @q5_k_gate_up_array() l
   %q5_up_reducer = group.create %reducer_lanes : index -> group
   %q5_output_stage = group.create %reducer_lanes : index -> group
 
-  %q5_gate_view = buffer.view %gate_weight[%base] : buffer -> view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>
-  %q5_up_view = buffer.view %up_weight[%base] : buffer -> view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>
-  %q5_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%q5_records_per_lane]x2x144xi8>
+  %q5_gate_view = buffer.view %gate_weight[%base] : buffer -> view<[%compute_lanes]x[%q5_records_per_lane]x176xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q5_k>>
+  %q5_up_view = buffer.view %up_weight[%base] : buffer -> view<[%compute_lanes]x[%q5_records_per_lane]x176xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q5_k>>
+  %q5_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%q5_records_per_lane]x2x144xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q8_1_x4>>
   %q5_output_view = buffer.view %output[%base] : buffer -> view<1xf32>
 
-  %q5_gate_tiles = pipeline.scatter %q5_gate_view across %q5_gate_compute : view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>, group -> pipeline.flow<tile<176xi8>>
-  %q5_up_tiles = pipeline.scatter %q5_up_view across %q5_up_compute : view<[%compute_lanes]x[%q5_records_per_lane]x176xi8>, group -> pipeline.flow<tile<176xi8>>
-  %q5_activation_tiles = pipeline.scatter %q5_activation_view across %q5_gate_compute : view<[%compute_lanes]x[%q5_records_per_lane]x2x144xi8>, group -> pipeline.flow<tile<2x144xi8>>
+  %q5_gate_tiles = pipeline.scatter %q5_gate_view across %q5_gate_compute : view<[%compute_lanes]x[%q5_records_per_lane]x176xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q5_k>>, group -> pipeline.flow<tile<176xi8>>
+  %q5_up_tiles = pipeline.scatter %q5_up_view across %q5_up_compute : view<[%compute_lanes]x[%q5_records_per_lane]x176xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q5_k>>, group -> pipeline.flow<tile<176xi8>>
+  %q5_activation_tiles = pipeline.scatter %q5_activation_view across %q5_gate_compute : view<[%compute_lanes]x[%q5_records_per_lane]x2x144xi8, #encoding.storage<layout=#encoding.layout.dense, schema=#ggml.q8_1_x4>>, group -> pipeline.flow<tile<2x144xi8>>
   %q5_gate_contributions = pipeline.stage @q5_k_projection_branch on %q5_gate_compute(%q5_gate_tiles, %q5_activation_tiles) : (group, pipeline.flow<tile<176xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
   %q5_up_contributions = pipeline.stage @q5_k_projection_branch on %q5_up_compute(%q5_up_tiles, %q5_activation_tiles) : (group, pipeline.flow<tile<176xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
   %q5_gate_partials = pipeline.fold<addf> %q5_gate_contributions : pipeline.flow<tile<1xf32>>
