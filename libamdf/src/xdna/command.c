@@ -16,6 +16,7 @@
 #include "libamdf/src/structure.h"
 #include "libamdf/src/xdna/device.h"
 #include "libamdf/src/xdna/endpoint_profile.h"
+#include "libamdf/src/xdna/memory.h"
 #include "libamdf/src/xdna/program.h"
 #include "libamdf/src/xdna/umd/command.h"
 
@@ -32,8 +33,8 @@ struct amdf_xdna_command_t {
   amdf_xdna_resolved_binding_t* bindings;
   // Memory objects borrowed in binding order for lifetime release.
   amdf_memory_t** memory_borrows;
-  // Dense device addresses consumed while preparing the native command.
-  uint64_t* binding_addresses;
+  // Native binding records consumed while preparing the native command.
+  amdf_xdna_umd_command_binding_t* umd_bindings;
   // Copied target-native invocation control in trailing storage.
   uint8_t* control_bytes;
 };
@@ -143,7 +144,8 @@ static amdf_status_t amdf_xdna_command_calculate_allocation_size(
     uint32_t binding_count, uint64_t control_byte_length,
     size_t* out_allocation_size) {
   const size_t binding_record_size = sizeof(amdf_xdna_resolved_binding_t) +
-                                     sizeof(amdf_memory_t*) + sizeof(uint64_t);
+                                     sizeof(amdf_memory_t*) +
+                                     sizeof(amdf_xdna_umd_command_binding_t);
   if ((size_t)binding_count >
       (SIZE_MAX - sizeof(amdf_xdna_command_t)) / binding_record_size) {
     return amdf_make_api_status(AMDF_STATUS_CODE_RESOURCE_EXHAUSTED);
@@ -201,10 +203,11 @@ amdf_xdna_command_create(amdf_xdna_program_t* program,
     command->bindings = (amdf_xdna_resolved_binding_t*)(command + 1);
     command->memory_borrows =
         (amdf_memory_t**)(command->bindings + create_info->binding_count);
-    command->binding_addresses =
-        (uint64_t*)(command->memory_borrows + create_info->binding_count);
+    command->umd_bindings =
+        (amdf_xdna_umd_command_binding_t*)(command->memory_borrows +
+                                           create_info->binding_count);
     command->control_bytes =
-        (uint8_t*)(command->binding_addresses + create_info->binding_count);
+        (uint8_t*)(command->umd_bindings + create_info->binding_count);
     amdf_child_tracker_initialize(&command->submissions);
     for (uint32_t i = 0; i < create_info->binding_count; ++i) {
       const amdf_xdna_command_binding_t* source = &create_info->bindings[i];
@@ -212,7 +215,11 @@ amdf_xdna_command_create(amdf_xdna_program_t* program,
       command->bindings[i].device_address =
           source->memory->info.device_address + source->byte_offset;
       command->bindings[i].byte_length = source->byte_length;
-      command->binding_addresses[i] = command->bindings[i].device_address;
+      command->umd_bindings[i].memory =
+          amdf_xdna_memory_get_umd(source->memory);
+      command->umd_bindings[i].device_address =
+          command->bindings[i].device_address;
+      command->umd_bindings[i].byte_length = source->byte_length;
     }
     memcpy(command->control_bytes, create_info->control_bytes,
            (size_t)create_info->control_byte_length);
@@ -222,7 +229,7 @@ amdf_xdna_command_create(amdf_xdna_program_t* program,
         amdf_xdna_device_get_umd(amdf_xdna_program_get_device(program)),
         array_configuration->bytes, array_configuration->byte_length,
         command->control_bytes, create_info->control_byte_length,
-        create_info->binding_count != 0 ? command->binding_addresses : NULL,
+        create_info->binding_count != 0 ? command->umd_bindings : NULL,
         create_info->binding_count, &command->umd);
   }
   if (amdf_status_is_ok(status)) {

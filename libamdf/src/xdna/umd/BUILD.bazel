@@ -32,7 +32,10 @@ amdf_cc_library(
     name = "command",
     hdrs = ["command.h"],
     visibility = ["//libamdf/src/xdna:__subpackages__"],
-    deps = [":device"],
+    deps = [
+        ":device",
+        ":memory",
+    ],
 )
 
 amdf_cc_library(

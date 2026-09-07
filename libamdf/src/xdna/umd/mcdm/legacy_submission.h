@@ -19,6 +19,9 @@ extern "C" {
 // Exact byte length of one legacy ERT start-NPU packet.
 #define AMDF_WINDOWS_XDNA_LEGACY_ERT_PACKET_SIZE 68u
 
+// Maximum fixed bindings carried by one legacy ERT start-NPU packet.
+#define AMDF_WINDOWS_XDNA_LEGACY_MAXIMUM_BINDING_COUNT 5u
+
 // Maximum private record accepted by the installed NPU5 submission ABI.
 #define AMDF_WINDOWS_XDNA_LEGACY_SUBMISSION_CAPACITY 624u
 

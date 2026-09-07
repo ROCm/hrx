@@ -141,3 +141,8 @@ amdf_status_t amdf_xdna_memory_create(
   }
   return status;
 }
+
+amdf_xdna_umd_memory_t* amdf_xdna_memory_get_umd(amdf_memory_t* base_memory) {
+  amdf_xdna_memory_t* memory = (amdf_xdna_memory_t*)base_memory;
+  return memory->umd;
+}

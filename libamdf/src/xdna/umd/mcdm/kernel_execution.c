@@ -516,7 +516,8 @@ amdf_status_t amdf_windows_xdna_kernel_execution_prepare_command(
     uint64_t control_byte_length, const uint64_t* binding_addresses,
     uint32_t binding_count, amdf_windows_xdna_kernel_command_t* out_command) {
   if (execution == NULL || program_bytes == NULL || control_bytes == NULL ||
-      out_command == NULL || binding_count > 5 ||
+      out_command == NULL ||
+      binding_count > AMDF_WINDOWS_XDNA_LEGACY_MAXIMUM_BINDING_COUNT ||
       (binding_count != 0) != (binding_addresses != NULL)) {
     return amdf_make_api_status(AMDF_STATUS_CODE_INVALID_ARGUMENT);
   }

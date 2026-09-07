@@ -80,7 +80,8 @@ amdf_status_t amdf_windows_xdna_legacy_ert_packet_build(
     amdf_windows_xdna_legacy_ert_packet_t* out_packet) {
   if (out_packet == NULL || instruction_address == 0 ||
       instruction_byte_length == 0 ||
-      instruction_byte_length % sizeof(uint32_t) != 0 || binding_count > 5 ||
+      instruction_byte_length % sizeof(uint32_t) != 0 ||
+      binding_count > AMDF_WINDOWS_XDNA_LEGACY_MAXIMUM_BINDING_COUNT ||
       (binding_count != 0) != (binding_addresses != NULL)) {
     return amdf_make_api_status(AMDF_STATUS_CODE_INVALID_ARGUMENT);
   }

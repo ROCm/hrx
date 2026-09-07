@@ -43,6 +43,7 @@ iree_cc_library(
     "command.h"
   DEPS
     ::device
+    ::memory
     amdf::headers
   PUBLIC
 )

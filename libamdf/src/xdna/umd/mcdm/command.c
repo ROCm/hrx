@@ -14,9 +14,19 @@
 amdf_status_t amdf_xdna_umd_command_create(
     amdf_xdna_umd_device_t* device, const void* program_bytes,
     uint64_t program_byte_length, const void* control_bytes,
-    uint64_t control_byte_length, const uint64_t* binding_addresses,
-    uint32_t binding_count, amdf_xdna_umd_command_t** out_command) {
+    uint64_t control_byte_length,
+    const amdf_xdna_umd_command_binding_t* bindings, uint32_t binding_count,
+    amdf_xdna_umd_command_t** out_command) {
   *out_command = NULL;
+  if (binding_count > AMDF_WINDOWS_XDNA_LEGACY_MAXIMUM_BINDING_COUNT ||
+      (binding_count != 0) != (bindings != NULL)) {
+    return amdf_make_api_status(AMDF_STATUS_CODE_INVALID_ARGUMENT);
+  }
+  uint64_t binding_addresses[AMDF_WINDOWS_XDNA_LEGACY_MAXIMUM_BINDING_COUNT] = {
+      0};
+  for (uint32_t i = 0; i < binding_count; ++i) {
+    binding_addresses[i] = bindings[i].device_address;
+  }
   amdf_xdna_umd_command_t* command =
       (amdf_xdna_umd_command_t*)calloc(1, sizeof(*command));
   if (command == NULL) {
@@ -25,7 +35,8 @@ amdf_status_t amdf_xdna_umd_command_create(
   const amdf_status_t status =
       amdf_windows_xdna_kernel_execution_prepare_command(
           device->kernel_execution, program_bytes, program_byte_length,
-          control_bytes, control_byte_length, binding_addresses, binding_count,
+          control_bytes, control_byte_length,
+          binding_count != 0 ? binding_addresses : NULL, binding_count,
           &command->native);
   if (amdf_status_is_ok(status)) {
     *out_command = command;
