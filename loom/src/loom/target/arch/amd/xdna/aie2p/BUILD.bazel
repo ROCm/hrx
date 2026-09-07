@@ -453,6 +453,7 @@ iree_execution_test_suite(
     data = [
         "test/end_to_end/f32_carrier.loom",
         "test/end_to_end/fixed_record_report.loom",
+        "test/end_to_end/multi_array.loom",
         "test/end_to_end/q4_q5_k_record_contraction.loom",
         "test/end_to_end/split_k.loom",
     ],

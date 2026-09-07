@@ -490,6 +490,7 @@ iree_execution_test_suite(
   DATA
     "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/f32_carrier.loom"
     "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/fixed_record_report.loom"
+    "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/multi_array.loom"
     "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/q4_q5_k_record_contraction.loom"
     "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/split_k.loom"
   LABELS
