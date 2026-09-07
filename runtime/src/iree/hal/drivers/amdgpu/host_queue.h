@@ -148,6 +148,101 @@ IREE_ASYNC_FIXED_FRONTIER_TYPE(iree_hal_amdgpu_host_queue_frontier_t,
 #define IREE_HAL_AMDGPU_HOST_QUEUE_DISPATCH_SCRATCH_RESOURCE_CAPACITY \
   (2u + IREE_HAL_AMDGPU_HOST_QUEUE_DISPATCH_SCRATCH_BINDING_CAPACITY)
 
+// Immutable parameters used to construct one host queue.
+//
+// All borrowed objects and pointed-to storage must outlive the initialized
+// queue unless a field comment narrows the lifetime to initialization.
+typedef struct iree_hal_amdgpu_host_queue_params_t {
+  // Exact HAL identity and properties published by the queue.
+  struct {
+    // Queue family owning the queue. Borrowed for the queue lifetime.
+    const iree_hal_queue_family_t* family;
+    // Exact immutable queue properties. Any execution-resource ordinal storage
+    // is borrowed for the queue lifetime.
+    iree_hal_queue_params_t params;
+    // Queue axis in the logical device causal frontier.
+    iree_async_axis_t axis;
+    // Ordinal of the physical device owning the native queue.
+    iree_host_size_t device_ordinal;
+    // Ordinal in the physical device's provisioned queue table.
+    iree_hal_queue_ordinal_t physical_queue_ordinal;
+  } identity;
+
+  // Native hardware queue configuration.
+  struct {
+    // HSA API table used for all native queue operations.
+    const iree_hal_amdgpu_libhsa_t* libhsa;
+    // HSA GPU agent on which the native queue is created.
+    hsa_agent_t gpu_agent;
+    // Optional stable opaque device address copied into hostcall arguments.
+    void* hostcall_buffer;
+    // Component that consumes packets written to the AQL ring.
+    iree_hal_amdgpu_aql_queue_execution_mode_t aql_execution_mode;
+    // Device-side strategy used to resolve cross-queue epoch waits.
+    iree_hal_amdgpu_wait_barrier_strategy_t wait_barrier_strategy;
+    // Vendor-packet capabilities available to this queue.
+    iree_hal_amdgpu_vendor_packet_capability_flags_t vendor_packet_capabilities;
+    // PM4 timestamp sequence available to this queue.
+    iree_hal_amdgpu_pm4_timestamp_strategy_t pm4_timestamp_strategy;
+  } hardware;
+
+  // Logical-device coordination shared with the queue.
+  struct {
+    // Logical HAL device owning the queue.
+    iree_hal_device_t* logical_device;
+    // Proactor used to arm asynchronous semaphore and timepoint waits.
+    iree_async_proactor_t* proactor;
+    // Frontier tracker owning |identity.axis|.
+    iree_async_frontier_tracker_t* frontier_tracker;
+    // Device-side epoch-signal lookup table used for cross-queue waits.
+    iree_hal_amdgpu_epoch_signal_table_t* epoch_table;
+    // Optional logical-device feedback state drained during queue retirement.
+    iree_hal_amdgpu_feedback_state_t* feedback_state;
+    // Initial host affinity of the queue completion thread.
+    iree_thread_affinity_t completion_thread_affinity;
+  } coordination;
+
+  // Memory policies and shared allocators used by queue-owned resources.
+  struct {
+    // HSA memory policy used to allocate the queue kernarg ring during
+    // initialization.
+    iree_hal_amdgpu_kernarg_ring_memory_t kernarg;
+    // HSA executable memory pool used for optional PM4 IB slots.
+    hsa_amd_memory_pool_t pm4_ib_pool;
+    // Arena block pool used for deferred operations and notification storage.
+    iree_arena_block_pool_t* block_pool;
+    // Memory policy used for queue-local profiling records.
+    iree_hal_amdgpu_host_queue_profiling_memory_t profiling;
+    // Builtin transfer kernels and target-specific transfer metadata.
+    const iree_hal_amdgpu_device_buffer_transfer_context_t* transfer_context;
+    // Default pool routing table for queue allocations.
+    const iree_hal_pool_set_t* default_pool_set;
+    // Default TLSF pool used by queue allocations.
+    iree_hal_pool_t* default_pool;
+    // Wrapper pool used for queue-allocation results.
+    iree_hal_amdgpu_transient_buffer_pool_t* transient_buffer_pool;
+    // Fixed-size staging pool used by file transfers.
+    iree_hal_amdgpu_staging_pool_t* staging_pool;
+  } memory;
+
+  // Queue-owned ring capacities.
+  struct {
+    // Power-of-two hardware AQL ring capacity in packets.
+    uint32_t aql_packet_count;
+    // Power-of-two notification ring capacity in records.
+    uint32_t notification_count;
+    // Power-of-two kernarg ring capacity in 64-byte blocks. Must be at least
+    // twice |aql_packet_count| to cover one tail-padding gap at wrap.
+    uint32_t kernarg_block_count;
+    // Device-visible control upload ring capacity in bytes. Zero disables the
+    // ring; nonzero values must be powers of two.
+    uint32_t upload_byte_count;
+  } capacity;
+
+  // Allocator used for queue-owned host allocations.
+  iree_allocator_t host_allocator;
+} iree_hal_amdgpu_host_queue_params_t;
+
 // Host-driven queue with per-queue epoch signal and wait-backed
 // notification ring. Embeds iree_hal_queue_t at offset zero.
 //
@@ -647,85 +742,15 @@ void iree_hal_amdgpu_host_queue_enqueue_post_drain_action(
 // Initializes a host queue in caller-provided memory.
 // The caller must allocate at least sizeof(iree_hal_amdgpu_host_queue_t).
 //
-// Creates an HSA hardware queue on |gpu_agent|, initializes the AQL ring from
-// it, allocates a kernarg ring from |kernarg_memory|, creates the epoch signal
-// and notification ring, and starts the completion thread.
+// Creates the requested HSA hardware queue, initializes its AQL and auxiliary
+// rings, creates the epoch signal and notification ring, and starts the
+// completion thread.
 //
-// |axis| is this queue's identity in the causal graph. Its device index is the
-// topology-assigned HAL logical device index and its queue index is the
-// flattened logical queue ordinal within that device.
-//
-// |epoch_table| is the logical-device epoch signal table for cross-queue
-// barrier emission. This queue registers its epoch signal in the table at init
-// and deregisters at deinit. The table must outlive the queue.
-//
-// |feedback_state| is borrowed from the logical device. When enabled, queue
-// retirement drains the physical-device feedback channel before releasing
-// queue-owned resources or publishing signal semaphores.
-//
-// |hostcall_buffer| is the optional stable opaque device address copied into
-// every implicit-argument suffix emitted by this queue.
-//
-// |completion_thread_affinity| pins the completion thread near the host CPU
-// agent associated with the GPU. The platform may ignore the request, but on
-// NUMA-aware systems this keeps blocked-wait wakeups and notification-ring
-// drains close to the GPU's nearest CPU node.
-//
-// |aql_queue_capacity| is the power-of-two hardware AQL queue size in packets.
-// |notification_capacity| is the power-of-two notification ring size.
-// |kernarg_capacity_in_blocks| is the power-of-two kernarg ring size in
-// 64-byte blocks, at least 2x |aql_queue_capacity| to cover one tail-padding
-// gap at wrap. Submission admission proves space in both the AQL and kernarg
-// rings before publishing packets.
-// |upload_capacity| is the byte capacity of the device-visible control upload
-// ring used for queue-ordered submission metadata. Zero disables the optional
-// upload ring; non-zero values must be powers of two.
-//
-// |aql_queue_execution_mode| identifies whether the GPU or a ROCr host worker
-// consumes AQL packets and selects the matching doorbell notification path.
-//
-// |vendor_packet_capabilities| describes the AQL/PM4 vendor-packet support
-// selected from the physical device ISA. Queues allocate dynamic PM4 IB slots
-// when AQL_PM4_IB is available so BARRIER_VALUE-based CDNA queues can still use
-// PM4 snippets for profiling or tiny operations.
-//
-// |pm4_timestamp_strategy| describes the PM4 packet sequence used for
-// queue-device timestamp records. NONE disables profiling paths that need
-// queue-local timestamp ranges.
-//
-// |profiling_memory| provides memory for queue-local profiling event rings and
-// raw iree_amd_signal_t records. Raw signals may use device-only memory because
-// packets only use them as CP-written timestamp targets and never as host HSA
-// waits or interrupts. They are still initialized into the armed user-signal
-// ABI shape before being placed in packet completion_signal fields. Profile
-// event records must be host-readable because the profiling sink serializes
-// them on the CPU.
+// |params| and all queue-lifetime borrows it references must remain valid until
+// deinitialization. The parameter record itself is consumed synchronously and
+// may be released when this call returns.
 iree_status_t iree_hal_amdgpu_host_queue_initialize(
-    const iree_hal_queue_family_t* queue_family,
-    const iree_hal_queue_params_t* queue_params,
-    const iree_hal_amdgpu_libhsa_t* libhsa, iree_hal_device_t* logical_device,
-    void* hostcall_buffer, iree_async_proactor_t* proactor,
-    hsa_agent_t gpu_agent,
-    const iree_hal_amdgpu_kernarg_ring_memory_t* kernarg_memory,
-    hsa_amd_memory_pool_t pm4_ib_pool,
-    iree_async_frontier_tracker_t* frontier_tracker, iree_async_axis_t axis,
-    iree_hal_queue_ordinal_t physical_queue_ordinal,
-    iree_thread_affinity_t completion_thread_affinity,
-    iree_hal_amdgpu_aql_queue_execution_mode_t aql_queue_execution_mode,
-    iree_hal_amdgpu_wait_barrier_strategy_t wait_barrier_strategy,
-    iree_hal_amdgpu_vendor_packet_capability_flags_t vendor_packet_capabilities,
-    iree_hal_amdgpu_pm4_timestamp_strategy_t pm4_timestamp_strategy,
-    iree_hal_amdgpu_epoch_signal_table_t* epoch_table,
-    iree_hal_amdgpu_feedback_state_t* feedback_state,
-    iree_arena_block_pool_t* block_pool,
-    iree_hal_amdgpu_host_queue_profiling_memory_t profiling_memory,
-    const iree_hal_amdgpu_device_buffer_transfer_context_t* transfer_context,
-    const iree_hal_pool_set_t* default_pool_set, iree_hal_pool_t* default_pool,
-    iree_hal_amdgpu_transient_buffer_pool_t* transient_buffer_pool,
-    iree_hal_amdgpu_staging_pool_t* staging_pool,
-    iree_host_size_t device_ordinal, uint32_t aql_queue_capacity,
-    uint32_t notification_capacity, uint32_t kernarg_capacity_in_blocks,
-    uint32_t upload_capacity, iree_allocator_t host_allocator,
+    const iree_hal_amdgpu_host_queue_params_t* params,
     iree_hal_amdgpu_host_queue_t* out_queue);
 
 // Trims transient resources retained by |queue|.

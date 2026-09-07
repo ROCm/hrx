@@ -1229,8 +1229,6 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
     device_signal_memory_pool =
         physical_device->coarse_block_pools.small.memory_pool;
   }
-  iree_hal_queue_params_t queue_params;
-  iree_hal_queue_params_initialize(&queue_params);
   // Raw profiling completion signals are user-signal-shaped CP timestamp
   // targets. Native AQL queues retire them on the device. ROCr's PM4-emulated
   // queues may retire them from the host translation worker when the device
@@ -1260,6 +1258,58 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
     profiling_memory.event_access_agents = &physical_device->device_agent;
     profiling_memory.event_access_agent_count = 1;
   }
+
+  iree_hal_amdgpu_host_queue_params_t host_queue_params = {
+      .identity =
+          {
+              .family = &physical_device->queue_family,
+              .device_ordinal = physical_device->device_ordinal,
+          },
+      .hardware =
+          {
+              .libhsa = libhsa,
+              .gpu_agent = physical_device->device_agent,
+              .hostcall_buffer =
+                  iree_hal_amdgpu_physical_device_hostcall_buffer(
+                      physical_device),
+              .aql_execution_mode = physical_device->aql_queue_execution_mode,
+              .wait_barrier_strategy = physical_device->wait_barrier_strategy,
+              .vendor_packet_capabilities =
+                  physical_device->vendor_packet_capabilities,
+              .pm4_timestamp_strategy = physical_device->pm4_timestamp_strategy,
+          },
+      .coordination =
+          {
+              .logical_device = logical_device,
+              .proactor = proactor,
+              .frontier_tracker = frontier_tracker,
+              .epoch_table = epoch_signal_table,
+              .feedback_state = feedback_state,
+          },
+      .memory =
+          {
+              .kernarg = kernarg_ring_memory.descriptor,
+              .pm4_ib_pool = host_memory_pools->fine_pool,
+              .block_pool = &physical_device->fine_host_block_pool,
+              .profiling = profiling_memory,
+              .transfer_context = &physical_device->buffer_transfer_context,
+              .default_pool_set = &physical_device->default_pool_set,
+              .default_pool = physical_device->default_pool,
+              .transient_buffer_pool = &physical_device->transient_buffer_pool,
+              .staging_pool = &physical_device->file_staging_pool,
+          },
+      .capacity =
+          {
+              .aql_packet_count = physical_device->host_queue_aql_capacity,
+              .notification_count =
+                  physical_device->host_queue_notification_capacity,
+              .kernarg_block_count =
+                  physical_device->host_queue_kernarg_capacity,
+              .upload_byte_count = physical_device->host_queue_upload_capacity,
+          },
+      .host_allocator = host_allocator,
+  };
+  iree_hal_queue_params_initialize(&host_queue_params.identity.params);
   for (iree_host_size_t queue_ordinal = 0;
        queue_ordinal < physical_device->host_queue_capacity &&
        iree_status_is_ok(status);
@@ -1271,29 +1321,14 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
         iree_async_axis_session(base_axis), iree_async_axis_machine(base_axis),
         iree_async_axis_device_index(base_axis), (uint8_t)logical_queue_ordinal,
         /*queue_incarnation=*/0);
-    iree_thread_affinity_t completion_thread_affinity;
-    iree_thread_affinity_set_group_any(physical_device->host_numa_node,
-                                       &completion_thread_affinity);
+    host_queue_params.identity.axis = queue_axis;
+    host_queue_params.identity.physical_queue_ordinal =
+        (iree_hal_queue_ordinal_t)queue_ordinal;
+    iree_thread_affinity_set_group_any(
+        physical_device->host_numa_node,
+        &host_queue_params.coordination.completion_thread_affinity);
     status = iree_hal_amdgpu_host_queue_initialize(
-        &physical_device->queue_family, &queue_params, libhsa, logical_device,
-        iree_hal_amdgpu_physical_device_hostcall_buffer(physical_device),
-        proactor, physical_device->device_agent,
-        &kernarg_ring_memory.descriptor, host_memory_pools->fine_pool,
-        frontier_tracker, queue_axis, (iree_hal_queue_ordinal_t)queue_ordinal,
-        completion_thread_affinity, physical_device->aql_queue_execution_mode,
-        physical_device->wait_barrier_strategy,
-        physical_device->vendor_packet_capabilities,
-        physical_device->pm4_timestamp_strategy, epoch_signal_table,
-        feedback_state, &physical_device->fine_host_block_pool,
-        profiling_memory, &physical_device->buffer_transfer_context,
-        &physical_device->default_pool_set, physical_device->default_pool,
-        &physical_device->transient_buffer_pool,
-        &physical_device->file_staging_pool, physical_device->device_ordinal,
-        physical_device->host_queue_aql_capacity,
-        physical_device->host_queue_notification_capacity,
-        physical_device->host_queue_kernarg_capacity,
-        physical_device->host_queue_upload_capacity, host_allocator,
-        &physical_device->host_queues[queue_ordinal]);
+        &host_queue_params, &physical_device->host_queues[queue_ordinal]);
     if (iree_status_is_ok(status)) {
       physical_device->host_queue_count = queue_ordinal + 1;
     }

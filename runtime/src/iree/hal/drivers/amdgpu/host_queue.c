@@ -800,101 +800,66 @@ static void iree_hal_amdgpu_host_queue_error_callback(hsa_status_t status,
 }
 
 iree_status_t iree_hal_amdgpu_host_queue_initialize(
-    const iree_hal_queue_family_t* queue_family,
-    const iree_hal_queue_params_t* queue_params,
-    const iree_hal_amdgpu_libhsa_t* libhsa, iree_hal_device_t* logical_device,
-    void* hostcall_buffer, iree_async_proactor_t* proactor,
-    hsa_agent_t gpu_agent,
-    const iree_hal_amdgpu_kernarg_ring_memory_t* kernarg_memory,
-    hsa_amd_memory_pool_t pm4_ib_pool,
-    iree_async_frontier_tracker_t* frontier_tracker, iree_async_axis_t axis,
-    iree_hal_queue_ordinal_t physical_queue_ordinal,
-    iree_thread_affinity_t completion_thread_affinity,
-    iree_hal_amdgpu_aql_queue_execution_mode_t aql_queue_execution_mode,
-    iree_hal_amdgpu_wait_barrier_strategy_t wait_barrier_strategy,
-    iree_hal_amdgpu_vendor_packet_capability_flags_t vendor_packet_capabilities,
-    iree_hal_amdgpu_pm4_timestamp_strategy_t pm4_timestamp_strategy,
-    iree_hal_amdgpu_epoch_signal_table_t* epoch_table,
-    iree_hal_amdgpu_feedback_state_t* feedback_state,
-    iree_arena_block_pool_t* block_pool,
-    iree_hal_amdgpu_host_queue_profiling_memory_t profiling_memory,
-    const iree_hal_amdgpu_device_buffer_transfer_context_t* transfer_context,
-    const iree_hal_pool_set_t* default_pool_set, iree_hal_pool_t* default_pool,
-    iree_hal_amdgpu_transient_buffer_pool_t* transient_buffer_pool,
-    iree_hal_amdgpu_staging_pool_t* staging_pool,
-    iree_host_size_t device_ordinal, uint32_t aql_queue_capacity,
-    uint32_t notification_capacity, uint32_t kernarg_capacity_in_blocks,
-    uint32_t upload_capacity, iree_allocator_t host_allocator,
+    const iree_hal_amdgpu_host_queue_params_t* params,
     iree_hal_amdgpu_host_queue_t* out_queue) {
-  IREE_ASSERT_ARGUMENT(queue_family);
-  IREE_ASSERT_ARGUMENT(queue_params);
-  IREE_ASSERT_ARGUMENT(libhsa);
-  IREE_ASSERT_ARGUMENT(logical_device);
-  IREE_ASSERT_ARGUMENT(proactor);
-  IREE_ASSERT_ARGUMENT(kernarg_memory);
-  IREE_ASSERT_ARGUMENT(frontier_tracker);
-  IREE_ASSERT_ARGUMENT(epoch_table);
-  IREE_ASSERT_ARGUMENT(block_pool);
-  IREE_ASSERT_ARGUMENT(transfer_context);
-  IREE_ASSERT_ARGUMENT(default_pool_set);
-  IREE_ASSERT_ARGUMENT(default_pool);
-  IREE_ASSERT_ARGUMENT(transient_buffer_pool);
-  IREE_ASSERT_ARGUMENT(out_queue);
-
-  if (!iree_host_size_is_power_of_two(aql_queue_capacity) ||
-      !iree_host_size_is_power_of_two(notification_capacity) ||
-      !iree_host_size_is_power_of_two(kernarg_capacity_in_blocks) ||
-      (upload_capacity != 0 &&
-       !iree_host_size_is_power_of_two(upload_capacity))) {
+  if (!iree_host_size_is_power_of_two(params->capacity.aql_packet_count) ||
+      !iree_host_size_is_power_of_two(params->capacity.notification_count) ||
+      !iree_host_size_is_power_of_two(params->capacity.kernarg_block_count) ||
+      (params->capacity.upload_byte_count != 0 &&
+       !iree_host_size_is_power_of_two(params->capacity.upload_byte_count))) {
     return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                             "all enabled capacities must be powers of two");
   }
-  if (kernarg_capacity_in_blocks / 2u < aql_queue_capacity) {
+  if (params->capacity.kernarg_block_count / 2u <
+      params->capacity.aql_packet_count) {
     return iree_make_status(
         IREE_STATUS_INVALID_ARGUMENT,
         "kernarg ring capacity must be at least 2x the AQL ring capacity "
         "to cover one tail-padding gap at wrap (got kernarg_blocks=%u, "
         "aql_packets=%u)",
-        kernarg_capacity_in_blocks, aql_queue_capacity);
+        params->capacity.kernarg_block_count,
+        params->capacity.aql_packet_count);
   }
 
   IREE_TRACE_ZONE_BEGIN(z0);
 
   memset(out_queue, 0, sizeof(*out_queue));
-  iree_hal_queue_initialize(queue_family, queue_params,
+  iree_hal_queue_initialize(params->identity.family, &params->identity.params,
                             &iree_hal_amdgpu_host_queue_vtable,
                             &out_queue->base);
-  out_queue->libhsa = libhsa;
-  out_queue->logical_device = logical_device;
-  out_queue->hostcall_buffer = hostcall_buffer;
-  out_queue->proactor = proactor;
-  out_queue->frontier_tracker = frontier_tracker;
-  out_queue->host_allocator = host_allocator;
+  out_queue->libhsa = params->hardware.libhsa;
+  out_queue->logical_device = params->coordination.logical_device;
+  out_queue->hostcall_buffer = params->hardware.hostcall_buffer;
+  out_queue->proactor = params->coordination.proactor;
+  out_queue->frontier_tracker = params->coordination.frontier_tracker;
+  out_queue->host_allocator = params->host_allocator;
 
   // Submission pipeline state.
   iree_slim_mutex_initialize(&out_queue->locks.submission_mutex);
   iree_slim_mutex_initialize(&out_queue->locks.completion_drain_mutex);
   iree_slim_mutex_initialize(&out_queue->locks.post_drain_mutex);
   iree_slim_mutex_initialize(&out_queue->profiling.event_mutex);
-  out_queue->profiling.memory = profiling_memory;
-  out_queue->axis = axis;
-  out_queue->wait_barrier_strategy = wait_barrier_strategy;
-  out_queue->vendor_packet_capabilities = vendor_packet_capabilities;
-  out_queue->pm4_timestamp_strategy = pm4_timestamp_strategy;
-  out_queue->physical_queue_ordinal = physical_queue_ordinal;
+  out_queue->profiling.memory = params->memory.profiling;
+  out_queue->axis = params->identity.axis;
+  out_queue->wait_barrier_strategy = params->hardware.wait_barrier_strategy;
+  out_queue->vendor_packet_capabilities =
+      params->hardware.vendor_packet_capabilities;
+  out_queue->pm4_timestamp_strategy = params->hardware.pm4_timestamp_strategy;
+  out_queue->physical_queue_ordinal = params->identity.physical_queue_ordinal;
   out_queue->last_signal.semaphore = NULL;
   out_queue->last_signal.epoch = 0;
-  out_queue->feedback_state =
-      iree_hal_amdgpu_feedback_state_is_enabled(feedback_state) ? feedback_state
-                                                                : NULL;
-  out_queue->block_pool = block_pool;
+  out_queue->feedback_state = iree_hal_amdgpu_feedback_state_is_enabled(
+                                  params->coordination.feedback_state)
+                                  ? params->coordination.feedback_state
+                                  : NULL;
+  out_queue->block_pool = params->memory.block_pool;
   out_queue->can_publish_frontier = true;
-  out_queue->transfer_context = transfer_context;
-  out_queue->default_pool_set = default_pool_set;
-  out_queue->default_pool = default_pool;
-  out_queue->transient_buffer_pool = transient_buffer_pool;
-  out_queue->staging_pool = staging_pool;
-  out_queue->device_ordinal = device_ordinal;
+  out_queue->transfer_context = params->memory.transfer_context;
+  out_queue->default_pool_set = params->memory.default_pool_set;
+  out_queue->default_pool = params->memory.default_pool;
+  out_queue->transient_buffer_pool = params->memory.transient_buffer_pool;
+  out_queue->staging_pool = params->memory.staging_pool;
+  out_queue->device_ordinal = params->identity.device_ordinal;
   out_queue->pending_head = NULL;
   iree_async_frontier_initialize(iree_hal_amdgpu_host_queue_frontier(out_queue),
                                  /*entry_count=*/0);
@@ -903,14 +868,15 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
   // CPU-side wait integration. The queue's GPU-visible HSA epoch signal is
   // created by the notification ring below and registered in the epoch table.
   iree_status_t status = iree_async_frontier_tracker_register_axis(
-      frontier_tracker, axis, /*semaphore=*/NULL);
+      params->coordination.frontier_tracker, params->identity.axis,
+      /*semaphore=*/NULL);
 
   // Create the host-only stop signal before the hardware queue so the HSA error
   // callback always has a valid signal to wake if queue creation races with an
   // asynchronous fault.
   if (iree_status_is_ok(status)) {
     status = iree_hsa_amd_signal_create(
-        IREE_LIBHSA(libhsa), /*initial_value=*/0,
+        IREE_LIBHSA(params->hardware.libhsa), /*initial_value=*/0,
         /*num_consumers=*/0, /*consumers=*/NULL, /*attributes=*/0,
         &out_queue->completion.stop_signal);
   }
@@ -926,8 +892,9 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
   hsa_queue_t* hardware_queue = NULL;
   if (iree_status_is_ok(status)) {
     status = iree_hsa_queue_create(
-        IREE_LIBHSA(libhsa), gpu_agent, aql_queue_capacity,
-        HSA_QUEUE_TYPE_MULTI, iree_hal_amdgpu_host_queue_error_callback,
+        IREE_LIBHSA(params->hardware.libhsa), params->hardware.gpu_agent,
+        params->capacity.aql_packet_count, HSA_QUEUE_TYPE_MULTI,
+        iree_hal_amdgpu_host_queue_error_callback,
         /*data=*/out_queue,
         /*private_segment_size=*/UINT32_MAX,
         /*group_segment_size=*/UINT32_MAX, &hardware_queue);
@@ -937,30 +904,31 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
   if (iree_status_is_ok(status)) {
     out_queue->hardware_queue = hardware_queue;
     iree_hal_amdgpu_aql_ring_initialize(
-        libhsa, (iree_amd_queue_t*)hardware_queue, aql_queue_execution_mode,
-        &out_queue->aql_ring);
+        params->hardware.libhsa, (iree_amd_queue_t*)hardware_queue,
+        params->hardware.aql_execution_mode, &out_queue->aql_ring);
   }
 
   // Initialize the kernarg ring from the selected HSA memory pool.
   if (iree_status_is_ok(status)) {
-    status = iree_hal_amdgpu_kernarg_ring_initialize(libhsa, kernarg_memory,
-                                                     kernarg_capacity_in_blocks,
-                                                     &out_queue->kernarg_ring);
+    status = iree_hal_amdgpu_kernarg_ring_initialize(
+        params->hardware.libhsa, &params->memory.kernarg,
+        params->capacity.kernarg_block_count, &out_queue->kernarg_ring);
   }
 
   // Initialize the optional queue-control upload ring from the same
   // host-visible memory policy as queue-owned kernargs. A zero capacity keeps
   // future device-side fixup storage opt-in and avoids charging every queue for
   // an unused allocation.
-  if (iree_status_is_ok(status) && upload_capacity != 0) {
+  if (iree_status_is_ok(status) && params->capacity.upload_byte_count != 0) {
     const iree_hal_amdgpu_queue_upload_ring_memory_t upload_memory = {
-        .memory_pool = kernarg_memory->memory_pool,
-        .access_agents = kernarg_memory->access_agents,
-        .access_agent_count = kernarg_memory->access_agent_count,
-        .publication = kernarg_memory->publication,
+        .memory_pool = params->memory.kernarg.memory_pool,
+        .access_agents = params->memory.kernarg.access_agents,
+        .access_agent_count = params->memory.kernarg.access_agent_count,
+        .publication = params->memory.kernarg.publication,
     };
     status = iree_hal_amdgpu_queue_upload_ring_initialize(
-        libhsa, &upload_memory, upload_capacity, &out_queue->queue_upload_ring);
+        params->hardware.libhsa, &upload_memory,
+        params->capacity.upload_byte_count, &out_queue->queue_upload_ring);
   }
 
   // Initialize the optional PM4 IB slot buffer. Capability-driven allocation
@@ -969,16 +937,19 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
   // buffer is indexed by AQL packet id and inherits AQL ring
   // backpressure/reuse; there is no separate PM4 producer or reclaim position.
   if (iree_status_is_ok(status) &&
-      (vendor_packet_capabilities &
+      (params->hardware.vendor_packet_capabilities &
        IREE_HAL_AMDGPU_VENDOR_PACKET_CAPABILITY_AQL_PM4_IB)) {
     status = iree_hal_amdgpu_host_queue_allocate_pm4_ib_slots(
-        libhsa, gpu_agent, pm4_ib_pool, aql_queue_capacity, out_queue);
+        params->hardware.libhsa, params->hardware.gpu_agent,
+        params->memory.pm4_ib_pool, params->capacity.aql_packet_count,
+        out_queue);
   }
 
   // Initialize the notification ring (creates epoch signal + entry buffer).
   if (iree_status_is_ok(status)) {
     status = iree_hal_amdgpu_notification_ring_initialize(
-        libhsa, block_pool, notification_capacity, host_allocator,
+        params->hardware.libhsa, params->memory.block_pool,
+        params->capacity.notification_count, params->host_allocator,
         &out_queue->notification_ring);
   }
 
@@ -987,10 +958,11 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
   // creates the epoch signal) and before any submissions.
   if (iree_status_is_ok(status)) {
     iree_hal_amdgpu_epoch_signal_table_register(
-        epoch_table, iree_async_axis_queue_index(axis),
+        params->coordination.epoch_table,
+        iree_async_axis_queue_index(params->identity.axis),
         iree_hal_amdgpu_notification_ring_epoch_signal(
             &out_queue->notification_ring));
-    out_queue->epoch_table = epoch_table;
+    out_queue->epoch_table = params->coordination.epoch_table;
   }
 
   if (iree_status_is_ok(status)) {
@@ -998,13 +970,14 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
     memset(&thread_params, 0, sizeof(thread_params));
     char thread_name[32] = {0};
     snprintf(thread_name, IREE_ARRAYSIZE(thread_name), "amdgpu-d%uq%u-c",
-             (unsigned)iree_async_axis_device_index(axis),
-             (unsigned)iree_async_axis_queue_index(axis));
+             (unsigned)iree_async_axis_device_index(params->identity.axis),
+             (unsigned)iree_async_axis_queue_index(params->identity.axis));
     thread_params.name = iree_make_cstring_view(thread_name);
-    thread_params.initial_affinity = completion_thread_affinity;
+    thread_params.initial_affinity =
+        params->coordination.completion_thread_affinity;
     status = iree_thread_create(
         iree_hal_amdgpu_host_queue_completion_thread_main, out_queue,
-        thread_params, host_allocator, &out_queue->completion.thread);
+        thread_params, params->host_allocator, &out_queue->completion.thread);
   }
   if (!iree_status_is_ok(status)) {
     iree_hal_amdgpu_host_queue_deinitialize(out_queue);
