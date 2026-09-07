@@ -405,17 +405,58 @@ typedef uint32_t iree_hal_queue_family_spec_flags_t;
 typedef enum iree_hal_queue_family_spec_flag_bits_e {
   // No queue family capability flags are present.
   IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_NONE = 0u,
+
+  // Additional exact hardware queues may be acquired after device creation.
+  IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION = 1u << 0,
 } iree_hal_queue_family_spec_flag_bits_t;
 
+// Canonical ordinal of one execution-resource constraint group within a queue
+// family.
+typedef uint32_t iree_hal_queue_execution_resource_group_ordinal_t;
+
+// Stable constraints shared by a group of execution resources.
+typedef struct iree_hal_queue_execution_resource_group_spec_t {
+  // Minimum number of resources from this group required in every nonempty
+  // acquired resource set. May be zero.
+  uint32_t minimum_selected_resource_count;
+} iree_hal_queue_execution_resource_group_spec_t;
+
+// Stable description of one independently selectable execution resource.
+typedef struct iree_hal_queue_execution_resource_spec_t {
+  // Constraint group containing this resource.
+  iree_hal_queue_execution_resource_group_ordinal_t group_ordinal;
+
+  // First family-local raw execution-unit ordinal covered by this resource.
+  uint32_t first_execution_unit_ordinal;
+
+  // Number of raw execution units covered by this resource. Always nonzero.
+  uint32_t execution_unit_count;
+} iree_hal_queue_execution_resource_spec_t;
+
 // Stable queue family facts.
-typedef struct iree_hal_queue_family_spec_t {
+struct iree_hal_queue_family_spec_t {
   // Human-readable queue family name.
   iree_string_view_t name;
   // Number of queues in the immutable device provisioned-queue table.
   // Dynamically acquired queues are not included.
   uint32_t provisioned_queue_count;
-  // Number of priority levels in the family.
-  uint32_t priority_count;
+  // Number of supported entries in |priorities|.
+  iree_host_size_t priority_count;
+  // Sorted unique scheduling priorities accepted by this family.
+  const iree_hal_queue_priority_t* priorities;
+  // Number of family-local raw execution units.
+  uint32_t execution_unit_count;
+  // Number of records in |execution_resource_groups|.
+  iree_host_size_t execution_resource_group_count;
+  // Execution-resource constraint groups in canonical ordinal order.
+  const iree_hal_queue_execution_resource_group_spec_t*
+      execution_resource_groups;
+  // Number of records in |execution_resources|.
+  iree_host_size_t execution_resource_count;
+  // Independently selectable resources in canonical ordinal order.
+  const iree_hal_queue_execution_resource_spec_t* execution_resources;
+  // Union of immutable feature bits available on queues in this family.
+  iree_hal_queue_feature_flags_t supported_queue_features;
   // Number of low bits defined in a tick captured on this family's queues.
   uint32_t timestamp_valid_bits;
   // Ticks per second of the timestamp domain this family's queues capture in.
@@ -432,7 +473,7 @@ typedef struct iree_hal_queue_family_spec_t {
   iree_hal_atomic_capabilities_t zero_compute_atomic_capabilities;
   // Queue family capability flags.
   iree_hal_queue_family_spec_flags_t flags;
-} iree_hal_queue_family_spec_t;
+};
 
 // Structured external semaphore timepoint support.
 typedef struct iree_hal_external_timepoint_handle_spec_t {

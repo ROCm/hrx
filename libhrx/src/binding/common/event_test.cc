@@ -122,6 +122,8 @@ TEST(TimestampDomainElapsedMsTest, ReportsNoDurationForAZeroedDomain) {
 // identity facet advertises none, so any nonzero value names a valid set.
 constexpr iree_hal_physical_device_affinity_t kFirstPhysicalDevice = 1ull << 0;
 constexpr iree_hal_physical_device_affinity_t kSecondPhysicalDevice = 1ull << 1;
+constexpr iree_hal_queue_priority_t kNormalQueuePriority =
+    IREE_HAL_QUEUE_PRIORITY_NORMAL;
 
 iree_hal_queue_family_spec_t QueueFamily(
     iree_hal_physical_device_affinity_t physical_device_affinity,
@@ -130,6 +132,7 @@ iree_hal_queue_family_spec_t QueueFamily(
   family.name = iree_make_cstring_view("test");
   family.provisioned_queue_count = 1;
   family.priority_count = 1;
+  family.priorities = &kNormalQueuePriority;
   family.timestamp_valid_bits = timestamp_valid_bits;
   family.timestamp_frequency_hz = timestamp_frequency_hz;
   family.physical_device_affinity = physical_device_affinity;

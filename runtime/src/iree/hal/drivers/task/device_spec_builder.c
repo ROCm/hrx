@@ -255,6 +255,9 @@ IREE_API_EXPORT iree_status_t iree_hal_task_device_spec_create(
     status = iree_hal_device_spec_builder_set_memory(&builder, &memory);
   }
 
+  const iree_hal_queue_priority_t queue_priorities[] = {
+      IREE_HAL_QUEUE_PRIORITY_NORMAL,
+  };
   iree_hal_queue_family_role_flags_t queue_role_flags =
       IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH |
       IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_TRANSFER |
@@ -271,7 +274,8 @@ IREE_API_EXPORT iree_status_t iree_hal_task_device_spec_create(
   iree_hal_queue_family_spec_t queue_family = {
       .name = IREE_SV("default"),
       .provisioned_queue_count = (uint32_t)params->queue_count,
-      .priority_count = 1,
+      .priority_count = IREE_ARRAYSIZE(queue_priorities),
+      .priorities = queue_priorities,
       .physical_device_affinity = 1ull,
       .role_flags = queue_role_flags,
       .atomic_capabilities = params->atomic_capabilities,

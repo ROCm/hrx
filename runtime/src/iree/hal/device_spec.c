@@ -42,6 +42,13 @@ struct iree_hal_device_spec_t {
   iree_hal_virtual_memory_class_spec_t* virtual_memory_classes;
   // Owned queue family records.
   iree_hal_queue_family_spec_t* queue_families;
+  // Owned priority records referenced by queue families.
+  iree_hal_queue_priority_t* queue_priorities;
+  // Owned execution-resource group records referenced by queue families.
+  iree_hal_queue_execution_resource_group_spec_t*
+      queue_execution_resource_groups;
+  // Owned execution-resource records referenced by queue families.
+  iree_hal_queue_execution_resource_spec_t* queue_execution_resources;
   // Owned external timepoint handle records.
   iree_hal_external_timepoint_handle_spec_t* external_timepoint_handles;
   // Owned executable target records.
@@ -156,6 +163,153 @@ static iree_status_t iree_hal_device_spec_validate_concrete_affinity(
   return iree_ok_status();
 }
 
+static iree_status_t iree_hal_device_spec_validate_queue_family(
+    iree_host_size_t family_ordinal,
+    const iree_hal_queue_family_spec_t* family) {
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_validate_count_pointer(
+      family->priority_count, family->priorities, "queue family priorities"));
+  if (IREE_UNLIKELY(family->priority_count == 0)) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "device spec queue family %" PRIhsz
+                            " has no scheduling priorities",
+                            family_ordinal);
+  }
+  bool has_normal_priority = false;
+  for (iree_host_size_t i = 0; i < family->priority_count; ++i) {
+    const iree_hal_queue_priority_t priority = family->priorities[i];
+    if (IREE_UNLIKELY(i > 0 && priority <= family->priorities[i - 1])) {
+      return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                              "device spec queue family %" PRIhsz
+                              " priorities must be sorted and unique",
+                              family_ordinal);
+    }
+    has_normal_priority |= priority == IREE_HAL_QUEUE_PRIORITY_NORMAL;
+  }
+  if (IREE_UNLIKELY(!has_normal_priority)) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "device spec queue family %" PRIhsz
+                            " has no normal priority",
+                            family_ordinal);
+  }
+
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_validate_count_pointer(
+      family->execution_resource_group_count, family->execution_resource_groups,
+      "queue family execution resource groups"));
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_validate_count_pointer(
+      family->execution_resource_count, family->execution_resources,
+      "queue family execution resources"));
+  if (IREE_UNLIKELY(family->execution_resource_group_count > UINT32_MAX ||
+                    family->execution_resource_count > UINT32_MAX)) {
+    return iree_make_status(
+        IREE_STATUS_OUT_OF_RANGE,
+        "device spec queue family %" PRIhsz
+        " execution-resource counts exceed ordinal capacity",
+        family_ordinal);
+  }
+  if (family->execution_resource_count == 0) {
+    if (IREE_UNLIKELY(family->execution_unit_count != 0 ||
+                      family->execution_resource_group_count != 0)) {
+      return iree_make_status(
+          IREE_STATUS_INVALID_ARGUMENT,
+          "device spec queue family %" PRIhsz
+          " has execution-unit or group records without selectable resources",
+          family_ordinal);
+    }
+  } else if (IREE_UNLIKELY(family->execution_unit_count == 0 ||
+                           family->execution_resource_group_count == 0)) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "device spec queue family %" PRIhsz
+        " selectable resources require execution units and groups",
+        family_ordinal);
+  }
+
+  uint64_t previous_resource_end = 0;
+  for (iree_host_size_t i = 0; i < family->execution_resource_count; ++i) {
+    const iree_hal_queue_execution_resource_spec_t* resource =
+        &family->execution_resources[i];
+    if (IREE_UNLIKELY(resource->group_ordinal >=
+                      family->execution_resource_group_count)) {
+      return iree_make_status(
+          IREE_STATUS_INVALID_ARGUMENT,
+          "device spec queue family %" PRIhsz " resource %" PRIhsz
+          " references group %u outside group count %" PRIhsz,
+          family_ordinal, i, resource->group_ordinal,
+          family->execution_resource_group_count);
+    }
+    if (IREE_UNLIKELY(resource->execution_unit_count == 0)) {
+      return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                              "device spec queue family %" PRIhsz
+                              " resource %" PRIhsz " has no execution units",
+                              family_ordinal, i);
+    }
+    const uint64_t resource_end =
+        (uint64_t)resource->first_execution_unit_ordinal +
+        resource->execution_unit_count;
+    if (IREE_UNLIKELY(resource_end > family->execution_unit_count)) {
+      return iree_make_status(
+          IREE_STATUS_INVALID_ARGUMENT,
+          "device spec queue family %" PRIhsz " resource %" PRIhsz
+          " execution-unit range [%u, %" PRIu64
+          ") exceeds family execution-unit count %u",
+          family_ordinal, i, resource->first_execution_unit_ordinal,
+          resource_end, family->execution_unit_count);
+    }
+    if (IREE_UNLIKELY(i > 0 && resource->first_execution_unit_ordinal <
+                                   previous_resource_end)) {
+      return iree_make_status(
+          IREE_STATUS_INVALID_ARGUMENT,
+          "device spec queue family %" PRIhsz
+          " execution-resource ranges must be ordered and non-overlapping",
+          family_ordinal);
+    }
+    previous_resource_end = resource_end;
+  }
+
+  for (iree_host_size_t group_ordinal = 0;
+       group_ordinal < family->execution_resource_group_count;
+       ++group_ordinal) {
+    iree_host_size_t group_resource_count = 0;
+    for (iree_host_size_t i = 0; i < family->execution_resource_count; ++i) {
+      group_resource_count +=
+          family->execution_resources[i].group_ordinal == group_ordinal;
+    }
+    const uint32_t minimum_selected_resource_count =
+        family->execution_resource_groups[group_ordinal]
+            .minimum_selected_resource_count;
+    if (IREE_UNLIKELY(group_resource_count == 0 ||
+                      minimum_selected_resource_count > group_resource_count)) {
+      return iree_make_status(
+          IREE_STATUS_INVALID_ARGUMENT,
+          "device spec queue family %" PRIhsz " resource group %" PRIhsz
+          " requires %u selections from %" PRIhsz " resources",
+          family_ordinal, group_ordinal, minimum_selected_resource_count,
+          group_resource_count);
+    }
+  }
+
+  const iree_hal_queue_feature_flags_t known_queue_features =
+      IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH;
+  if (IREE_UNLIKELY(family->supported_queue_features & ~known_queue_features)) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "device spec queue family %" PRIhsz
+        " has unknown queue feature bits 0x%016" PRIx64,
+        family_ordinal,
+        family->supported_queue_features & ~known_queue_features);
+  }
+  const iree_hal_queue_family_spec_flags_t known_family_flags =
+      IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION;
+  if (IREE_UNLIKELY(family->flags & ~known_family_flags)) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "device spec queue family %" PRIhsz
+                            " has unknown capability flag bits 0x%08" PRIx32,
+                            family_ordinal,
+                            family->flags & ~known_family_flags);
+  }
+  return iree_ok_status();
+}
+
 static iree_status_t iree_hal_device_spec_validate_params(
     const iree_hal_device_spec_params_t* params) {
   if (!params) return iree_ok_status();
@@ -243,6 +397,8 @@ static iree_status_t iree_hal_device_spec_validate_params(
       IREE_RETURN_IF_ERROR(iree_hal_device_spec_validate_concrete_affinity(
           "queue family", i, queues->families[i].physical_device_affinity,
           available_affinity));
+      IREE_RETURN_IF_ERROR(
+          iree_hal_device_spec_validate_queue_family(i, &queues->families[i]));
     }
     for (iree_host_size_t i = 0; i < queues->external_timepoint_handle_count;
          ++i) {
@@ -420,6 +576,9 @@ static void iree_hal_device_spec_destroy(iree_hal_device_spec_t* spec) {
   iree_allocator_free(host_allocator, spec->external_buffer_handles);
   iree_allocator_free(host_allocator, spec->virtual_memory_classes);
   iree_allocator_free(host_allocator, spec->queue_families);
+  iree_allocator_free(host_allocator, spec->queue_priorities);
+  iree_allocator_free(host_allocator, spec->queue_execution_resource_groups);
+  iree_allocator_free(host_allocator, spec->queue_execution_resources);
   iree_allocator_free(host_allocator, spec->external_timepoint_handles);
   iree_allocator_free(host_allocator, spec->executable_targets);
   iree_allocator_free(host_allocator, spec->facets);
@@ -450,6 +609,21 @@ IREE_API_EXPORT iree_status_t iree_hal_device_spec_create(
   iree_host_size_t facet_payload_storage_length = 0;
   IREE_RETURN_IF_ERROR(iree_hal_device_spec_count_strings_and_payloads(
       params, &string_table_length, &facet_payload_storage_length));
+  iree_host_size_t queue_priority_count = 0;
+  iree_host_size_t queue_execution_resource_group_count = 0;
+  iree_host_size_t queue_execution_resource_count = 0;
+  if (params && params->queues) {
+    for (iree_host_size_t i = 0; i < params->queues->family_count; ++i) {
+      const iree_hal_queue_family_spec_t* family = &params->queues->families[i];
+      IREE_RETURN_IF_ERROR(iree_hal_device_spec_add_size(
+          family->priority_count, &queue_priority_count));
+      IREE_RETURN_IF_ERROR(
+          iree_hal_device_spec_add_size(family->execution_resource_group_count,
+                                        &queue_execution_resource_group_count));
+      IREE_RETURN_IF_ERROR(iree_hal_device_spec_add_size(
+          family->execution_resource_count, &queue_execution_resource_count));
+    }
+  }
 
   iree_hal_device_spec_t* spec = NULL;
   IREE_RETURN_IF_ERROR(
@@ -552,10 +726,64 @@ IREE_API_EXPORT iree_status_t iree_hal_device_spec_create(
         sizeof(*spec->queue_families), params->queues->families,
         (void**)&spec->queue_families);
     spec->queues.families = spec->queue_families;
+    if (iree_status_is_ok(status) && queue_priority_count) {
+      status = iree_allocator_malloc_array(host_allocator, queue_priority_count,
+                                           sizeof(*spec->queue_priorities),
+                                           (void**)&spec->queue_priorities);
+    }
+    if (iree_status_is_ok(status) && queue_execution_resource_group_count) {
+      status = iree_allocator_malloc_array(
+          host_allocator, queue_execution_resource_group_count,
+          sizeof(*spec->queue_execution_resource_groups),
+          (void**)&spec->queue_execution_resource_groups);
+    }
+    if (iree_status_is_ok(status) && queue_execution_resource_count) {
+      status = iree_allocator_malloc_array(
+          host_allocator, queue_execution_resource_count,
+          sizeof(*spec->queue_execution_resources),
+          (void**)&spec->queue_execution_resources);
+    }
+    iree_host_size_t priority_offset = 0;
+    iree_host_size_t group_offset = 0;
+    iree_host_size_t resource_offset = 0;
     for (iree_host_size_t i = 0;
          i < spec->queues.family_count && iree_status_is_ok(status); ++i) {
+      const iree_hal_queue_family_spec_t* source_family =
+          &params->queues->families[i];
+      iree_hal_queue_family_spec_t* target_family = &spec->queue_families[i];
       spec->queue_families[i].name = iree_hal_device_spec_copy_string(
-          params->queues->families[i].name, string_storage, &string_offset);
+          source_family->name, string_storage, &string_offset);
+      target_family->priorities = source_family->priority_count
+                                      ? &spec->queue_priorities[priority_offset]
+                                      : NULL;
+      if (source_family->priority_count) {
+        memcpy(
+            (void*)target_family->priorities, source_family->priorities,
+            source_family->priority_count * sizeof(*source_family->priorities));
+        priority_offset += source_family->priority_count;
+      }
+      target_family->execution_resource_groups =
+          source_family->execution_resource_group_count
+              ? &spec->queue_execution_resource_groups[group_offset]
+              : NULL;
+      if (source_family->execution_resource_group_count) {
+        memcpy((void*)target_family->execution_resource_groups,
+               source_family->execution_resource_groups,
+               source_family->execution_resource_group_count *
+                   sizeof(*source_family->execution_resource_groups));
+        group_offset += source_family->execution_resource_group_count;
+      }
+      target_family->execution_resources =
+          source_family->execution_resource_count
+              ? &spec->queue_execution_resources[resource_offset]
+              : NULL;
+      if (source_family->execution_resource_count) {
+        memcpy((void*)target_family->execution_resources,
+               source_family->execution_resources,
+               source_family->execution_resource_count *
+                   sizeof(*source_family->execution_resources));
+        resource_offset += source_family->execution_resource_count;
+      }
     }
     if (iree_status_is_ok(status)) {
       status = iree_hal_device_spec_clone_array(

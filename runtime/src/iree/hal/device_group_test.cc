@@ -16,6 +16,9 @@
 namespace iree::hal {
 namespace {
 
+static constexpr iree_hal_queue_priority_t kNormalQueuePriority =
+    IREE_HAL_QUEUE_PRIORITY_NORMAL;
+
 using ::iree::testing::status::StatusIs;
 
 // Helper: creates a mock device with the given identifier and a minimal cached
@@ -71,6 +74,13 @@ static iree_hal_device_spec_t* CreateTestDeviceSpec(const char* driver_id,
       /*.name=*/iree_make_cstring_view("default"),
       /*.provisioned_queue_count=*/0,
       /*.priority_count=*/1,
+      /*.priorities=*/&kNormalQueuePriority,
+      /*.execution_unit_count=*/0,
+      /*.execution_resource_group_count=*/0,
+      /*.execution_resource_groups=*/nullptr,
+      /*.execution_resource_count=*/0,
+      /*.execution_resources=*/nullptr,
+      /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
       /*.timestamp_valid_bits=*/0,
       /*.timestamp_frequency_hz=*/0,
       /*.physical_device_affinity=*/1ull << logical_ordinal,

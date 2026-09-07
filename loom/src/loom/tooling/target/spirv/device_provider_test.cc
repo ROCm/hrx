@@ -21,6 +21,9 @@
 namespace loom {
 namespace {
 
+static constexpr iree_hal_queue_priority_t kNormalQueuePriority =
+    IREE_HAL_QUEUE_PRIORITY_NORMAL;
+
 struct DeviceSpecDeleter {
   void operator()(iree_hal_device_spec_t* device_spec) const {
     iree_hal_device_spec_release(device_spec);
@@ -142,6 +145,13 @@ static iree_status_t CreateDeviceSpec(
       /*.name=*/IREE_SV("dispatch"),
       /*.provisioned_queue_count=*/1,
       /*.priority_count=*/1,
+      /*.priorities=*/&kNormalQueuePriority,
+      /*.execution_unit_count=*/0,
+      /*.execution_resource_group_count=*/0,
+      /*.execution_resource_groups=*/nullptr,
+      /*.execution_resource_count=*/0,
+      /*.execution_resources=*/nullptr,
+      /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
       /*.timestamp_valid_bits=*/0,
       /*.timestamp_frequency_hz=*/0,
       /*.physical_device_affinity=*/1,

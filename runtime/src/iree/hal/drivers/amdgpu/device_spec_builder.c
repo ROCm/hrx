@@ -338,6 +338,9 @@ iree_hal_amdgpu_device_spec_zero_compute_atomic_capabilities(
 static iree_status_t iree_hal_amdgpu_device_spec_populate_queues(
     const iree_hal_amdgpu_device_spec_params_t* params,
     iree_hal_device_spec_builder_t* builder) {
+  const iree_hal_queue_priority_t queue_priorities[] = {
+      IREE_HAL_QUEUE_PRIORITY_NORMAL,
+  };
   iree_hal_queue_family_spec_t* families = NULL;
   IREE_RETURN_IF_ERROR(iree_allocator_malloc_array(
       builder->host_allocator, params->physical_device_count, sizeof(*families),
@@ -352,7 +355,8 @@ static iree_status_t iree_hal_amdgpu_device_spec_populate_queues(
     families[i] = (iree_hal_queue_family_spec_t){
         .name = physical_device->identity.processor,
         .provisioned_queue_count = physical_device->queue_count,
-        .priority_count = 1,
+        .priority_count = IREE_ARRAYSIZE(queue_priorities),
+        .priorities = queue_priorities,
         .timestamp_valid_bits = 64,
         .timestamp_frequency_hz = physical_device->timestamp_frequency_hz,
         .physical_device_affinity = 1ull << i,

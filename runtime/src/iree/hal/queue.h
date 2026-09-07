@@ -28,6 +28,7 @@ typedef struct iree_hal_pool_t iree_hal_pool_t;
 typedef struct iree_hal_pool_reservation_request_t
     iree_hal_pool_reservation_request_t;
 typedef struct iree_hal_semaphore_t iree_hal_semaphore_t;
+typedef struct iree_hal_queue_family_spec_t iree_hal_queue_family_spec_t;
 
 //===----------------------------------------------------------------------===//
 // Types and Enums
@@ -43,6 +44,22 @@ typedef uint32_t iree_hal_queue_family_ordinal_t;
 // table for the lifetime of a device. They are not intrinsic queue identities:
 // dynamically acquired queues do not have provisioned queue ordinals.
 typedef uint32_t iree_hal_queue_ordinal_t;
+
+// Signed scheduling priority ordered from lower to higher priority.
+typedef int32_t iree_hal_queue_priority_t;
+
+// Canonical normal scheduling priority.
+#define IREE_HAL_QUEUE_PRIORITY_NORMAL ((iree_hal_queue_priority_t)0)
+
+// Immutable execution features of an exact queue.
+typedef uint64_t iree_hal_queue_feature_flags_t;
+enum iree_hal_queue_feature_flag_bits_e {
+  // No specialized queue features are enabled.
+  IREE_HAL_QUEUE_FEATURE_FLAG_NONE = 0,
+
+  // The queue accepts dispatches requiring cooperative grid synchronization.
+  IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH = 1ull << 0,
+};
 
 // A bitmap selecting queue families by their canonical ordinals.
 //

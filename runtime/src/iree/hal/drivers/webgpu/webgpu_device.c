@@ -111,10 +111,14 @@ static iree_status_t iree_hal_webgpu_device_spec_create(
       .physical_devices = &physical_device,
       .flags = IREE_HAL_DEVICE_IDENTITY_FLAG_NONE,
   };
+  const iree_hal_queue_priority_t queue_priorities[] = {
+      IREE_HAL_QUEUE_PRIORITY_NORMAL,
+  };
   iree_hal_queue_family_spec_t queue_family = {
       .name = IREE_SV("default"),
       .provisioned_queue_count = 1,
-      .priority_count = 1,
+      .priority_count = IREE_ARRAYSIZE(queue_priorities),
+      .priorities = queue_priorities,
       .physical_device_affinity = 1ull,
       .role_flags = IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH |
                     IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_TRANSFER |

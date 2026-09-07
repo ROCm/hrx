@@ -172,15 +172,38 @@ static const std::vector<uint8_t>& iree_hal_device_spec_fuzz_seed(void) {
     virtual_memory.classes = &virtual_memory_class;
 
     iree_hal_queue_family_spec_t queue_family = {};
+    const iree_hal_queue_priority_t queue_priorities[] = {-1, 0};
+    const iree_hal_queue_execution_resource_group_spec_t resource_groups[] = {
+        {/*.minimum_selected_resource_count=*/1},
+        {/*.minimum_selected_resource_count=*/1},
+    };
+    const iree_hal_queue_execution_resource_spec_t execution_resources[] = {
+        {/*.group_ordinal=*/0,
+         /*.first_execution_unit_ordinal=*/0,
+         /*.execution_unit_count=*/2},
+        {/*.group_ordinal=*/1,
+         /*.first_execution_unit_ordinal=*/2,
+         /*.execution_unit_count=*/2},
+    };
     queue_family.name = iree_make_cstring_view("dispatch-and-transfer");
     queue_family.provisioned_queue_count = 4;
-    queue_family.priority_count = 2;
+    queue_family.priority_count = IREE_ARRAYSIZE(queue_priorities);
+    queue_family.priorities = queue_priorities;
+    queue_family.execution_unit_count = 4;
+    queue_family.execution_resource_group_count =
+        IREE_ARRAYSIZE(resource_groups);
+    queue_family.execution_resource_groups = resource_groups;
+    queue_family.execution_resource_count = IREE_ARRAYSIZE(execution_resources);
+    queue_family.execution_resources = execution_resources;
+    queue_family.supported_queue_features =
+        IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH;
     queue_family.timestamp_valid_bits = 64;
     queue_family.timestamp_frequency_hz = UINT64_C(1000000000);
     queue_family.physical_device_affinity = 1;
     queue_family.role_flags = IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH |
                               IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_TRANSFER |
                               IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_PROFILING;
+    queue_family.flags = IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION;
 
     iree_hal_external_timepoint_handle_spec_t external_timepoint_handle = {};
     external_timepoint_handle.handle_type =
