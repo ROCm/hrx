@@ -85,7 +85,7 @@ iree_cc_test(
 )
 endif()
 
-if(WIN32 AND AMDF_BUILD)
+if(WIN32 AND TEST libamdf/cts/core/shared)
   set_property(TEST libamdf/cts/core/shared APPEND PROPERTY
     ENVIRONMENT_MODIFICATION
       "PATH=path_list_prepend:$<TARGET_FILE_DIR:amdf>")

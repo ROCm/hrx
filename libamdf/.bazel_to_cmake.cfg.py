@@ -152,7 +152,7 @@ class AmdfBuildFileFunctions(bazel_to_cmake_converter.BuildFileFunctions):
         )
         package_path = self._package_name()
         self._converter.body += (
-            f"if(WIN32 AND AMDF_BUILD)\n"
+            f"if(WIN32 AND TEST {package_path}/shared)\n"
             f"  set_property(TEST {package_path}/shared APPEND PROPERTY\n"
             f"    ENVIRONMENT_MODIFICATION\n"
             f'      "PATH=path_list_prepend:$<TARGET_FILE_DIR:amdf>")\n'
