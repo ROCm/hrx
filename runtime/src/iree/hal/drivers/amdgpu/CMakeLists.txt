@@ -270,6 +270,8 @@ iree_cc_library(
     "host_queue_waits.h"
     "hostcall_provider.c"
     "hostcall_provider.h"
+    "hsa_queue.c"
+    "hsa_queue.h"
     "logical_device.c"
     "logical_device.h"
     "physical_device.c"

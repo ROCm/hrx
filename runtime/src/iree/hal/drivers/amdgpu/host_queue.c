@@ -29,6 +29,7 @@
 #include "iree/hal/drivers/amdgpu/host_queue_timestamp.h"
 #include "iree/hal/drivers/amdgpu/host_queue_transfer.h"
 #include "iree/hal/drivers/amdgpu/host_queue_waits.h"
+#include "iree/hal/drivers/amdgpu/hsa_queue.h"
 #include "iree/hal/drivers/amdgpu/logical_device.h"
 #include "iree/hal/drivers/amdgpu/semaphore.h"
 #include "iree/hal/drivers/amdgpu/transient_buffer.h"
@@ -891,13 +892,16 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
   // MULTI queues.
   hsa_queue_t* hardware_queue = NULL;
   if (iree_status_is_ok(status)) {
-    status = iree_hsa_queue_create(
-        IREE_LIBHSA(params->hardware.libhsa), params->hardware.gpu_agent,
-        params->capacity.aql_packet_count, HSA_QUEUE_TYPE_MULTI,
-        iree_hal_amdgpu_host_queue_error_callback,
-        /*data=*/out_queue,
-        /*private_segment_size=*/UINT32_MAX,
-        /*group_segment_size=*/UINT32_MAX, &hardware_queue);
+    const iree_hal_amdgpu_hsa_queue_params_t hsa_queue_params = {
+        .libhsa = params->hardware.libhsa,
+        .agent = params->hardware.gpu_agent,
+        .packet_count = params->capacity.aql_packet_count,
+        .type = HSA_QUEUE_TYPE_MULTI,
+        .error_callback = iree_hal_amdgpu_host_queue_error_callback,
+        .error_callback_data = out_queue,
+    };
+    status =
+        iree_hal_amdgpu_hsa_queue_create(&hsa_queue_params, &hardware_queue);
   }
 
   // Initialize the AQL ring from the hardware queue.
@@ -1015,8 +1019,7 @@ void iree_hal_amdgpu_host_queue_finish_deinitialize(
   // Destroy the hardware queue before the remaining host-side resources so the
   // HSA runtime cannot race a late error callback against signal teardown.
   if (queue->hardware_queue) {
-    iree_hal_amdgpu_hsa_cleanup_assert_success(
-        iree_hsa_queue_destroy_raw(queue->libhsa, queue->hardware_queue));
+    iree_hal_amdgpu_hsa_queue_destroy(queue->libhsa, queue->hardware_queue);
     queue->hardware_queue = NULL;
   }
 
