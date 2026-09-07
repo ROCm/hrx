@@ -32,6 +32,26 @@ pipeline.def<kernel> public retain target(@array_target) @second_array() launch(
   pipeline.return
 }
 
+pipeline.def<kernel> public retain target(@array_target) @fanout_array() launch(%input: buffer, %output0: buffer, %output1: buffer) {
+  %lane_count = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %producers = group.create %lane_count : index -> group
+  %consumers0 = group.create %lane_count : index -> group
+  %consumers1 = group.create %lane_count : index -> group
+
+  %input_view = buffer.view %input[%base] : buffer -> view<1xf32>
+  %output_view0 = buffer.view %output0[%base] : buffer -> view<1xf32>
+  %output_view1 = buffer.view %output1[%base] : buffer -> view<1xf32>
+
+  %input_flow = pipeline.read %input_view on %producers : view<1xf32>, group -> pipeline.flow<tile<1xf32>>
+  %shared_flow = pipeline.stage @copy_record on %producers(%input_flow) : (group, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  %output_flow0 = pipeline.stage @copy_record on %consumers0(%shared_flow) : (group, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  %output_flow1 = pipeline.stage @copy_record on %consumers1(%shared_flow) : (group, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  pipeline.write %output_flow0 to %output_view0 : pipeline.flow<tile<1xf32>>, view<1xf32>
+  pipeline.write %output_flow1 to %output_view1 : pipeline.flow<tile<1xf32>>, view<1xf32>
+  pipeline.return
+}
+
 func.def target(@core_target) @copy_record(%input: buffer, %output: buffer) {
   %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 4} : buffer, buffer
   %base = index.constant 0 : offset
