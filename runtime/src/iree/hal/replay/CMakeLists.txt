@@ -110,6 +110,8 @@ iree_cc_library(
     "execute_operation.h"
     "execute_state.c"
     "execute_state.h"
+    "execute_vmm.c"
+    "execute_vmm.h"
   DEPS
     ::digest
     ::file_reader
@@ -169,6 +171,22 @@ iree_cc_test(
     iree::testing::gtest_main
 )
 
+iree_cc_test(
+  NAME
+    execute_vmm_test
+  SRCS
+    "execute_operation.h"
+    "execute_state.h"
+    "execute_vmm_test.cc"
+  DEPS
+    ::execute
+    ::file_reader
+    iree::base
+    iree::hal
+    iree::testing::gtest
+    iree::testing::gtest_main
+)
+
 if(TARGET iree::hal::drivers::task::registration)
 
 iree_cc_test(
@@ -179,6 +197,7 @@ iree_cc_test(
   DEPS
     ::execute
     ::file_reader
+    ::file_writer
     ::recorder
     iree::async
     iree::async::util::proactor_pool
@@ -208,6 +227,7 @@ iree_cc_test(
     iree::base
     iree::hal
     iree::hal::drivers::task::registration
+    iree::hal::memory::passthrough_pool
     iree::testing::gtest
     iree::testing::gtest_main
 )
@@ -232,6 +252,7 @@ iree_cc_test(
   NAME
     recorder_test
   SRCS
+    "recorder_allocator.h"
     "recorder_record.h"
     "recorder_test.cc"
   DEPS

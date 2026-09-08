@@ -28,10 +28,18 @@ typedef struct iree_hal_replay_executable_entry_t {
   iree_hal_executable_function_t* function_map;
 } iree_hal_replay_executable_entry_t;
 
+// Allocator-owned opaque physical memory reconstructed for replay.
+typedef struct iree_hal_replay_physical_memory_entry_t {
+  // Live physical memory handle owned by the enclosing entry's allocator.
+  iree_hal_physical_memory_t* handle;
+} iree_hal_replay_physical_memory_entry_t;
+
 // One retained object in the dense replay object table.
 typedef struct iree_hal_replay_object_entry_t {
   // Captured object type stored in this entry.
   iree_hal_replay_object_type_t type;
+  // Retained allocator owning a VMM reservation or physical allocation.
+  iree_hal_allocator_t* owning_allocator;
   // Retained HAL resource or executable state selected by |type|.
   union {
     // Retained HAL device.
@@ -50,11 +58,41 @@ typedef struct iree_hal_replay_object_entry_t {
     iree_hal_file_t* file;
     // Retained exact HAL queue.
     iree_hal_queue_t* queue;
+    // Allocator-owned opaque physical memory state.
+    iree_hal_replay_physical_memory_entry_t physical_memory;
   } value;
   // Lazily created functional-replay pool for a queue object, or NULL.
   // Buffer entries and every other object type leave this field NULL.
   iree_hal_pool_t* queue_allocation_pool;
 } iree_hal_replay_object_entry_t;
+
+// One live virtual-to-physical range reconstructed during replay.
+typedef struct iree_hal_replay_virtual_memory_mapping_t {
+  // Stable replay object id of the virtual address reservation.
+  iree_hal_replay_object_id_t virtual_buffer_id;
+  // Stable replay object id of the backing physical allocation.
+  iree_hal_replay_object_id_t physical_memory_id;
+  // Byte offset of the mapped range in the virtual reservation.
+  iree_device_size_t virtual_offset;
+  // Byte offset of the mapped range in the physical allocation.
+  iree_device_size_t physical_offset;
+  // Byte length of the mapped range.
+  iree_device_size_t size;
+} iree_hal_replay_virtual_memory_mapping_t;
+
+// Executor-private completion attached to one accepted exact-queue operation.
+typedef struct iree_hal_replay_queue_completion_t {
+  // Borrowed exact queue retained by the replay object table.
+  iree_hal_queue_t* queue;
+  // Retained private semaphore signaled by the accepted queue operation.
+  iree_hal_semaphore_t* semaphore;
+  // Semaphore timeline value signaling completion of the operation.
+  uint64_t value;
+  // Host allocation borrowed by the operation until terminal completion.
+  void* retained_host_allocation;
+  // True when public signal ordering or borrowed host data requires a wait.
+  bool wait_immediately;
+} iree_hal_replay_queue_completion_t;
 
 // Mutable state owned by one prepared-plan execution.
 typedef struct iree_hal_replay_executor_t {
@@ -70,6 +108,18 @@ typedef struct iree_hal_replay_executor_t {
   iree_hal_replay_object_entry_t* objects;
   // Number of entries in |objects|.
   iree_host_size_t object_capacity;
+  // Live VMM ranges that retain their reservation and physical dependencies.
+  iree_hal_replay_virtual_memory_mapping_t* virtual_memory_mappings;
+  // Number of entries in |virtual_memory_mappings|.
+  iree_host_size_t virtual_memory_mapping_count;
+  // Allocated entry capacity of |virtual_memory_mappings|.
+  iree_host_size_t virtual_memory_mapping_capacity;
+  // Private completion timepoints for accepted exact-queue submissions.
+  iree_hal_replay_queue_completion_t* queue_completions;
+  // Number of entries in |queue_completions|.
+  iree_host_size_t queue_completion_count;
+  // Allocated entry capacity of |queue_completions|.
+  iree_host_size_t queue_completion_capacity;
   // Next caller-provided device consumed by a device object record.
   iree_host_size_t next_device_index;
 } iree_hal_replay_executor_t;
@@ -143,7 +193,7 @@ iree_status_t iree_hal_replay_executor_initialize(
     const iree_hal_replay_execute_options_t* options,
     iree_allocator_t host_allocator);
 
-void iree_hal_replay_executor_deinitialize(
+iree_status_t iree_hal_replay_executor_deinitialize(
     iree_hal_replay_executor_t* executor);
 
 iree_status_t iree_hal_replay_executor_lookup(
@@ -155,6 +205,36 @@ iree_status_t iree_hal_replay_executor_store(
     iree_hal_replay_executor_t* executor, iree_hal_replay_object_id_t object_id,
     iree_hal_replay_object_type_t object_type,
     iree_hal_replay_object_entry_t entry);
+
+// Removes an allocator-consumed object without releasing its handle again.
+iree_status_t iree_hal_replay_executor_forget(
+    iree_hal_replay_executor_t* executor, iree_hal_replay_object_id_t object_id,
+    iree_hal_replay_object_type_t expected_type);
+
+// Maps memory and records the live range only after backend acceptance.
+iree_status_t iree_hal_replay_executor_map_virtual_memory(
+    iree_hal_replay_executor_t* executor, iree_hal_allocator_t* allocator,
+    iree_hal_replay_object_id_t virtual_buffer_id,
+    iree_hal_replay_object_id_t physical_memory_id,
+    iree_device_size_t virtual_offset, iree_device_size_t physical_offset,
+    iree_device_size_t size);
+
+// Drains exact queues, unmaps memory, and removes only successfully unmapped
+// coverage from the live range ledger.
+iree_status_t iree_hal_replay_executor_unmap_virtual_memory(
+    iree_hal_replay_executor_t* executor, iree_hal_allocator_t* allocator,
+    iree_hal_replay_object_id_t virtual_buffer_id,
+    iree_device_size_t virtual_offset, iree_device_size_t size);
+
+// Returns true when a reservation still has live replay mappings.
+bool iree_hal_replay_executor_has_virtual_memory_mapping(
+    const iree_hal_replay_executor_t* executor,
+    iree_hal_replay_object_id_t virtual_buffer_id);
+
+// Returns true when a physical allocation still backs live replay mappings.
+bool iree_hal_replay_executor_has_physical_memory_mapping(
+    const iree_hal_replay_executor_t* executor,
+    iree_hal_replay_object_id_t physical_memory_id);
 
 iree_status_t iree_hal_replay_executor_allocate_function_map(
     iree_hal_replay_executor_t* executor, iree_host_size_t function_count,
@@ -190,7 +270,7 @@ void iree_hal_replay_semaphore_list_storage_deinitialize(
 
 iree_status_t iree_hal_replay_executor_make_semaphore_list(
     iree_hal_replay_executor_t* executor, iree_const_byte_span_t payloads,
-    iree_host_size_t count,
+    iree_host_size_t count, iree_host_size_t additional_capacity,
     iree_hal_replay_semaphore_list_storage_t* out_storage);
 
 iree_status_t iree_hal_replay_executor_make_queue_semaphore_lists(
@@ -218,8 +298,23 @@ iree_status_t iree_hal_replay_buffer_binding_table_storage_initialize(
     iree_hal_replay_executor_t* executor, iree_host_size_t count,
     iree_hal_replay_buffer_binding_table_storage_t* out_storage);
 
-iree_status_t iree_hal_replay_executor_flush_queue_and_wait(
-    iree_hal_queue_t* queue, const iree_hal_semaphore_list_t signal_list);
+// Appends a fresh private completion timepoint before a queue submission.
+iree_status_t iree_hal_replay_executor_prepare_queue_completion(
+    iree_hal_replay_executor_t* executor, iree_hal_device_t* device,
+    iree_hal_queue_t* queue,
+    iree_hal_replay_semaphore_list_storage_t* signal_storage,
+    iree_hal_replay_queue_completion_t** out_completion);
+
+// Consumes |operation_status|, retaining only accepted submissions for drain.
+iree_status_t iree_hal_replay_executor_finalize_queue_completion(
+    iree_hal_replay_executor_t* executor,
+    iree_hal_replay_queue_completion_t* completion, bool flush_queue,
+    iree_status_t operation_status);
+
+// Flushes and waits for every accepted exact-queue submission since the last
+// successful drain.
+iree_status_t iree_hal_replay_executor_drain_queue_completions(
+    iree_hal_replay_executor_t* executor);
 
 iree_status_t iree_hal_replay_executor_dispatch_layout(
     const iree_hal_replay_file_record_t* record,
