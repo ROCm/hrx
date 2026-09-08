@@ -144,6 +144,26 @@ hrx_cc_library(
     ],
 )
 
+hrx_cc_library(
+    name = "execution_resource_descriptor",
+    srcs = ["execution_resource_descriptor.c"],
+    hdrs = ["execution_resource_descriptor.h"],
+    includes = [
+        "../..",
+        "../../../include",
+        "../../libhrx",
+    ],
+    deps = [
+        ":execution_resource",
+        ":handle_registry",
+        "//libhrx/src/binding/common",
+        "//libhrx/src/binding/common:execution_resource",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/threading",
+        "//runtime/src/iree/hal",
+    ],
+)
+
 hrx_cc_shared_library(
     name = "amdhip64",
     srcs = [
@@ -173,6 +193,7 @@ hrx_cc_shared_library(
     deps = [
         ":blocking_printf_provider",
         ":execution_resource",
+        ":execution_resource_descriptor",
         ":handle_registry",
         ":launch_params",
         "//libhrx/src/binding/common",
@@ -187,6 +208,21 @@ hrx_cc_test(
     srcs = ["execution_resource_test.cc"],
     deps = [
         ":execution_resource",
+        "//libhrx/src/binding/common",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/testing:mock_device",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+hrx_cc_test(
+    name = "execution_resource_descriptor_test",
+    srcs = ["execution_resource_descriptor_test.cc"],
+    deps = [
+        ":execution_resource",
+        ":execution_resource_descriptor",
         "//libhrx/src/binding/common",
         "//runtime/src/iree/base",
         "//runtime/src/iree/hal",

@@ -29,6 +29,7 @@
 #include "binding/hip/binding_internal.h"
 #include "binding/hip/blocking_printf_provider.h"
 #include "binding/hip/execution_resource.h"
+#include "binding/hip/execution_resource_descriptor.h"
 #include "binding/hip/handle_registry.h"
 #include "binding/hip/launch_params.h"
 #include "common/direct_transfer.h"
@@ -3115,6 +3116,34 @@ HIPAPI hipError_t hipDevSmResourceSplitByCount(hipDevResource* result,
   }
   IREE_TRACE_ZONE_END(z0);
   HIP_RETURN_ERROR(split_result);
+}
+
+HIPAPI hipError_t hipDevResourceGenerateDesc(hipDevResourceDesc_t* descriptor,
+                                             hipDevResource* resources,
+                                             unsigned int resource_count) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (!descriptor || !resources || resource_count == 0) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidValue);
+  }
+  hipError_t init_result = iree_hip_ensure_initialized();
+  if (init_result != hipSuccess) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(init_result);
+  }
+
+  iree_hal_streaming_device_t* device = NULL;
+  const iree_hal_streaming_execution_resource_set_t* first_set = NULL;
+  hipError_t result = iree_hip_execution_resource_resolve_sm(
+      &resources[0], &device, &first_set);
+  hipDevResourceDesc_t new_descriptor = NULL;
+  if (result == hipSuccess) {
+    result = iree_hip_execution_resource_descriptor_create(
+        device, resources, resource_count, &new_descriptor);
+  }
+  if (result == hipSuccess) *descriptor = new_descriptor;
+  IREE_TRACE_ZONE_END(z0);
+  HIP_RETURN_ERROR(result);
 }
 
 static hipError_t iree_hip_graph_memory_device(

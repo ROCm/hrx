@@ -169,6 +169,32 @@ iree_cc_library(
   PUBLIC
 )
 
+iree_cc_library(
+  NAME
+    execution_resource_descriptor
+  HDRS
+    "execution_resource_descriptor.h"
+  SRCS
+    "execution_resource_descriptor.c"
+  DEPS
+    ::execution_resource
+    ::handle_registry
+    iree::base
+    iree::base::threading
+    iree::hal
+    libhrx::src::binding::common
+    libhrx::src::binding::common::execution_resource
+    libhrx_defs
+  INCLUDES
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../libhrx>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../libhrx>"
+  PUBLIC
+)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 iree_cc_library(
   NAME
@@ -186,6 +212,7 @@ iree_cc_library(
   DEPS
     ::blocking_printf_provider
     ::execution_resource
+    ::execution_resource_descriptor
     ::handle_registry
     ::launch_params
     iree::base
@@ -215,6 +242,23 @@ iree_cc_test(
     "execution_resource_test.cc"
   DEPS
     ::execution_resource
+    iree::base
+    iree::hal
+    iree::hal::testing::mock_device
+    iree::testing::gtest
+    iree::testing::gtest_main
+    libhrx::src::binding::common
+    libhrx_defs
+)
+
+iree_cc_test(
+  NAME
+    execution_resource_descriptor_test
+  SRCS
+    "execution_resource_descriptor_test.cc"
+  DEPS
+    ::execution_resource
+    ::execution_resource_descriptor
     iree::base
     iree::hal
     iree::hal::testing::mock_device
