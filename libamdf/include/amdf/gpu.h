@@ -223,7 +223,10 @@ typedef struct amdf_gpu_api_t {
   /// progress later retires the returned submission. It performs no
   /// allocation, command-byte access, native-format parsing, lowering,
   /// transcription, retry, sleep, or host wait. Native rejection leaves
-  /// `out_submission` unchanged.
+  /// `out_submission` unchanged. Because command bytes are opaque, the caller
+  /// keeps every indirectly referenced memory or native object live until the
+  /// submission retires; only the command-memory attachments are retained by
+  /// libamdf itself.
   amdf_status_t(AMDF_CALL* kernel_queue_submit)(
       amdf_kernel_queue_t* queue,
       const amdf_gpu_kernel_queue_submission_info_t* submission_info,
