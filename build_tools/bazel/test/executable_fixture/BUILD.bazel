@@ -7,13 +7,28 @@
 # Bazel rule execution fixture with no CMake target surface.
 # bazel-to-cmake: skip
 
-load("//build_tools/bazel:cc.bzl", "iree_cc_binary")
+load("//build_tools/bazel:cc.bzl", "cc_binary", "iree_cc_library")
+load("//build_tools/bazel:cc_opts.bzl", "cc_opts")
 
 package(default_visibility = ["//build_tools/bazel/test:__pkg__"])
 
-iree_cc_binary(
+iree_cc_library(
+    name = "library",
+    testonly = True,
+    srcs = ["library.cc"],
+    hdrs = ["library.h"],
+    local_defines = ["IREE_EXECUTABLE_FIXTURE_EXPORTS"],
+    tags = ["manual"],
+)
+
+# The fixture deliberately uses dynamic dependency linking to exercise DLL
+# lookup beside the original executable when a wrapper lives in another package.
+cc_binary(
     name = "binary",
     testonly = True,
     srcs = ["main.cc"],
+    linkopts = cc_opts.iree_code_link_options(),
+    linkstatic = False,
     tags = ["manual"],
+    deps = cc_opts.iree_code_link_dependencies([":library"]),
 )

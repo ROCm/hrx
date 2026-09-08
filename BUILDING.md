@@ -94,6 +94,8 @@ The resulting PE binaries execute on Windows. `bazel build` works locally;
 Linux `bazel run` and `bazel test` cannot execute them. Transfer the executable,
 its PDB, runtime DLLs, and any consumer runfiles to the Windows machine for
 execution. Target selection does not configure a remote executor or test runner.
+Starlark test wrappers require a matching test execution platform during
+analysis; build their source binary targets when only producing artifacts.
 
 Windows ASAN requires compiler-rt libraries and DLLs matching the selected LLVM.
 This local toolchain does not yet configure Windows compiler-rt; selecting

@@ -21,6 +21,32 @@ load(":runfiles.bzl", "create_runfiles_arguments_info")
 
 _WINDOWS_LAUNCH_RUNFILE_ENV = "IREE_BAZEL_EXECUTABLE_RUNFILE"
 
+# The launcher executes on the destination platform. Build it independently of
+# the wrapped binary's instrumentation and compile/link customization so its
+# own startup does not require DLLs stored beside the wrapped binary.
+_LAUNCHER_CONFIGURATION = {
+    "//build_tools/bazel:sanitizer": False,
+    "//command_line_option:cc_output_directory_tag": "",
+    "//command_line_option:collect_code_coverage": False,
+    "//command_line_option:compilation_mode": "opt",
+    "//command_line_option:conlyopt": [],
+    "//command_line_option:copt": [],
+    "//command_line_option:cxxopt": [],
+    "//command_line_option:features": [],
+    "//command_line_option:linkopt": [],
+    "//command_line_option:per_file_copt": [],
+    "@rules_cc//:link_extra_libs": "@rules_cc//:empty_lib",
+}
+
+def _launcher_transition_impl(_settings, _attr):
+    return _LAUNCHER_CONFIGURATION
+
+_launcher_transition = transition(
+    implementation = _launcher_transition_impl,
+    inputs = [],
+    outputs = _LAUNCHER_CONFIGURATION.keys(),
+)
+
 IreeExecutableInfo = provider(
     doc = "Metadata for an executable alias or test wrapper.",
     fields = {
@@ -86,7 +112,7 @@ def _native_executable_output(ctx):
     ctx.actions.symlink(
         is_executable = True,
         output = output,
-        target_file = ctx.executable._native_launcher if needs_launcher else ctx.executable.src,
+        target_file = ctx.executable.windows_launcher if needs_launcher else ctx.executable.src,
     )
     return struct(
         launch_environment = {
@@ -289,13 +315,15 @@ _SHARED_ATTRS = {
         executable = True,
         mandatory = True,
     ),
+    "windows_launcher": attr.label(
+        cfg = _launcher_transition,
+        executable = True,
+    ),
+    "_allowlist_function_transition": attr.label(
+        default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
+    ),
     "_wasm32_constraint": attr.label(
         default = "@platforms//cpu:wasm32",
-    ),
-    "_native_launcher": attr.label(
-        cfg = "exec",
-        default = "//build_tools/bazel:executable_launcher",
-        executable = True,
     ),
     "_wasm_bundler": attr.label(
         cfg = "exec",
@@ -323,16 +351,52 @@ _TEST_ATTRS["env_inherit"] = attr.string_list(
     doc = "Host environment variable names inherited by the wrapped test.",
 )
 
-iree_executable_alias = rule(
+_iree_executable_alias = rule(
     implementation = _iree_executable_alias_impl,
     attrs = _SHARED_ATTRS,
     doc = "Exposes an executable target or file as another executable target.",
     executable = True,
 )
 
-iree_executable_test = rule(
+_iree_executable_test = rule(
     implementation = _iree_executable_test_impl,
     attrs = _TEST_ATTRS,
     doc = "Runs an executable target or file directly as a Bazel test.",
     test = True,
+)
+
+def _windows_launcher():
+    return select({
+        Label("@platforms//os:windows"): Label("//build_tools/bazel:executable_launcher"),
+        "//conditions:default": None,
+    })
+
+def _executable_alias_macro_impl(name, visibility, **kwargs):
+    _iree_executable_alias(
+        name = name,
+        visibility = visibility,
+        windows_launcher = _windows_launcher(),
+        **kwargs
+    )
+
+iree_executable_alias = macro(
+    implementation = _executable_alias_macro_impl,
+    inherit_attrs = _iree_executable_alias,
+    attrs = {"windows_launcher": None},
+    doc = "Exposes an executable target or file as another executable target.",
+)
+
+def _executable_test_macro_impl(name, visibility, **kwargs):
+    _iree_executable_test(
+        name = name,
+        visibility = visibility,
+        windows_launcher = _windows_launcher(),
+        **kwargs
+    )
+
+iree_executable_test = macro(
+    implementation = _executable_test_macro_impl,
+    inherit_attrs = _iree_executable_test,
+    attrs = {"windows_launcher": None},
+    doc = "Runs an executable target or file directly as a Bazel test.",
 )

@@ -12,7 +12,7 @@ load("//build_tools/bazel:cc.bzl", "iree_cc_binary", "iree_cc_library")
 load("//build_tools/bazel:cc_benchmark.bzl", "iree_cc_benchmark")
 load("//build_tools/bazel:cc_test.bzl", "iree_cc_test")
 load("//build_tools/bazel:dynamic_library_bundle.bzl", "iree_dynamic_library_bundle")
-load("//build_tools/bazel:executable.bzl", "iree_executable_test")
+load("//build_tools/bazel:executable.bzl", "iree_executable_alias", "iree_executable_test")
 load("//build_tools/bazel:glob.bzl", "iree_checked_glob")
 load(":cc_benchmark_rules_test.bzl", "cc_benchmark_rules_test_suite")
 load(":cc_fuzz_rules_test.bzl", "cc_fuzz_rules_test_suite")
@@ -82,6 +82,13 @@ iree_executable_test(
 iree_executable_test(
     name = "cross_package_executable_wrapper_test",
     src = "//build_tools/bazel/test/executable_fixture:binary",
+)
+
+iree_executable_alias(
+    name = "cross_package_executable_alias_fixture",
+    testonly = True,
+    src = "//build_tools/bazel/test/executable_fixture:binary",
+    tags = ["manual"],
 )
 
 iree_cc_benchmark(

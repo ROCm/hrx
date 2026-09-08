@@ -6,4 +6,4 @@
 
 #include "build_tools/bazel/test/executable_fixture/library.h"
 
-int main() { return executable_fixture_value() == 42 ? 0 : 1; }
+int executable_fixture_value() { return 42; }

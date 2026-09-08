@@ -17,11 +17,12 @@ load("//build_tools/bazel:python.bzl", "iree_py_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# Executable wrappers use this through an exec transition so sanitized target
-# binaries never impose their dynamic runtime dependency on the launcher.
+# Executable wrappers build this for the destination without instrumentation.
+# A static Windows CRT keeps startup independent of source-adjacent DLLs.
 iree_cc_binary(
     name = "executable_launcher",
     srcs = ["executable_launcher.c"],
+    features = ["static_link_msvcrt"],
     tags = ["manual"],
 )
 
