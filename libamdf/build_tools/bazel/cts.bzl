@@ -33,23 +33,21 @@ def amdf_cts_test_suite(
 
     amdf_cc_test(
         name = "static",
-        srcs = test_main,
+        srcs = test_main + ["//libamdf/cts/util:linked_provider.cc"],
         data = runtime_data,
         tags = tags,
         target_compatible_with = target_compatible_with,
         deps = common_deps + [
-            "//libamdf/cts/util:linked_provider",
             "//libamdf:amdf_static",
         ],
     )
     amdf_cc_test(
         name = "shared",
-        srcs = test_main,
+        srcs = test_main + ["//libamdf/cts/util:linked_provider.cc"],
         data = ["//libamdf:amdf_shared_artifact"] + runtime_data,
         tags = tags,
         target_compatible_with = target_compatible_with,
         deps = common_deps + [
-            "//libamdf/cts/util:linked_provider",
             "//libamdf:amdf",
         ],
     )

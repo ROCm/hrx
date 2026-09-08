@@ -9,20 +9,23 @@
 
 iree_add_all_subdirs()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
+if(AMDF_BUILD AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows"))
 set(_provider_platform_defines "")
-if(AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA)
+if((AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA) AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
   list(APPEND _provider_platform_defines "AMDF_HAVE_GPU=1")
 endif()
 if(AMDF_FAMILY_XDNA)
   list(APPEND _provider_platform_defines "AMDF_HAVE_XDNA=1")
 endif()
 set(_provider_platform_deps "")
-if(AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA)
+if((AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA) AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
   list(APPEND _provider_platform_deps libamdf::src::gpu)
+  list(APPEND _provider_platform_deps libamdf::src::gpu::extension)
 endif()
 if(AMDF_FAMILY_XDNA)
   list(APPEND _provider_platform_deps libamdf::src::xdna)
+  list(APPEND _provider_platform_deps libamdf::src::xdna::endpoint_profile)
+  list(APPEND _provider_platform_deps libamdf::src::xdna::extension)
 endif()
 iree_cc_library(
   NAME
@@ -35,6 +38,12 @@ iree_cc_library(
   DEPS
     amdf::headers
     libamdf::src::core
+    libamdf::src::device
+    libamdf::src::endpoint
+    libamdf::src::host_mapping
+    libamdf::src::instance
+    libamdf::src::kernel_queue
+    libamdf::src::memory
     ${_provider_platform_deps}
   DEFINES
     ${_provider_platform_defines}

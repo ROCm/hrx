@@ -16,6 +16,7 @@ _AMDF_CONFIG_CMAKE_OPTIONS = {
     "//libamdf/config/family:gpu": "AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA",
     "//libamdf/config/family:rdna": "AMDF_FAMILY_RDNA",
     "//libamdf/config/family:xdna": "AMDF_FAMILY_XDNA",
+    "//libamdf/config/provider:gpu": '(AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA) AND CMAKE_SYSTEM_NAME STREQUAL "Windows"',
 }
 
 
@@ -167,23 +168,21 @@ class AmdfBuildFileFunctions(bazel_to_cmake_converter.BuildFileFunctions):
 
         emit_cts_test(
             name="static",
-            srcs=test_main,
+            srcs=test_main + ["//libamdf/cts/util:linked_provider.cc"],
             tags=tags,
             deps=common_deps
             + [
-                "//libamdf/cts/util:linked_provider",
                 "//libamdf:amdf_static",
             ],
             **kwargs,
         )
         emit_cts_test(
             name="shared",
-            srcs=test_main,
+            srcs=test_main + ["//libamdf/cts/util:linked_provider.cc"],
             data=["//libamdf:amdf_shared_artifact"],
             tags=tags,
             deps=common_deps
             + [
-                "//libamdf/cts/util:linked_provider",
                 "//libamdf:amdf",
             ],
             **kwargs,

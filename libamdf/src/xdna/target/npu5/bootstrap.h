@@ -20,6 +20,11 @@ extern "C" {
 void amdf_xdna_npu5_bootstrap_query_pdi(const void** out_data,
                                         size_t* out_data_size);
 
+// Returns a NOOP transaction used to admit the interpreter before user work.
+// The transaction spans the physical array without touching tile state.
+void amdf_xdna_npu5_bootstrap_query_transaction(const void** out_data,
+                                                size_t* out_data_size);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

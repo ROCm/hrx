@@ -100,6 +100,11 @@ function(amdf_library)
     list(APPEND _COMPONENT_TARGETS "${_COMPONENT_TARGET}")
 
     if(TARGET "${_COMPONENT_TARGET}.objects")
+      # Public declarations opt in to ELF visibility through AMDF_API.
+      set_target_properties("${_COMPONENT_TARGET}.objects" PROPERTIES
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+      )
       list(APPEND _OBJECT_SOURCES
         "$<TARGET_OBJECTS:${_COMPONENT_TARGET}.objects>")
     endif()

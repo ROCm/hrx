@@ -32,7 +32,9 @@ amdf_cc_library(
     target_compatible_with = DRM_COMPATIBILITY,
     deps = [
         ":buffer",
+        "//libamdf/src:atomics",
         "//libamdf/src/platform/linux:release_list",
+        "//libamdf/src/xdna/umd:command",
         "//libamdf/src/xdna/umd:device",
     ],
 )
@@ -43,6 +45,7 @@ amdf_cc_library(
     target_compatible_with = DRM_COMPATIBILITY,
     deps = [
         ":buffer",
+        ":command",
         ":device_state",
         "//libamdf/src/platform/linux:endpoint",
         "//libamdf/src/platform/linux:file",
@@ -65,6 +68,54 @@ amdf_cc_library(
         "//libamdf/src/platform/linux:host_cache",
         "//libamdf/src/platform/linux:release_list",
         "//libamdf/src/xdna/umd:memory",
+    ],
+)
+
+amdf_cc_library(
+    name = "command",
+    srcs = ["command.c"],
+    hdrs = ["command.h"],
+    target_compatible_with = DRM_COMPATIBILITY,
+    deps = [
+        ":buffer",
+        ":device_state",
+        ":memory",
+        "//libamdf/src/platform/linux:host_cache",
+        "//libamdf/src/platform/linux:release_list",
+        "//libamdf/src/xdna:transaction",
+        "//libamdf/src/xdna/target/npu5:ert_packet",
+        "//libamdf/src/xdna/umd:command",
+    ],
+)
+
+amdf_cc_library(
+    name = "kernel_queue",
+    srcs = ["kernel_queue.c"],
+    target_compatible_with = DRM_COMPATIBILITY,
+    deps = [
+        ":command",
+        ":device_state",
+        "//libamdf/src:atomics",
+        "//libamdf/src:wait",
+        "//libamdf/src/platform:wait",
+        "//libamdf/src/platform/linux:file",
+        "//libamdf/src/platform/linux:host_cache",
+        "//libamdf/src/xdna/target/npu5:bootstrap",
+        "//libamdf/src/xdna/target/npu5:ert_packet",
+        "//libamdf/src/xdna/umd:command",
+        "//libamdf/src/xdna/umd:kernel_queue",
+    ],
+)
+
+amdf_cc_library(
+    name = "drm",
+    target_compatible_with = DRM_COMPATIBILITY,
+    visibility = ["//libamdf/src/xdna:__pkg__"],
+    deps = [
+        ":command",
+        ":device",
+        ":kernel_queue",
+        ":memory",
     ],
 )
 

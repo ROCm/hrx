@@ -13,20 +13,16 @@ package(
     licenses = ["notice"],  # Apache 2.0
 )
 
-exports_files(["test_main.cc"])
+exports_files([
+    "linked_provider.cc",
+    "test_main.cc",
+])
 
 amdf_cc_library(
     name = "provider_headers",
     testonly = True,
     hdrs = ["provider.h"],
     includes = [".."],
-)
-
-amdf_cc_library(
-    name = "linked_provider",
-    testonly = True,
-    srcs = ["linked_provider.cc"],
-    deps = [":provider_headers"],
 )
 
 amdf_cc_library(

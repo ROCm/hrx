@@ -7,7 +7,9 @@
 #ifndef AMDF_SRC_XDNA_UMD_DRM_DEVICE_H_
 #define AMDF_SRC_XDNA_UMD_DRM_DEVICE_H_
 
+#include "libamdf/src/atomics.h"
 #include "libamdf/src/platform/linux/release_list.h"
+#include "libamdf/src/xdna/umd/command.h"
 #include "libamdf/src/xdna/umd/device.h"
 #include "libamdf/src/xdna/umd/drm/buffer.h"
 
@@ -29,6 +31,15 @@ struct amdf_xdna_umd_device_t {
   amdf_linux_xdna_buffer_t heap;
   // Context-lifetime transaction interpreter PDI, allocated inside the heap.
   amdf_linux_xdna_buffer_t bootstrap;
+  // Device-owned interpreter admission command, retained through HWCTX
+  // teardown.
+  amdf_xdna_umd_command_t* bootstrap_command;
+  // Exclusive lease for one public queue and its cold bootstrap admission.
+  amdf_atomic_uint32_t queue_leased;
+  // First observed terminal firmware or bootstrap-admission failure.
+  amdf_atomic_uint64_t terminal_status;
+  // Last native sequence assigned under the exclusive queue lease.
+  uint64_t last_native_sequence;
   // Children retained when an unpublished native allocation cannot be released.
   amdf_linux_release_list_t failed_children;
 };

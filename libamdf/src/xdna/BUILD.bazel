@@ -17,7 +17,10 @@ amdf_cc_library(
     name = "endpoint_profile",
     srcs = ["endpoint_profile.c"],
     hdrs = ["endpoint_profile.h"],
-    visibility = ["//libamdf/src/xdna:__subpackages__"],
+    visibility = [
+        "//libamdf/src/provider:__pkg__",
+        "//libamdf/src/xdna:__subpackages__",
+    ],
     deps = [
         "//libamdf/src:pci",
         "//libamdf/src/xdna/target/npu5:ert_packet",
@@ -121,12 +124,17 @@ amdf_cc_library(
 
 amdf_cc_library(
     name = "xdna",
-    target_compatible_with = ["@platforms//os:windows"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:windows": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
     visibility = ["//libamdf/src/provider:__pkg__"],
-    deps = [
-        ":extension",
-        "//libamdf/src/xdna/umd/mcdm",
-    ],
+    deps = [":extension"] + select({
+        "@platforms//os:linux": ["//libamdf/src/xdna/umd/drm"],
+        "@platforms//os:windows": ["//libamdf/src/xdna/umd/mcdm"],
+        "//conditions:default": [],
+    }),
 )
 
 amdf_cc_test(

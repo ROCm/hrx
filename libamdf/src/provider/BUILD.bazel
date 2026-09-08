@@ -20,19 +20,38 @@ amdf_cc_library(
     ],
     hdrs = ["extension.h"],
     defines = select({
-        "//libamdf/config/family:gpu": ["AMDF_HAVE_GPU=1"],
+        "//libamdf/config/provider:gpu": ["AMDF_HAVE_GPU=1"],
         "//conditions:default": [],
     }) + select({
         "//libamdf/config/family:xdna": ["AMDF_HAVE_XDNA=1"],
         "//conditions:default": [],
     }),
-    target_compatible_with = ["@platforms//os:windows"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:windows": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
     visibility = ["//libamdf:__pkg__"],
-    deps = ["//libamdf/src:core"] + select({
-        "//libamdf/config/family:gpu": ["//libamdf/src/gpu"],
+    deps = [
+        "//libamdf/src:core",
+        "//libamdf/src:device",
+        "//libamdf/src:endpoint",
+        "//libamdf/src:host_mapping",
+        "//libamdf/src:instance",
+        "//libamdf/src:kernel_queue",
+        "//libamdf/src:memory",
+    ] + select({
+        "//libamdf/config/provider:gpu": [
+            "//libamdf/src/gpu",
+            "//libamdf/src/gpu:extension",
+        ],
         "//conditions:default": [],
     }) + select({
-        "//libamdf/config/family:xdna": ["//libamdf/src/xdna"],
+        "//libamdf/config/family:xdna": [
+            "//libamdf/src/xdna",
+            "//libamdf/src/xdna:endpoint_profile",
+            "//libamdf/src/xdna:extension",
+        ],
         "//conditions:default": [],
     }),
 )

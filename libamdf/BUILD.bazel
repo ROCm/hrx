@@ -36,12 +36,16 @@ amdf_library(
     ],
     components = ["//libamdf/src/provider"],
     runtime_data = select({
-        "//libamdf/config/family:gpu": [
+        "//libamdf/config/provider:gpu": [
             "//libamdf/src/gpu/umd/wddm/wkmi:runtime",
         ],
         "//conditions:default": [],
     }),
-    target_compatible_with = ["@platforms//os:windows"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:windows": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
     win_def_file = "//libamdf/build_tools/cmake:amdf_exports.def",
 )
 

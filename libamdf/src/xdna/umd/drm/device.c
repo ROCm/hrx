@@ -39,8 +39,14 @@ amdf_status_t amdf_xdna_umd_device_destroy(amdf_xdna_umd_device_t* device) {
     }
     device->completion_syncobj = 0;
   }
-  amdf_status_t status =
-      amdf_linux_release_list_drain(&device->failed_children);
+  amdf_status_t status = AMDF_STATUS_OK;
+  if (device->bootstrap_command != NULL) {
+    status = amdf_xdna_umd_command_destroy(device->bootstrap_command);
+    if (amdf_status_is_ok(status)) device->bootstrap_command = NULL;
+  }
+  if (amdf_status_is_ok(status)) {
+    status = amdf_linux_release_list_drain(&device->failed_children);
+  }
   if (amdf_status_is_ok(status)) {
     status = amdf_linux_xdna_buffer_deinitialize(device->descriptor,
                                                  &device->bootstrap);

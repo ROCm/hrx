@@ -186,3 +186,15 @@ void amdf_xdna_npu5_bootstrap_query_pdi(const void** out_data,
   *out_data = amdf_xdna_npu5_bootstrap_pdi;
   *out_data_size = sizeof(amdf_xdna_npu5_bootstrap_pdi);
 }
+
+void amdf_xdna_npu5_bootstrap_query_transaction(const void** out_data,
+                                                size_t* out_data_size) {
+  static const uint8_t transaction[] = {
+      0,  1, 4, 6, 8, 1, 0, 0,  // Version 0.1 and full-array AIE2P geometry.
+      1,  0, 0, 0,              // One operation.
+      20, 0, 0, 0,              // Complete transaction byte length.
+      5,  0, 0, 0,              // XAIE_IO_NOOP.
+  };
+  *out_data = transaction;
+  *out_data_size = sizeof(transaction);
+}

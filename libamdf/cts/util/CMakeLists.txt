@@ -25,20 +25,6 @@ iree_cc_library(
 )
 endif()
 
-if(AMDF_BUILD)
-iree_cc_library(
-  NAME
-    linked_provider
-  SRCS
-    "linked_provider.cc"
-  DEPS
-    ::provider_headers
-    amdf::headers
-  TESTONLY
-  PUBLIC
-)
-endif()
-
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND AMDF_BUILD)
 iree_cc_library(
   NAME

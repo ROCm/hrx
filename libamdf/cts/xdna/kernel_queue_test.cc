@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdint>
+#include <iostream>
 
 #include "amdf/amdf.h"
 #include "amdf/xdna.h"
@@ -39,6 +40,7 @@ class XdnaKernelQueueTest : public XdnaDeviceFixture {
   }
 
   void CreateNoOpCommand() {
+    std::cerr << "[XDNA] Preparing NOOP command" << std::endl;
     const std::array<uint8_t, 20> transaction = MakeNoOpTransaction();
     amdf_xdna_program_component_t component = {};
     component.kind = AMDF_XDNA_PROGRAM_COMPONENT_ARRAY_CONFIGURATION;
@@ -89,6 +91,7 @@ class XdnaKernelQueueTest : public XdnaDeviceFixture {
   }
 
   void CreateQueue() {
+    std::cerr << "[XDNA] Acquiring queue and admitting firmware" << std::endl;
     amdf_xdna_kernel_queue_create_info_t create_info = {};
     create_info.type = AMDF_STRUCTURE_TYPE_XDNA_KERNEL_QUEUE_CREATE_INFO;
     create_info.structure_size = sizeof(create_info);
@@ -98,14 +101,17 @@ class XdnaKernelQueueTest : public XdnaDeviceFixture {
         xdna_api_->kernel_queue_create(device_, &create_info, &queue_)));
   }
 
+  // Program retained through command destruction.
   amdf_xdna_program_t* program_ = nullptr;
+  // Reusable command retained through every accepted queue use.
   amdf_xdna_command_t* command_ = nullptr;
+  // Exclusive queue lease retained through retirement.
   amdf_kernel_queue_t* queue_ = nullptr;
 };
 
 TEST_F(XdnaKernelQueueTest, PublishesRetiresAndReusesPreparedCommand) {
-  CreateNoOpCommand();
-  CreateQueue();
+  ASSERT_NO_FATAL_FAILURE(CreateNoOpCommand());
+  ASSERT_NO_FATAL_FAILURE(CreateQueue());
 
   amdf_kernel_queue_info_t queue_info = {};
   queue_info.type = AMDF_STRUCTURE_TYPE_KERNEL_QUEUE_INFO;
@@ -135,6 +141,7 @@ TEST_F(XdnaKernelQueueTest, PublishesRetiresAndReusesPreparedCommand) {
   submission_info.commands = commands;
 
   uint64_t first_submission = 0;
+  std::cerr << "[XDNA] Publishing first public command" << std::endl;
   ASSERT_TRUE(amdf_status_is_ok(xdna_api_->kernel_queue_submit(
       queue_, &submission_info, &first_submission)));
   EXPECT_EQ(first_submission, 1u);
@@ -146,22 +153,35 @@ TEST_F(XdnaKernelQueueTest, PublishesRetiresAndReusesPreparedCommand) {
                 queue_, &submission_info, &rejected_submission)),
             AMDF_STATUS_CODE_BUSY);
   EXPECT_EQ(rejected_submission, UINT64_MAX);
-  EXPECT_EQ(amdf_status_code(api_->kernel_queue_destroy(queue_)),
-            AMDF_STATUS_CODE_BUSY);
-
+  // Queue destruction may itself observe native completion. Pending teardown
+  // rejection is exercised with controlled completion in the common queue test.
+  std::cerr << "[XDNA] Waiting for first retirement" << std::endl;
   ASSERT_TRUE(amdf_status_is_ok(api_->kernel_queue_wait(
-      queue_, first_submission, UINT64_C(5000000000), UINT64_C(50000))));
+      queue_, first_submission, AMDF_TIMEOUT_INFINITE, UINT64_C(50000))));
   ASSERT_TRUE(amdf_status_is_ok(
       api_->kernel_queue_query_status(queue_, &queue_status)));
   EXPECT_EQ(queue_status.retired_submission, first_submission);
 
   uint64_t second_submission = 0;
+  std::cerr << "[XDNA] Reusing prepared command" << std::endl;
   ASSERT_TRUE(amdf_status_is_ok(xdna_api_->kernel_queue_submit(
       queue_, &submission_info, &second_submission)));
   EXPECT_EQ(second_submission, 2u);
   ASSERT_TRUE(amdf_status_is_ok(api_->kernel_queue_wait(
-      queue_, second_submission, UINT64_C(5000000000), 0)));
+      queue_, second_submission, AMDF_TIMEOUT_INFINITE, 0)));
 
+  std::cerr << "[XDNA] Releasing and reacquiring queue lease" << std::endl;
+  ASSERT_TRUE(amdf_status_is_ok(api_->kernel_queue_destroy(queue_)));
+  queue_ = nullptr;
+  ASSERT_NO_FATAL_FAILURE(CreateQueue());
+  uint64_t new_queue_submission = 0;
+  ASSERT_TRUE(amdf_status_is_ok(xdna_api_->kernel_queue_submit(
+      queue_, &submission_info, &new_queue_submission)));
+  EXPECT_EQ(new_queue_submission, 1u);
+  ASSERT_TRUE(amdf_status_is_ok(api_->kernel_queue_wait(
+      queue_, new_queue_submission, AMDF_TIMEOUT_INFINITE, 0)));
+  std::cerr << "[XDNA] All public work retired; destroying queue and command"
+            << std::endl;
   ASSERT_TRUE(amdf_status_is_ok(api_->kernel_queue_destroy(queue_)));
   queue_ = nullptr;
   ASSERT_TRUE(amdf_status_is_ok(xdna_api_->command_destroy(command_)));

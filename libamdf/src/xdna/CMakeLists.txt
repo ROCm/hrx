@@ -152,14 +152,20 @@ iree_cc_library(
 )
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND AMDF_FAMILY_XDNA)
+if(AMDF_BUILD AND AMDF_FAMILY_XDNA AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows"))
+set(_xdna_platform_deps "")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  list(APPEND _xdna_platform_deps libamdf::src::xdna::umd::drm)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+  list(APPEND _xdna_platform_deps libamdf::src::xdna::umd::mcdm)
+endif()
 iree_cc_library(
   NAME
     xdna
   DEPS
     ::extension
     amdf::headers
-    libamdf::src::xdna::umd::mcdm
+    ${_xdna_platform_deps}
   PUBLIC
 )
 endif()

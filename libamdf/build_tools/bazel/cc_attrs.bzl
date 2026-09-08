@@ -16,6 +16,11 @@ def _with_amdf_deps(deps):
     return deps + _AMDF_DEPS
 
 def _with_amdf_compiler_options(copts, conlyopts, cxxopts):
+    # Public declarations opt in to ELF visibility through AMDF_API.
+    copts = (copts or []) + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-fvisibility=hidden"],
+    })
     return cc_opts.iree_code_compiler_options(
         copts = copts,
         conlyopts = conlyopts,

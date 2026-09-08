@@ -526,8 +526,9 @@ typedef struct amdf_xdna_api_t {
   ///
   /// The returned queue borrows `device`, which must outlive it. Creation
   /// selects an advertised `XDNA + KERNEL` family and allocates all bounded
-  /// submission bookkeeping before publication. On failure, `out_queue` is set
-  /// to `NULL`.
+  /// submission bookkeeping before publication. It may configure and wait for
+  /// provider-owned firmware bootstrap work. On failure, `out_queue` is set to
+  /// `NULL`; any unfinished bootstrap ownership remains with the device.
   amdf_status_t(AMDF_CALL* kernel_queue_create)(
       amdf_device_t* device,
       const amdf_xdna_kernel_queue_create_info_t* create_info,

@@ -33,7 +33,9 @@ iree_cc_library(
   DEPS
     ::buffer
     amdf::headers
+    libamdf::src::atomics
     libamdf::src::platform::linux::release_list
+    libamdf::src::xdna::umd::command
     libamdf::src::xdna::umd::device
   PUBLIC
 )
@@ -47,6 +49,7 @@ iree_cc_library(
     "device.c"
   DEPS
     ::buffer
+    ::command
     ::device_state
     amdf::headers
     libamdf::src::platform::linux::endpoint
@@ -75,6 +78,65 @@ iree_cc_library(
     libamdf::src::platform::linux::host_cache
     libamdf::src::platform::linux::release_list
     libamdf::src::xdna::umd::memory
+  PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND IREE_ARCH STREQUAL "x86_64" AND AMDF_BUILD AND AMDF_FAMILY_XDNA)
+iree_cc_library(
+  NAME
+    command
+  HDRS
+    "command.h"
+  SRCS
+    "command.c"
+  DEPS
+    ::buffer
+    ::device_state
+    ::memory
+    amdf::headers
+    libamdf::src::platform::linux::host_cache
+    libamdf::src::platform::linux::release_list
+    libamdf::src::xdna::target::npu5::ert_packet
+    libamdf::src::xdna::transaction
+    libamdf::src::xdna::umd::command
+  PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND IREE_ARCH STREQUAL "x86_64" AND AMDF_BUILD AND AMDF_FAMILY_XDNA)
+iree_cc_library(
+  NAME
+    kernel_queue
+  SRCS
+    "kernel_queue.c"
+  DEPS
+    ::command
+    ::device_state
+    amdf::headers
+    libamdf::src::atomics
+    libamdf::src::platform::linux::file
+    libamdf::src::platform::linux::host_cache
+    libamdf::src::platform::wait
+    libamdf::src::wait
+    libamdf::src::xdna::target::npu5::bootstrap
+    libamdf::src::xdna::target::npu5::ert_packet
+    libamdf::src::xdna::umd::command
+    libamdf::src::xdna::umd::kernel_queue
+  PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND IREE_ARCH STREQUAL "x86_64" AND AMDF_BUILD AND AMDF_FAMILY_XDNA)
+iree_cc_library(
+  NAME
+    drm
+  DEPS
+    ::command
+    ::device
+    ::kernel_queue
+    ::memory
+    amdf::headers
   PUBLIC
 )
 endif()

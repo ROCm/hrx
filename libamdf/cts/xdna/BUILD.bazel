@@ -34,6 +34,10 @@ amdf_cts_test_suite(
     name = "xdna",
     suites = [":xdna_tests"],
     tags = ["manual"],
-    target_compatible_with = ["@platforms//os:windows"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:windows": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
     visibility = ["//visibility:public"],
 )

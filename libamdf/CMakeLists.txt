@@ -22,7 +22,7 @@ amdf_declare_headers(
     amdf
 )
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
+if(AMDF_BUILD AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows"))
 amdf_declare_library(
   NAME
     amdf
@@ -31,9 +31,9 @@ endif()
 
 iree_add_all_subdirs()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
+if(AMDF_BUILD AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows"))
 set(_amdf_platform_runtime_data "")
-if(AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA)
+if((AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA) AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
   list(APPEND _amdf_platform_runtime_data libamdf::src::gpu::umd::wddm::wkmi::amdf_wkmi_bridge)
 endif()
 amdf_library(

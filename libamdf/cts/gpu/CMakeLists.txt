@@ -34,13 +34,13 @@ amdf_cts_test(
   NAME
     static
   SRCS
+    "${PROJECT_SOURCE_DIR}/libamdf/cts/util/linked_provider.cc"
     "${PROJECT_SOURCE_DIR}/libamdf/cts/util/test_main.cc"
   DEPS
     ::gpu_tests
     amdf::amdf_static
     amdf::headers
     iree::third_party::google_test
-    libamdf::cts::util::linked_provider
     libamdf::cts::util::provider_headers
   LABELS
     "iree-build-requirement=libamdf"
@@ -53,6 +53,7 @@ amdf_cts_test(
   NAME
     shared
   SRCS
+    "${PROJECT_SOURCE_DIR}/libamdf/cts/util/linked_provider.cc"
     "${PROJECT_SOURCE_DIR}/libamdf/cts/util/test_main.cc"
   DATA
     amdf::amdf
@@ -61,7 +62,6 @@ amdf_cts_test(
     amdf::amdf
     amdf::headers
     iree::third_party::google_test
-    libamdf::cts::util::linked_provider
     libamdf::cts::util::provider_headers
   LABELS
     "iree-build-requirement=libamdf"
