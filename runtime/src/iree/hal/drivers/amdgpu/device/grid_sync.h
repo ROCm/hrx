@@ -49,6 +49,20 @@ IREE_AMDGPU_STATIC_ASSERT(
 
 #if !defined(IREE_AMDGPU_TARGET_DEVICE)
 
+// Validates one cooperative dispatch and initializes its single-grid sync info.
+// A zero-workgroup dispatch produces zeroed info and requires no grid sync
+// preparation. Memory-backed synchronization supports at most 65535
+// workgroups; GWS supports any workgroup count representable by its uint32_t
+// initialization argument.
+//
+// A nonzero |out_info| must be stored in device-visible memory and remain
+// unmodified until the dispatch completes. Concurrently executable dispatches
+// require distinct instances. |out_info| is unchanged on failure.
+iree_status_t iree_hal_amdgpu_grid_sync_info_initialize(
+    iree_hal_amdgpu_grid_sync_strategy_t strategy,
+    const uint32_t workgroup_count[3], const uint16_t workgroup_size[3],
+    iree_amdgpu_grid_sync_info_t* out_info);
+
 // Populates a one-workitem dispatch that initializes GWS resource zero for a
 // following cooperative dispatch. The caller owns packet header commit,
 // completion-signal assignment, and doorbell signaling.
