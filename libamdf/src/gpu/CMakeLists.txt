@@ -82,19 +82,21 @@ iree_cc_library(
     ::kernel_queue
     amdf::headers
     libamdf::src::endpoint
-    libamdf::src::gpu::umd
+    libamdf::src::gpu::umd::endpoint_profile
+    libamdf::src::platform
     libamdf::src::structure
   PUBLIC
 )
 endif()
 
-if(AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
 iree_cc_library(
   NAME
     gpu
   DEPS
     ::extension
     amdf::headers
+    libamdf::src::gpu::umd
   PUBLIC
 )
 endif()

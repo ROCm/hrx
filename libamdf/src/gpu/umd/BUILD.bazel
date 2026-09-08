@@ -15,7 +15,6 @@ package(
 amdf_cc_library(
     name = "device",
     hdrs = ["device.h"],
-    target_compatible_with = ["@platforms//os:windows"],
     visibility = ["//libamdf/src/gpu:__subpackages__"],
     deps = ["//libamdf/src/platform"],
 )
@@ -23,7 +22,6 @@ amdf_cc_library(
 amdf_cc_library(
     name = "endpoint_profile",
     hdrs = ["endpoint_profile.h"],
-    target_compatible_with = ["@platforms//os:windows"],
     visibility = ["//libamdf/src/gpu:__subpackages__"],
     deps = [
         "//libamdf/src/gpu:endpoint_profile",
@@ -34,14 +32,12 @@ amdf_cc_library(
 amdf_cc_library(
     name = "memory",
     hdrs = ["memory.h"],
-    target_compatible_with = ["@platforms//os:windows"],
     visibility = ["//libamdf/src/gpu:__subpackages__"],
 )
 
 amdf_cc_library(
     name = "kernel_queue",
     hdrs = ["kernel_queue.h"],
-    target_compatible_with = ["@platforms//os:windows"],
     visibility = ["//libamdf/src/gpu:__subpackages__"],
     deps = [":device"],
 )

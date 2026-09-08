@@ -6,10 +6,9 @@
 
 include(GNUInstallDirs)
 
-# Declares stable public targets before package traversal. Source components may
-# reference the headers target, and tests may reference the final library targets,
-# before package-owned objects are attached by amdf_library.
-function(amdf_declare_library)
+# Declares public headers independently of native provider availability. Offline
+# consumers and source components may reference them before package traversal.
+function(amdf_declare_headers)
   cmake_parse_arguments(
     _RULE
     ""
@@ -18,7 +17,7 @@ function(amdf_declare_library)
     ${ARGN}
   )
   if(NOT _RULE_NAME)
-    message(FATAL_ERROR "amdf_declare_library requires NAME.")
+    message(FATAL_ERROR "amdf_declare_headers requires NAME.")
   endif()
 
   set(_HEADERS_TARGET "${_RULE_NAME}_headers")
@@ -30,6 +29,21 @@ function(amdf_declare_library)
       "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
   )
   set_target_properties(${_HEADERS_TARGET} PROPERTIES EXPORT_NAME headers)
+endfunction()
+
+# Declares provider artifacts before package traversal so tests may reference
+# them before package-owned objects are attached by amdf_library.
+function(amdf_declare_library)
+  cmake_parse_arguments(
+    _RULE
+    ""
+    "NAME"
+    ""
+    ${ARGN}
+  )
+  if(NOT _RULE_NAME)
+    message(FATAL_ERROR "amdf_declare_library requires NAME.")
+  endif()
 
   add_library(${_RULE_NAME} SHARED)
   add_library(amdf::amdf ALIAS ${_RULE_NAME})

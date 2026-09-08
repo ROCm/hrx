@@ -68,14 +68,19 @@ amdf_cc_library(
         ":kernel_queue",
         "//libamdf/src:endpoint",
         "//libamdf/src:structure",
-        "//libamdf/src/gpu/umd",
+        "//libamdf/src/gpu/umd:endpoint_profile",
+        "//libamdf/src/platform",
     ],
 )
 
 amdf_cc_library(
     name = "gpu",
+    target_compatible_with = ["@platforms//os:windows"],
     visibility = ["//libamdf/src/provider:__pkg__"],
-    deps = [":extension"],
+    deps = [
+        ":extension",
+        "//libamdf/src/gpu/umd",
+    ],
 )
 
 amdf_cc_test(

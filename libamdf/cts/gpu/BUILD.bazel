@@ -23,6 +23,7 @@ amdf_cc_library(
         "memory_interop_test.cc",
         "memory_test.cc",
     ],
+    target_compatible_with = ["@platforms//os:windows"],
     deps = [
         "//libamdf/cts/util:provider_headers",
         "//third_party:google_test",

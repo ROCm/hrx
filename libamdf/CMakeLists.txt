@@ -17,6 +17,11 @@ include("${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_library.cmake")
 include("${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_package.cmake")
 include("${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_windows_sidecar.cmake")
 
+amdf_declare_headers(
+  NAME
+    amdf
+)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
 amdf_declare_library(
   NAME

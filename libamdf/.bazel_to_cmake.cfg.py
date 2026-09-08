@@ -122,6 +122,7 @@ class AmdfBuildFileFunctions(bazel_to_cmake_converter.BuildFileFunctions):
             block_name="WINDOWS_DEF_FILE",
         )
 
+        self._converter.header += f"amdf_declare_headers(\n{name_block})\n\n"
         condition = self._target_compatible_condition(target_compatible_with)
         if condition:
             self._converter.header += f"if({condition})\n"
