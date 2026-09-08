@@ -8,13 +8,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "libamdf/src/xdna/umd/mcdm/host_cache.h"
+#include "libamdf/src/platform/windows/host_cache.h"
 
 #if !defined(_M_X64) && !defined(__x86_64__)
-#error "The MCDM host-cache implementation requires an x86-64 host"
+#error "The Windows host-cache implementation requires an x86-64 host"
 #endif
 
-// AMD64 cache lines are 64 bytes on every XDNA host supported by this leaf.
+// AMD64 cache lines are 64 bytes on every Windows host supported by this leaf.
 #define AMDF_WINDOWS_HOST_CACHE_LINE_SIZE 64u
 
 uint32_t amdf_windows_host_cache_line_size(void) {

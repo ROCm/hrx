@@ -10,8 +10,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "libamdf/src/platform/windows/host_cache.h"
 #include "libamdf/src/xdna/umd/mcdm/device.h"
-#include "libamdf/src/xdna/umd/mcdm/host_cache.h"
 
 #define AMDF_WINDOWS_XDNA_ALLOCATION_ALIGNMENT UINT64_C(65536)
 #define AMDF_WINDOWS_KMT_PAGE_SIZE UINT64_C(4096)

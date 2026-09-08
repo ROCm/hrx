@@ -9,7 +9,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#include "libamdf/src/xdna/umd/mcdm/host_cache.h"
+#include "libamdf/src/platform/windows/host_cache.h"
 
 #define AMDF_WINDOWS_KMT_PAGE_SIZE UINT64_C(4096)
 

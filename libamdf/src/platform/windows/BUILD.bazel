@@ -16,6 +16,14 @@ package(
 WINDOWS_COMPATIBILITY = ["@platforms//os:windows"]
 
 amdf_cc_library(
+    name = "host_cache",
+    srcs = ["host_cache_x86_64.c"],
+    hdrs = ["host_cache.h"],
+    target_compatible_with = WINDOWS_COMPATIBILITY,
+    visibility = ["//libamdf/src:__subpackages__"],
+)
+
+amdf_cc_library(
     name = "kmt_api",
     srcs = ["kmt_api.c"],
     hdrs = ["kmt_api.h"],

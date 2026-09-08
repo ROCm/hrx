@@ -12,20 +12,6 @@ iree_add_all_subdirs()
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND AMDF_FAMILY_XDNA)
 iree_cc_library(
   NAME
-    host_cache
-  HDRS
-    "host_cache.h"
-  SRCS
-    "host_cache_x86_64.c"
-  DEPS
-    amdf::headers
-  PUBLIC
-)
-endif()
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND AMDF_FAMILY_XDNA)
-iree_cc_library(
-  NAME
     bootstrap_image
   HDRS
     "npu5_legacy_bootstrap_image.h"
@@ -76,8 +62,8 @@ iree_cc_library(
     "private_allocation.c"
   DEPS
     ::device_state
-    ::host_cache
     amdf::headers
+    libamdf::src::platform::windows::host_cache
   PUBLIC
 )
 endif()
@@ -90,8 +76,8 @@ iree_cc_library(
     "memory.c"
   DEPS
     ::device_state
-    ::host_cache
     amdf::headers
+    libamdf::src::platform::windows::host_cache
     libamdf::src::xdna::umd::memory
   PUBLIC
 )

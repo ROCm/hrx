@@ -4,8 +4,8 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#ifndef AMDF_SRC_XDNA_UMD_MCDM_HOST_CACHE_H_
-#define AMDF_SRC_XDNA_UMD_MCDM_HOST_CACHE_H_
+#ifndef AMDF_SRC_PLATFORM_WINDOWS_HOST_CACHE_H_
+#define AMDF_SRC_PLATFORM_WINDOWS_HOST_CACHE_H_
 
 #include <stdint.h>
 
@@ -26,4 +26,4 @@ amdf_status_t amdf_windows_host_cache_control(
 }  // extern "C"
 #endif  // __cplusplus
 
-#endif  // AMDF_SRC_XDNA_UMD_MCDM_HOST_CACHE_H_
+#endif  // AMDF_SRC_PLATFORM_WINDOWS_HOST_CACHE_H_

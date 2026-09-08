@@ -16,13 +16,6 @@ package(
 MCDM_COMPATIBILITY = ["@platforms//os:windows"]
 
 amdf_cc_library(
-    name = "host_cache",
-    srcs = ["host_cache_x86_64.c"],
-    hdrs = ["host_cache.h"],
-    target_compatible_with = MCDM_COMPATIBILITY,
-)
-
-amdf_cc_library(
     name = "bootstrap_image",
     srcs = ["npu5_legacy_bootstrap_image.c"],
     hdrs = ["npu5_legacy_bootstrap_image.h"],
@@ -54,7 +47,7 @@ amdf_cc_library(
     target_compatible_with = MCDM_COMPATIBILITY,
     deps = [
         ":device_state",
-        ":host_cache",
+        "//libamdf/src/platform/windows:host_cache",
     ],
 )
 
@@ -64,7 +57,7 @@ amdf_cc_library(
     target_compatible_with = MCDM_COMPATIBILITY,
     deps = [
         ":device_state",
-        ":host_cache",
+        "//libamdf/src/platform/windows:host_cache",
         "//libamdf/src/xdna/umd:memory",
     ],
 )
