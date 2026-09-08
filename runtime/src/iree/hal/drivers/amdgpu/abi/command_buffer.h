@@ -84,6 +84,9 @@ typedef enum iree_hal_amdgpu_command_buffer_dispatch_flag_bits_e {
       1u << 1,
   // The dispatch uses the AMD extended packet with |workgroup_cluster_size|.
   IREE_HAL_AMDGPU_COMMAND_BUFFER_DISPATCH_FLAG_WORKGROUP_CLUSTER = 1u << 2,
+  // The dispatch requires a cooperative-capable queue and per-execution grid
+  // synchronization state when implicit arguments are present.
+  IREE_HAL_AMDGPU_COMMAND_BUFFER_DISPATCH_FLAG_COOPERATIVE = 1u << 3,
 } iree_hal_amdgpu_command_buffer_dispatch_flag_bits_t;
 
 // Kernarg storage mode for a dispatch command.

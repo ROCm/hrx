@@ -11,6 +11,7 @@
 #include "iree/hal/api.h"
 #include "iree/hal/drivers/amdgpu/aql_command_buffer.h"
 #include "iree/hal/drivers/amdgpu/device/blit.h"
+#include "iree/hal/drivers/amdgpu/device/grid_sync.h"
 #include "iree/hal/drivers/amdgpu/util/aql_ring.h"
 #include "iree/hal/drivers/amdgpu/util/kernarg_ring.h"
 
@@ -52,6 +53,10 @@ typedef struct iree_hal_amdgpu_aql_block_processor_t {
     iree_host_size_t physical_queue_ordinal;
     // Number of physical queues represented in recorded queue-scoped tables.
     uint32_t physical_queue_count;
+    // Exact immutable queue feature bits available to replayed operations.
+    iree_hal_queue_feature_flags_t features;
+    // Device strategy used to materialize cooperative grid synchronization.
+    iree_hal_amdgpu_grid_sync_strategy_t grid_sync_strategy;
   } queue;
   // Reserved packet span populated by the processor.
   struct {

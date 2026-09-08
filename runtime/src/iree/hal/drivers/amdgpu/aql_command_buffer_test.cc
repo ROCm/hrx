@@ -71,6 +71,7 @@ class AqlCommandBufferTest : public ::testing::Test {
         device_allocator_, &queue_family_, mode, IREE_HAL_COMMAND_CATEGORY_ANY,
         binding_capacity, /*device_ordinal=*/0,
         /*queue_count_per_physical_device=*/1,
+        IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_MEMORY,
         /*tsan_shadow_slot_count=*/16,
         iree_hal_amdgpu_aql_prepublished_kernarg_storage_disabled(),
         /*hostcall_buffer=*/nullptr, profile_metadata, &block_pool_,

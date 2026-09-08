@@ -13,6 +13,7 @@
 #include "iree/hal/drivers/amdgpu/abi/tsan.h"
 #include "iree/hal/drivers/amdgpu/aql_prepublished_kernarg_storage.h"
 #include "iree/hal/drivers/amdgpu/aql_program_builder.h"
+#include "iree/hal/drivers/amdgpu/device/grid_sync.h"
 #include "iree/hal/drivers/amdgpu/profile_metadata.h"
 
 #ifdef __cplusplus
@@ -29,6 +30,10 @@ extern "C" {
 // |hostcall_buffer| is an optional opaque device address copied into every
 // implicit-argument template. The allocation it references must remain valid
 // for the command buffer lifetime.
+//
+// |grid_sync_strategy| is the immutable strategy selected for the physical
+// device identified by |device_ordinal|. It determines the exact queue-time
+// packet and kernarg reservation recorded for cooperative dispatches.
 iree_status_t iree_hal_amdgpu_aql_command_buffer_create(
     iree_hal_allocator_t* device_allocator,
     const iree_hal_queue_family_t* queue_family,
@@ -36,6 +41,7 @@ iree_status_t iree_hal_amdgpu_aql_command_buffer_create(
     iree_hal_command_category_t command_categories,
     iree_host_size_t binding_capacity, iree_host_size_t device_ordinal,
     iree_host_size_t queue_count_per_physical_device,
+    iree_hal_amdgpu_grid_sync_strategy_t grid_sync_strategy,
     uint32_t tsan_shadow_slot_count,
     iree_hal_amdgpu_aql_prepublished_kernarg_storage_t
         prepublished_kernarg_storage,
@@ -96,6 +102,11 @@ iree_host_size_t iree_hal_amdgpu_aql_command_buffer_device_ordinal(
 // Returns the number of physical queues covered by recorded queue-scoped
 // executable tables.
 uint32_t iree_hal_amdgpu_aql_command_buffer_queue_count_per_physical_device(
+    iree_hal_command_buffer_t* command_buffer);
+
+// Returns queue features required by operations recorded in |command_buffer|.
+iree_hal_queue_feature_flags_t
+iree_hal_amdgpu_aql_command_buffer_required_queue_features(
     iree_hal_command_buffer_t* command_buffer);
 
 // Returns the producer-local profile command-buffer id, or 0 when recording

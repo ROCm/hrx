@@ -365,6 +365,7 @@ iree_cc_library(
     iree::hal::drivers::amdgpu::device::blit
     iree::hal::drivers::amdgpu::device::blit_pm4
     iree::hal::drivers::amdgpu::device::dispatch
+    iree::hal::drivers::amdgpu::device::grid_sync
     iree::hal::drivers::amdgpu::device::headers
     iree::hal::drivers::amdgpu::device::timestamp
     iree::hal::drivers::amdgpu::device::tsan
