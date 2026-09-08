@@ -3090,6 +3090,31 @@ HIPAPI hipError_t hipDeviceGetDevResource(hipDevice_t device,
   return hipSuccess;
 }
 
+HIPAPI hipError_t hipDeviceGetExecutionCtx(hipExecutionCtx_t* context,
+                                           int device) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (!context) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidValue);
+  }
+  hipError_t init_result = iree_hip_ensure_initialized();
+  if (init_result != hipSuccess) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(init_result);
+  }
+
+  iree_hal_streaming_device_t* device_entry =
+      iree_hal_streaming_device_entry(device);
+  if (!device_entry) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidDevice);
+  }
+
+  hipError_t result = iree_hip_execution_context_primary(device_entry, context);
+  IREE_TRACE_ZONE_END(z0);
+  HIP_RETURN_ERROR(result);
+}
+
 HIPAPI hipError_t hipDevSmResourceSplitByCount(hipDevResource* result,
                                                unsigned int* group_count,
                                                const hipDevResource* input,

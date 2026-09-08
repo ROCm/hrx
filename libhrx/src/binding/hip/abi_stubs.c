@@ -614,13 +614,6 @@ HIPAPI hipError_t hipDeviceComputeCapability(int* major, int* minor,
   return hipErrorNotSupported;
 }
 
-HIPAPI hipError_t hipDeviceGetExecutionCtx(hipExecutionCtx_t* ctx,
-                                           hipDevice_t device) {
-  (void)ctx;
-  (void)device;
-  return hipErrorNotSupported;
-}
-
 HIPAPI hipError_t hipDeviceGetTexture1DLinearMaxWidth(
     size_t* maxWidthInElements, const hipChannelFormatDesc* fmtDesc,
     int device) {

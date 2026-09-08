@@ -11,11 +11,19 @@
 #include "common/internal.h"
 #include "iree/base/threading/call_once.h"
 
+typedef enum iree_hip_execution_context_kind_e {
+  IREE_HIP_EXECUTION_CONTEXT_KIND_PRIMARY = 0,
+  IREE_HIP_EXECUTION_CONTEXT_KIND_RESOURCE_PARTITIONED = 1,
+} iree_hip_execution_context_kind_t;
+
 // A HIP execution context is a binding-private scheduling domain layered over
 // the device primary streaming context. Hardware queues are realized lazily by
 // streams; this control-plane object does not itself schedule work.
 struct ihipExecutionCtx_t {
-  // Reference count including the ownership represented by the public handle.
+  // Determines whether the context is device-managed or resource-partitioned.
+  iree_hip_execution_context_kind_t kind;
+
+  // Reference count including the live registry or public-handle ownership.
   iree_atomic_ref_count_t ref_count;
 
   // Host allocator owning this context allocation.
@@ -126,6 +134,9 @@ static hipError_t iree_hip_execution_context_deinitialize(
   iree_hal_streaming_context_t* primary_context = context->primary_context;
   context->device = NULL;
   context->primary_context = NULL;
+  if (context->kind == IREE_HIP_EXECUTION_CONTEXT_KIND_PRIMARY) {
+    return hipSuccess;
+  }
   return iree_hip_execution_context_release_primary(device, primary_context);
 }
 
@@ -158,7 +169,7 @@ static void iree_hip_execution_context_publish(hipExecutionCtx_t context) {
   iree_slim_mutex_unlock(&iree_hip_execution_context_registry.mutex);
 }
 
-static hipExecutionCtx_t iree_hip_execution_context_take(
+static hipExecutionCtx_t iree_hip_execution_context_take_partitioned(
     hipExecutionCtx_t handle) {
   if (!handle) return NULL;
   iree_call_once(&iree_hip_execution_context_registry_once,
@@ -170,13 +181,102 @@ static hipExecutionCtx_t iree_hip_execution_context_take(
   while (*link && *link != handle) {
     link = &(*link)->next_live_context;
   }
-  if (*link) {
+  if (*link &&
+      (*link)->kind == IREE_HIP_EXECUTION_CONTEXT_KIND_RESOURCE_PARTITIONED) {
     owned_context = *link;
     *link = owned_context->next_live_context;
     owned_context->next_live_context = NULL;
   }
   iree_slim_mutex_unlock(&iree_hip_execution_context_registry.mutex);
   return owned_context;
+}
+
+hipError_t iree_hip_execution_context_primary(
+    iree_hal_streaming_device_t* device, hipExecutionCtx_t* out_context) {
+  IREE_ASSERT_ARGUMENT(device);
+  IREE_ASSERT_ARGUMENT(out_context);
+  iree_call_once(&iree_hip_execution_context_registry_once,
+                 iree_hip_execution_context_registry_initialize);
+
+  hipError_t result = hipSuccess;
+  hipExecutionCtx_t context = NULL;
+  iree_slim_mutex_lock(&iree_hip_execution_context_registry.mutex);
+  for (hipExecutionCtx_t current = iree_hip_execution_context_registry.head;
+       current; current = current->next_live_context) {
+    if (current->kind == IREE_HIP_EXECUTION_CONTEXT_KIND_PRIMARY &&
+        current->device_ordinal == (hipDevice_t)device->ordinal) {
+      context = current;
+      break;
+    }
+  }
+
+  iree_hal_streaming_context_t* primary_context = NULL;
+  if (!context) {
+    iree_status_t status =
+        iree_hal_streaming_device_get_or_create_primary_context(
+            device, &primary_context);
+    if (!iree_status_is_ok(status)) {
+      result = iree_hip_execution_context_consume_status(status);
+    }
+  }
+
+  iree_hal_queue_t* primary_queue = NULL;
+  if (!context && result == hipSuccess) {
+    iree_status_t status =
+        iree_hal_streaming_device_select_primary_queue(device, &primary_queue);
+    if (!iree_status_is_ok(status)) {
+      result = iree_hip_execution_context_consume_status(status);
+    }
+  }
+
+  hipDevResource sm_resource = {0};
+  if (!context && result == hipSuccess) {
+    iree_status_t status = iree_hip_execution_resource_create_sm(
+        device, iree_hal_queue_family(primary_queue),
+        (iree_hal_queue_execution_resource_list_t){0},
+        hipDevSmResourceGroupDefault, &sm_resource);
+    if (!iree_status_is_ok(status)) {
+      result = iree_hip_execution_context_consume_status(status);
+    }
+  }
+
+  unsigned long long context_id = 0;
+  if (!context && result == hipSuccess) {
+    iree_status_t status = iree_hip_execution_context_allocate_id(&context_id);
+    if (!iree_status_is_ok(status)) {
+      result = iree_hip_execution_context_consume_status(status);
+    }
+  }
+
+  const iree_allocator_t host_allocator = iree_allocator_system();
+  hipExecutionCtx_t new_context = NULL;
+  if (!context && result == hipSuccess) {
+    iree_status_t status = iree_allocator_malloc(
+        host_allocator, sizeof(*new_context), (void**)&new_context);
+    if (!iree_status_is_ok(status)) {
+      result = iree_hip_execution_context_consume_status(status);
+    }
+  }
+  if (new_context) {
+    iree_atomic_ref_count_init(&new_context->ref_count);
+    new_context->kind = IREE_HIP_EXECUTION_CONTEXT_KIND_PRIMARY;
+    new_context->host_allocator = host_allocator;
+    new_context->device = device;
+    new_context->device_ordinal = (hipDevice_t)device->ordinal;
+    new_context->primary_context = NULL;
+    new_context->descriptor = NULL;
+    new_context->sm_resource = sm_resource;
+    new_context->context_id = context_id;
+    new_context->next_live_context = iree_hip_execution_context_registry.head;
+    iree_hip_execution_context_registry.head = new_context;
+    context = new_context;
+  }
+  iree_slim_mutex_unlock(&iree_hip_execution_context_registry.mutex);
+
+  if (result == hipSuccess) {
+    *out_context = context;
+  }
+  return result;
 }
 
 hipError_t iree_hip_execution_context_create(
@@ -260,6 +360,7 @@ hipError_t iree_hip_execution_context_create(
   }
   if (result == hipSuccess) {
     iree_atomic_ref_count_init(&context->ref_count);
+    context->kind = IREE_HIP_EXECUTION_CONTEXT_KIND_RESOURCE_PARTITIONED;
     context->host_allocator = host_allocator;
     context->device = device;
     context->device_ordinal = (hipDevice_t)device->ordinal;
@@ -284,7 +385,8 @@ hipError_t iree_hip_execution_context_create(
 }
 
 hipError_t iree_hip_execution_context_destroy(hipExecutionCtx_t context) {
-  hipExecutionCtx_t owned_context = iree_hip_execution_context_take(context);
+  hipExecutionCtx_t owned_context =
+      iree_hip_execution_context_take_partitioned(context);
   if (!owned_context) return hipErrorInvalidValue;
   const hipError_t result =
       iree_hip_execution_context_deinitialize(owned_context);

@@ -15,6 +15,12 @@ extern "C" {
 
 typedef struct iree_hal_streaming_device_t iree_hal_streaming_device_t;
 
+// Returns the process-managed primary execution context for |device|, creating
+// its handle for the current device incarnation if necessary. |out_context| is
+// unchanged on failure.
+hipError_t iree_hip_execution_context_primary(
+    iree_hal_streaming_device_t* device, hipExecutionCtx_t* out_context);
+
 // Creates a resource-partitioned execution context. On success the context
 // consumes |descriptor| and retains the device primary streaming context, but
 // does not acquire a hardware queue until a stream requests one. |out_context|

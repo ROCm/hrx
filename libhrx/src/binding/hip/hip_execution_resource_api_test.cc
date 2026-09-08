@@ -33,6 +33,8 @@ using HipGetDeviceFn = hipError_t (*)(int* device);
 using HipDeviceGetDevResourceFn = hipError_t (*)(hipDevice_t device,
                                                  hipDevResource* resource,
                                                  hipDevResourceType type);
+using HipDeviceGetExecutionCtxFn = hipError_t (*)(hipExecutionCtx_t* context,
+                                                  int device);
 using HipDevSmResourceSplitByCountFn =
     hipError_t (*)(hipDevResource* result, unsigned int* group_count,
                    const hipDevResource* input, hipDevResource* remainder,
@@ -79,6 +81,9 @@ struct HipRuntimeApi {
   // Queries the process-visible execution resource of one device.
   HipDeviceGetDevResourceFn device_get_resource = nullptr;
 
+  // Returns the process-managed primary execution context for one device.
+  HipDeviceGetExecutionCtxFn device_execution_context = nullptr;
+
   // Splits one exact SM resource into equal-size partitions.
   HipDevSmResourceSplitByCountFn split_sm_by_count = nullptr;
 
@@ -122,6 +127,9 @@ class HipExecutionResourceApiTest : public testing::Test {
           ResolveHipSymbol<HipGetDeviceFn>(api_.library, "hipGetDevice");
       api_.device_get_resource = ResolveHipSymbol<HipDeviceGetDevResourceFn>(
           api_.library, "hipDeviceGetDevResource");
+      api_.device_execution_context =
+          ResolveHipSymbol<HipDeviceGetExecutionCtxFn>(
+              api_.library, "hipDeviceGetExecutionCtx");
       api_.split_sm_by_count = ResolveHipSymbol<HipDevSmResourceSplitByCountFn>(
           api_.library, "hipDevSmResourceSplitByCount");
       api_.generate_descriptor = ResolveHipSymbol<HipDevResourceGenerateDescFn>(
@@ -142,6 +150,7 @@ class HipExecutionResourceApiTest : public testing::Test {
     ASSERT_NE(api_.init, nullptr);
     ASSERT_NE(api_.get_device, nullptr);
     ASSERT_NE(api_.device_get_resource, nullptr);
+    ASSERT_NE(api_.device_execution_context, nullptr);
     ASSERT_NE(api_.split_sm_by_count, nullptr);
     ASSERT_NE(api_.generate_descriptor, nullptr);
     ASSERT_NE(api_.create_context, nullptr);
@@ -195,6 +204,45 @@ TEST_F(HipExecutionResourceApiTest, RejectsInvalidQueriesWithoutPublishing) {
       hipErrorInvalidDevice,
       api_.device_get_resource(/*device=*/-1, &resource, hipDevResourceTypeSm));
   EXPECT_EQ(std::memcmp(&resource, &expected_resource, sizeof(resource)), 0);
+}
+
+TEST_F(HipExecutionResourceApiTest,
+       ReturnsStableDeviceManagedExecutionContext) {
+  hipExecutionCtx_t first_context = nullptr;
+  ASSERT_EQ(hipSuccess, api_.device_execution_context(&first_context, device_));
+  ASSERT_NE(first_context, nullptr);
+  hipExecutionCtx_t second_context = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.device_execution_context(&second_context, device_));
+  EXPECT_EQ(second_context, first_context);
+
+  hipDevResource full_resource;
+  ASSERT_EQ(hipSuccess, api_.device_get_resource(device_, &full_resource,
+                                                 hipDevResourceTypeSm));
+  hipDevResource context_resource;
+  ASSERT_EQ(hipSuccess,
+            api_.context_get_resource(first_context, &context_resource,
+                                      hipDevResourceTypeSm));
+  EXPECT_EQ(
+      std::memcmp(&context_resource, &full_resource, sizeof(full_resource)), 0);
+
+  hipDevice_t context_device = -1;
+  EXPECT_EQ(hipSuccess,
+            api_.context_get_device(&context_device, first_context));
+  EXPECT_EQ(context_device, device_);
+  unsigned long long context_id = 0;
+  EXPECT_EQ(hipSuccess, api_.context_get_id(first_context, &context_id));
+  EXPECT_NE(context_id, 0u);
+
+  EXPECT_EQ(hipErrorInvalidValue, api_.destroy_context(first_context));
+  EXPECT_EQ(hipSuccess, api_.context_get_id(first_context, &context_id));
+
+  hipExecutionCtx_t untouched_context =
+      reinterpret_cast<hipExecutionCtx_t>(uintptr_t{1});
+  EXPECT_EQ(hipErrorInvalidDevice,
+            api_.device_execution_context(&untouched_context, -1));
+  EXPECT_EQ(untouched_context,
+            reinterpret_cast<hipExecutionCtx_t>(uintptr_t{1}));
 }
 
 TEST_F(HipExecutionResourceApiTest, SplitsFullResourceThroughPublicAbi) {
