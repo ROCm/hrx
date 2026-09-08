@@ -77,10 +77,10 @@ amdf_cc_library(
     hdrs = ["kernel_execution.h"],
     target_compatible_with = MCDM_COMPATIBILITY,
     deps = [
-        ":bootstrap_image",
         ":device_state",
         ":legacy_submission",
         "//libamdf/src/xdna:transaction",
+        "//libamdf/src/xdna/target/npu5:bootstrap",
     ],
 )
 

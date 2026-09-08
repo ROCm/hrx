@@ -108,10 +108,10 @@ iree_cc_library(
   SRCS
     "kernel_execution.c"
   DEPS
-    ::bootstrap_image
     ::device_state
     ::legacy_submission
     amdf::headers
+    libamdf::src::xdna::target::npu5::bootstrap
     libamdf::src::xdna::transaction
   PUBLIC
 )

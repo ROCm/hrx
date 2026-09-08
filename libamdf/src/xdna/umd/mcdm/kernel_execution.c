@@ -11,8 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "libamdf/src/xdna/target/npu5/bootstrap.h"
 #include "libamdf/src/xdna/transaction.h"
-#include "libamdf/src/xdna/umd/mcdm/npu5_legacy_bootstrap_image.h"
 
 enum {
   AMDF_WINDOWS_WAIT_SIGNALED = 0,
@@ -300,7 +300,7 @@ static amdf_status_t amdf_windows_xdna_kernel_execution_publish_pdi(
   }
   const void* pdi_data = NULL;
   size_t pdi_data_size = 0;
-  amdf_windows_xdna_npu5_legacy_bootstrap_query_pdi(&pdi_data, &pdi_data_size);
+  amdf_xdna_npu5_bootstrap_query_pdi(&pdi_data, &pdi_data_size);
   if (pdi_data == NULL || pdi_data_size == 0 ||
       pdi_data_size > AMDF_WINDOWS_XDNA_CONTEXT_PDI_SIZE) {
     return amdf_make_api_status(AMDF_STATUS_CODE_INTERNAL);

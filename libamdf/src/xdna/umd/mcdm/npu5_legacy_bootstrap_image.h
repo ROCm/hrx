@@ -16,8 +16,4 @@ extern const uint8_t amdf_windows_xdna_npu5_legacy_bootstrap_image[];
 // Number of bytes in `amdf_windows_xdna_npu5_legacy_bootstrap_image`.
 extern const size_t amdf_windows_xdna_npu5_legacy_bootstrap_image_size;
 
-// Returns the provider-owned compatibility PDI used to initialize the aperture.
-void amdf_windows_xdna_npu5_legacy_bootstrap_query_pdi(const void** out_data,
-                                                       size_t* out_data_size);
-
 #endif  // AMDF_SRC_XDNA_UMD_MCDM_NPU5_LEGACY_BOOTSTRAP_IMAGE_H_
