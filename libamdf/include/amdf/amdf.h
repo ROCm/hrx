@@ -488,7 +488,9 @@ typedef struct amdf_memory_create_info_t {
   /// Minimum power-of-two allocation-base alignment in every supported address
   /// space, or zero for provider policy.
   uint64_t minimum_alignment;
-  /// Host base for `AMDF_MEMORY_CLASS_REGISTERED_HOST`, otherwise `NULL`.
+  /// Borrowed host base for `AMDF_MEMORY_CLASS_REGISTERED_HOST`, otherwise
+  /// `NULL`. The caller keeps this address range backed by the same live pages
+  /// until `memory_destroy` succeeds. Registration does not take ownership.
   void* registered_host_pointer;
 } amdf_memory_create_info_t;
 
@@ -701,6 +703,10 @@ typedef struct amdf_api_t {
   /// residency work has completed and the address is ready for any supported
   /// consumer when this cold call returns. This operation performs no queue
   /// submission, command inspection, retry, or device-wide synchronization.
+  /// Registered host memory borrows the supplied pages without copying their
+  /// contents. If the pointer came from a host mapping, that source mapping
+  /// and its memory must outlive the registration. Independent registrations
+  /// do not transfer ownership or establish execution or cache dependencies.
   /// On failure, `out_memory` is set to `NULL`.
   amdf_status_t(AMDF_CALL* memory_create)(
       amdf_device_t* device, const amdf_memory_create_info_t* create_info,
