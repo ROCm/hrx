@@ -62,6 +62,12 @@ using HipDeviceGetStreamPriorityRangeFn =
 using HipStreamCreateWithPriorityFn = hipError_t (*)(hipStream_t* stream,
                                                      unsigned int flags,
                                                      int priority);
+using HipExtStreamCreateWithCUMaskFn = hipError_t (*)(hipStream_t* stream,
+                                                      uint32_t mask_count,
+                                                      const uint32_t* mask);
+using HipExtStreamGetCUMaskFn = hipError_t (*)(hipStream_t stream,
+                                               uint32_t mask_count,
+                                               uint32_t* mask);
 using HipStreamGetDevResourceFn = hipError_t (*)(hipStream_t stream,
                                                  hipDevResource* resource,
                                                  hipDevResourceType type);
@@ -142,6 +148,12 @@ struct HipRuntimeApi {
   // Creates a stream with a scheduling priority hint.
   HipStreamCreateWithPriorityFn stream_create_with_priority = nullptr;
 
+  // Creates a stream confined to an exact HIP CU mask.
+  HipExtStreamCreateWithCUMaskFn stream_create_with_cu_mask = nullptr;
+
+  // Queries the exact HIP CU mask assigned to a stream.
+  HipExtStreamGetCUMaskFn stream_get_cu_mask = nullptr;
+
   // Queries the exact SM resource assigned to a stream.
   HipStreamGetDevResourceFn stream_get_resource = nullptr;
 
@@ -203,6 +215,11 @@ class HipExecutionResourceApiTest : public testing::Test {
       api_.stream_create_with_priority =
           ResolveHipSymbol<HipStreamCreateWithPriorityFn>(
               api_.library, "hipStreamCreateWithPriority");
+      api_.stream_create_with_cu_mask =
+          ResolveHipSymbol<HipExtStreamCreateWithCUMaskFn>(
+              api_.library, "hipExtStreamCreateWithCUMask");
+      api_.stream_get_cu_mask = ResolveHipSymbol<HipExtStreamGetCUMaskFn>(
+          api_.library, "hipExtStreamGetCUMask");
       api_.stream_get_resource = ResolveHipSymbol<HipStreamGetDevResourceFn>(
           api_.library, "hipStreamGetDevResource");
       api_.stream_get_flags = ResolveHipSymbol<HipStreamGetFlagsFn>(
@@ -227,6 +244,8 @@ class HipExecutionResourceApiTest : public testing::Test {
     ASSERT_NE(api_.context_stream_create, nullptr);
     ASSERT_NE(api_.device_get_stream_priority_range, nullptr);
     ASSERT_NE(api_.stream_create_with_priority, nullptr);
+    ASSERT_NE(api_.stream_create_with_cu_mask, nullptr);
+    ASSERT_NE(api_.stream_get_cu_mask, nullptr);
     ASSERT_NE(api_.stream_get_resource, nullptr);
     ASSERT_NE(api_.stream_get_flags, nullptr);
     ASSERT_NE(api_.stream_get_priority, nullptr);
@@ -501,6 +520,25 @@ TEST_F(HipExecutionResourceApiTest,
   ASSERT_EQ(hipSuccess, api_.stream_get_resource(stream, &stream_resource,
                                                  hipDevResourceTypeSm));
   EXPECT_EQ(std::memcmp(&stream_resource, &context_resource,
+                        sizeof(context_resource)),
+            0);
+
+  // CU-mask streams use the same canonical partition as resource-context
+  // streams instead of projecting a second mask model into the HAL.
+  const uint32_t mask_count = (full_resource.sm.smCount + 31u) / 32u;
+  std::vector<uint32_t> mask(mask_count, 0u);
+  ASSERT_EQ(hipSuccess,
+            api_.stream_get_cu_mask(stream, mask_count, mask.data()));
+  hipStream_t masked_stream = nullptr;
+  ASSERT_EQ(hipSuccess, api_.stream_create_with_cu_mask(
+                            &masked_stream, mask_count, mask.data()));
+  ScopedStream masked_stream_guard(masked_stream,
+                                   StreamDeleter{api_.stream_destroy});
+  hipDevResource masked_stream_resource;
+  ASSERT_EQ(hipSuccess,
+            api_.stream_get_resource(masked_stream, &masked_stream_resource,
+                                     hipDevResourceTypeSm));
+  EXPECT_EQ(std::memcmp(&masked_stream_resource, &context_resource,
                         sizeof(context_resource)),
             0);
 

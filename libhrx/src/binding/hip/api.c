@@ -11589,32 +11589,43 @@ HIPAPI hipError_t hipStreamBatchMemOp(hipStream_t stream, unsigned int count,
 // Extended stream creation (CU mask)
 //===----------------------------------------------------------------------===//
 
-static void iree_hip_fill_default_cu_mask(
-    const iree_hal_streaming_context_t* context, uint32_t mask_count,
-    uint32_t* mask) {
-  memset(mask, 0, mask_count * sizeof(*mask));
-  const iree_host_size_t compute_unit_count =
-      context && context->device_entry
-          ? context->device_entry->multiprocessor_count
-          : 0;
-  for (iree_host_size_t compute_unit = 0; compute_unit < compute_unit_count;
-       ++compute_unit) {
-    const iree_host_size_t word = compute_unit / 32;
-    if (word >= mask_count) break;
-    mask[word] |= 1u << (compute_unit % 32);
-  }
-}
-
 HIPAPI hipError_t hipExtStreamCreateWithCUMask(hipStream_t* stream,
                                                uint32_t mask_count,
                                                const uint32_t* mask) {
   if (!stream || mask_count == 0 || !mask) {
     HIP_RETURN_ERROR(hipErrorInvalidValue);
   }
-  // A masked stream requires queue selection that enforces the requested
-  // compute-unit set. Recording the mask on a virtual stream without applying
-  // it to submitted work would expose a stream that violates its contract.
-  HIP_RETURN_ERROR(hipErrorNotSupported);
+
+  iree_hal_streaming_context_t* context = NULL;
+  hipError_t result = iree_hip_ensure_context(&context);
+  if (result != hipSuccess) HIP_RETURN_ERROR(result);
+
+  const iree_hal_queue_family_t* queue_family =
+      iree_hal_queue_family(context->queue);
+  const iree_hal_streaming_execution_resource_set_t* resource_set = NULL;
+  iree_status_t status = iree_hip_execution_resource_intern_sm_cu_mask(
+      context->device_entry, queue_family, mask_count, mask, &resource_set);
+  iree_hal_queue_t* acquired_queue = NULL;
+  iree_hal_queue_t* queue = context->queue;
+  const iree_hal_queue_family_spec_t* family_spec =
+      iree_hal_queue_family_spec(queue_family);
+  // Interned full-family sets are explicit. Reuse the primary hardware queue
+  // for them instead of paying to create an equivalent HSA queue.
+  if (iree_status_is_ok(status) &&
+      resource_set->resources.count != family_spec->execution_resource_count) {
+    iree_hal_queue_params_t queue_params;
+    iree_hal_queue_params_initialize(&queue_params);
+    queue_params.execution_resources = resource_set->resources;
+    status = iree_hal_device_acquire_queue(context->device, queue_family,
+                                           &queue_params, &acquired_queue);
+    queue = acquired_queue;
+  }
+  if (iree_status_is_ok(status)) {
+    status = iree_hip_stream_create(context, queue, hipStreamDefault,
+                                    /*priority=*/0, stream);
+  }
+  iree_hal_queue_release(acquired_queue);
+  HIP_RETURN_ERROR(iree_status_to_hip_result(status));
 }
 
 HIPAPI hipError_t hipExtStreamGetCUMask(hipStream_t stream, uint32_t mask_count,
@@ -11628,19 +11639,12 @@ HIPAPI hipError_t hipExtStreamGetCUMask(hipStream_t stream, uint32_t mask_count,
       iree_hip_resolve_registered_stream(stream, &resolved_stream);
   if (result != hipSuccess) HIP_RETURN_ERROR(result);
 
-  const iree_host_size_t compute_unit_count =
-      resolved_stream.context->device_entry
-          ? resolved_stream.context->device_entry->multiprocessor_count
-          : 0;
-  const iree_host_size_t required_mask_count = (compute_unit_count + 31) / 32;
-  if (mask_count < required_mask_count) {
-    iree_hip_resolved_stream_release(&resolved_stream);
-    HIP_RETURN_ERROR(hipErrorInvalidValue);
-  }
-
-  iree_hip_fill_default_cu_mask(resolved_stream.context, mask_count, mask);
+  iree_status_t status = iree_hip_execution_resource_write_sm_cu_mask(
+      iree_hal_queue_family(resolved_stream.stream->queue),
+      iree_hal_queue_execution_resources(resolved_stream.stream->queue),
+      mask_count, mask);
   iree_hip_resolved_stream_release(&resolved_stream);
-  return hipSuccess;
+  HIP_RETURN_ERROR(iree_status_to_hip_result(status));
 }
 
 //===----------------------------------------------------------------------===//

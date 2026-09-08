@@ -247,6 +247,67 @@ TEST_F(ExecutionResourceTest, CreatesCopyableResourcesFromExactSets) {
             hipSuccess);
 }
 
+TEST_F(ExecutionResourceTest, TranslatesCuMasksIntoExactResourceSets) {
+  const uint32_t exact_mask[] = {0x00000F0Fu, UINT32_MAX};
+  const iree_hal_streaming_execution_resource_set_t* exact_set = nullptr;
+  IREE_ASSERT_OK(iree_hip_execution_resource_intern_sm_cu_mask(
+      &device_, uniform_queue_family(), IREE_ARRAYSIZE(exact_mask), exact_mask,
+      &exact_set));
+  ASSERT_NE(exact_set, nullptr);
+  const iree_hal_queue_execution_resource_ordinal_t expected_ordinals[] = {
+      0, 1, 4, 5};
+  ASSERT_EQ(exact_set->resources.count, IREE_ARRAYSIZE(expected_ordinals));
+  EXPECT_EQ(std::memcmp(exact_set->resources.ordinals, expected_ordinals,
+                        sizeof(expected_ordinals)),
+            0);
+
+  uint32_t round_trip_mask[] = {0xA5A5A5A5u, 0xA5A5A5A5u};
+  IREE_ASSERT_OK(iree_hip_execution_resource_write_sm_cu_mask(
+      uniform_queue_family(), exact_set->resources,
+      IREE_ARRAYSIZE(round_trip_mask), round_trip_mask));
+  EXPECT_EQ(round_trip_mask[0], exact_mask[0]);
+  EXPECT_EQ(round_trip_mask[1], 0u);
+
+  const uint32_t effectively_empty_mask[] = {0u, UINT32_MAX};
+  const iree_hal_streaming_execution_resource_set_t* full_set = nullptr;
+  IREE_ASSERT_OK(iree_hip_execution_resource_intern_sm_cu_mask(
+      &device_, uniform_queue_family(), IREE_ARRAYSIZE(effectively_empty_mask),
+      effectively_empty_mask, &full_set));
+  ASSERT_NE(full_set, nullptr);
+  EXPECT_EQ(full_set->resources.count,
+            IREE_ARRAYSIZE(kUniformExecutionResources));
+}
+
+TEST_F(ExecutionResourceTest, RejectsInexactCuMasksWithoutPublishing) {
+  const iree_hal_streaming_execution_resource_set_t* const sentinel =
+      reinterpret_cast<const iree_hal_streaming_execution_resource_set_t*>(
+          uintptr_t{1});
+  const iree_hal_streaming_execution_resource_set_t* output = sentinel;
+
+  const uint32_t partial_resource_mask[] = {0x00000001u};
+  EXPECT_THAT(iree_hip_execution_resource_intern_sm_cu_mask(
+                  &device_, uniform_queue_family(),
+                  IREE_ARRAYSIZE(partial_resource_mask), partial_resource_mask,
+                  &output),
+              StatusIs(StatusCode::kInvalidArgument));
+  EXPECT_EQ(output, sentinel);
+
+  const uint32_t missing_group_mask[] = {0x00000033u};
+  EXPECT_THAT(
+      iree_hip_execution_resource_intern_sm_cu_mask(
+          &device_, uniform_queue_family(), IREE_ARRAYSIZE(missing_group_mask),
+          missing_group_mask, &output),
+      StatusIs(StatusCode::kInvalidArgument));
+  EXPECT_EQ(output, sentinel);
+
+  uint32_t untouched_mask = 0xA5A5A5A5u;
+  EXPECT_THAT(iree_hip_execution_resource_write_sm_cu_mask(
+                  uniform_queue_family(), {/*.count=*/0, /*.ordinals=*/nullptr},
+                  /*mask_word_count=*/0, &untouched_mask),
+              StatusIs(StatusCode::kInvalidArgument));
+  EXPECT_EQ(untouched_mask, 0xA5A5A5A5u);
+}
+
 TEST_F(ExecutionResourceTest, RejectsStaleAndTamperedCopies) {
   hipDevResource unchanged_resource;
   std::memset(&unchanged_resource, 0xA5, sizeof(unchanged_resource));

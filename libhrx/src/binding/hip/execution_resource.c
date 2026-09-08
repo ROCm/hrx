@@ -240,6 +240,189 @@ iree_status_t iree_hip_execution_resource_create_sm(
   return iree_ok_status();
 }
 
+static bool iree_hip_execution_resource_cu_mask_bit_is_set(
+    iree_host_size_t mask_word_count, const uint32_t* mask,
+    uint32_t execution_unit_ordinal) {
+  const iree_host_size_t word_ordinal = execution_unit_ordinal / 32u;
+  return word_ordinal < mask_word_count &&
+         (mask[word_ordinal] & (1u << (execution_unit_ordinal % 32u))) != 0;
+}
+
+iree_status_t iree_hip_execution_resource_intern_sm_cu_mask(
+    iree_hal_streaming_device_t* device,
+    const iree_hal_queue_family_t* queue_family,
+    iree_host_size_t mask_word_count, const uint32_t* mask,
+    const iree_hal_streaming_execution_resource_set_t** out_set) {
+  IREE_ASSERT_ARGUMENT(device);
+  IREE_ASSERT_ARGUMENT(queue_family);
+  IREE_ASSERT_ARGUMENT(mask);
+  IREE_ASSERT_ARGUMENT(out_set);
+
+  const iree_hal_queue_family_spec_t* family_spec =
+      iree_hal_queue_family_spec(queue_family);
+  if (IREE_UNLIKELY(family_spec->execution_resource_count == 0)) {
+    return iree_make_status(
+        IREE_STATUS_UNIMPLEMENTED,
+        "queue family exposes no selectable HIP execution resources");
+  }
+
+  uint32_t selected_execution_unit_count = 0;
+  for (uint32_t execution_unit_ordinal = 0;
+       execution_unit_ordinal < family_spec->execution_unit_count;
+       ++execution_unit_ordinal) {
+    selected_execution_unit_count +=
+        iree_hip_execution_resource_cu_mask_bit_is_set(mask_word_count, mask,
+                                                       execution_unit_ordinal);
+  }
+
+  iree_hal_queue_execution_resource_ordinal_t* selected_resource_ordinals =
+      NULL;
+  iree_status_t status = iree_allocator_malloc_array(
+      device->execution_resource_table.host_allocator,
+      family_spec->execution_resource_count,
+      sizeof(*selected_resource_ordinals), (void**)&selected_resource_ordinals);
+  iree_host_size_t selected_resource_count = 0;
+  uint32_t covered_execution_unit_count = 0;
+  for (iree_host_size_t resource_ordinal = 0;
+       resource_ordinal < family_spec->execution_resource_count &&
+       iree_status_is_ok(status);
+       ++resource_ordinal) {
+    const iree_hal_queue_execution_resource_spec_t* resource_spec =
+        &family_spec->execution_resources[resource_ordinal];
+    uint32_t selected_resource_execution_unit_count = 0;
+    for (uint32_t resource_execution_unit_ordinal = 0;
+         resource_execution_unit_ordinal < resource_spec->execution_unit_count;
+         ++resource_execution_unit_ordinal) {
+      selected_resource_execution_unit_count +=
+          iree_hip_execution_resource_cu_mask_bit_is_set(
+              mask_word_count, mask,
+              resource_spec->first_execution_unit_ordinal +
+                  resource_execution_unit_ordinal);
+    }
+    covered_execution_unit_count += selected_resource_execution_unit_count;
+    if (selected_resource_execution_unit_count == 0) continue;
+    if (IREE_UNLIKELY(selected_resource_execution_unit_count !=
+                      resource_spec->execution_unit_count)) {
+      status = iree_make_status(
+          IREE_STATUS_INVALID_ARGUMENT,
+          "HIP CU mask partially selects indivisible execution resource "
+          "%" PRIhsz " covering raw units [%u, %u)",
+          resource_ordinal, resource_spec->first_execution_unit_ordinal,
+          resource_spec->first_execution_unit_ordinal +
+              resource_spec->execution_unit_count);
+      continue;
+    }
+    selected_resource_ordinals[selected_resource_count++] =
+        (iree_hal_queue_execution_resource_ordinal_t)resource_ordinal;
+  }
+  if (iree_status_is_ok(status) &&
+      IREE_UNLIKELY(covered_execution_unit_count !=
+                    selected_execution_unit_count)) {
+    status = iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "HIP CU mask selects raw execution units outside the queue family's "
+        "canonical resources");
+  }
+
+  iree_hal_streaming_execution_resource_set_id_t set_id =
+      IREE_HAL_STREAMING_EXECUTION_RESOURCE_SET_ID_INVALID;
+  if (iree_status_is_ok(status)) {
+    const iree_hal_queue_execution_resource_list_t selected_resources = {
+        .count = selected_resource_count,
+        .ordinals = selected_resource_count ? selected_resource_ordinals : NULL,
+    };
+    status = iree_hal_streaming_execution_resource_table_intern(
+        &device->execution_resource_table, queue_family, selected_resources,
+        &set_id);
+  }
+  const iree_hal_streaming_execution_resource_set_t* set = NULL;
+  if (iree_status_is_ok(status)) {
+    set = iree_hal_streaming_execution_resource_table_resolve(
+        &device->execution_resource_table, set_id);
+    if (IREE_UNLIKELY(!set)) {
+      status = iree_make_status(
+          IREE_STATUS_INTERNAL,
+          "interned HIP CU-mask execution-resource set cannot be resolved");
+    }
+  }
+  iree_allocator_free(device->execution_resource_table.host_allocator,
+                      selected_resource_ordinals);
+  if (iree_status_is_ok(status)) *out_set = set;
+  return status;
+}
+
+iree_status_t iree_hip_execution_resource_write_sm_cu_mask(
+    const iree_hal_queue_family_t* queue_family,
+    iree_hal_queue_execution_resource_list_t resources,
+    iree_host_size_t mask_word_count, uint32_t* out_mask) {
+  IREE_ASSERT_ARGUMENT(queue_family);
+  IREE_ASSERT_ARGUMENT(out_mask);
+
+  const iree_hal_queue_family_spec_t* family_spec =
+      iree_hal_queue_family_spec(queue_family);
+  if (IREE_UNLIKELY(family_spec->execution_resource_count == 0)) {
+    return iree_make_status(
+        IREE_STATUS_UNIMPLEMENTED,
+        "queue family exposes no selectable HIP execution resources");
+  }
+  const iree_host_size_t required_mask_word_count =
+      ((uint64_t)family_spec->execution_unit_count + 31u) / 32u;
+  if (IREE_UNLIKELY(mask_word_count < required_mask_word_count)) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "HIP CU mask has %" PRIhsz
+                            " words but queue family requires %" PRIhsz,
+                            mask_word_count, required_mask_word_count);
+  }
+  if (IREE_UNLIKELY(resources.count && !resources.ordinals)) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "execution-resource list has no ordinal storage");
+  }
+
+  const iree_host_size_t resource_count =
+      resources.count ? resources.count : family_spec->execution_resource_count;
+  for (iree_host_size_t i = 0; i < resource_count; ++i) {
+    const iree_hal_queue_execution_resource_ordinal_t resource_ordinal =
+        resources.count ? resources.ordinals[i]
+                        : (iree_hal_queue_execution_resource_ordinal_t)i;
+    if (IREE_UNLIKELY(resource_ordinal >=
+                      family_spec->execution_resource_count)) {
+      return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                              "execution-resource ordinal %u is outside "
+                              "family resource count %" PRIhsz,
+                              resource_ordinal,
+                              family_spec->execution_resource_count);
+    }
+    if (IREE_UNLIKELY(i > 0 && resources.count &&
+                      resource_ordinal <= resources.ordinals[i - 1])) {
+      return iree_make_status(
+          IREE_STATUS_INVALID_ARGUMENT,
+          "execution-resource ordinals must be sorted and unique");
+    }
+  }
+
+  for (iree_host_size_t word_ordinal = 0; word_ordinal < mask_word_count;
+       ++word_ordinal) {
+    out_mask[word_ordinal] = 0;
+  }
+  for (iree_host_size_t i = 0; i < resource_count; ++i) {
+    const iree_hal_queue_execution_resource_ordinal_t resource_ordinal =
+        resources.count ? resources.ordinals[i]
+                        : (iree_hal_queue_execution_resource_ordinal_t)i;
+    const iree_hal_queue_execution_resource_spec_t* resource_spec =
+        &family_spec->execution_resources[resource_ordinal];
+    for (uint32_t resource_execution_unit_ordinal = 0;
+         resource_execution_unit_ordinal < resource_spec->execution_unit_count;
+         ++resource_execution_unit_ordinal) {
+      const uint32_t execution_unit_ordinal =
+          resource_spec->first_execution_unit_ordinal +
+          resource_execution_unit_ordinal;
+      out_mask[execution_unit_ordinal / 32u] |=
+          1u << (execution_unit_ordinal % 32u);
+    }
+  }
+  return iree_ok_status();
+}
+
 hipError_t iree_hip_execution_resource_resolve_sm_for_device(
     const hipDevResource* resource, iree_hal_streaming_device_t* device,
     const iree_hal_streaming_execution_resource_set_t** out_set) {

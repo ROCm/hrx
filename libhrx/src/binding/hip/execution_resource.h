@@ -28,6 +28,32 @@ iree_status_t iree_hip_execution_resource_create_sm(
     iree_hal_queue_execution_resource_list_t resources, unsigned int flags,
     hipDevResource* out_resource);
 
+// Interns the exact SM resource set encoded by a HIP CU mask.
+//
+// HIP mask bits address family-local raw execution units while HAL queues
+// select indivisible canonical resources. Every selected resource must be
+// selected in full and the resulting set must satisfy the queue family's
+// resource-group constraints. Bits beyond the family's raw execution-unit
+// count are ignored. An effectively empty mask selects the complete family.
+// The returned set is borrowed from |device| and |out_set| is unchanged on
+// failure.
+iree_status_t iree_hip_execution_resource_intern_sm_cu_mask(
+    iree_hal_streaming_device_t* device,
+    const iree_hal_queue_family_t* queue_family,
+    iree_host_size_t mask_word_count, const uint32_t* mask,
+    const iree_hal_streaming_execution_resource_set_t** out_set);
+
+// Writes the HIP CU mask for an exact SM resource set.
+//
+// |resources| contains family-local canonical resource ordinals and may use
+// the empty-list shorthand for the complete family. |mask_word_count| must
+// cover every raw execution unit in |queue_family|. Extra output words are
+// cleared and |out_mask| is unchanged on failure.
+iree_status_t iree_hip_execution_resource_write_sm_cu_mask(
+    const iree_hal_queue_family_t* queue_family,
+    iree_hal_queue_execution_resource_list_t resources,
+    iree_host_size_t mask_word_count, uint32_t* out_mask);
+
 // Resolves and validates |resource| against an explicit device incarnation.
 // Returns the immutable borrowed set on success. |out_set| is unchanged on
 // failure.
