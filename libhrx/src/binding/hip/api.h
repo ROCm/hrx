@@ -118,11 +118,11 @@ typedef struct hipDevResource_st {
 } hipDevResource;
 
 typedef struct hipDevSmResourceGroupParams_st {
-  // Requested or selected SM count for the group.
+  // Requested SM count, or zero for ordered discovery; updated on success.
   unsigned int smCount;
-  // Required coscheduled SM count for the group.
+  // Required coscheduled SM count, or zero for the input resource default.
   unsigned int coscheduledSmCount;
-  // Preferred coscheduled SM count for the group.
+  // Advisory preferred coscheduled SM count, or zero for the required count.
   unsigned int preferredCoscheduledSmCount;
   // Group behavior from hipDevSmResourceGroup_flags.
   unsigned int flags;

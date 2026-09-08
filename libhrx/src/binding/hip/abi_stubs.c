@@ -593,19 +593,6 @@ HIPAPI hipError_t hipDestroyExternalSemaphore(hipExternalSemaphore_t extSem) {
   return hipErrorNotSupported;
 }
 
-HIPAPI hipError_t hipDevSmResourceSplit(
-    hipDevResource* result, unsigned int nbGroups, const hipDevResource* input,
-    hipDevResource* remainder, unsigned int flags,
-    hipDevSmResourceGroupParams* groupParams) {
-  (void)result;
-  (void)nbGroups;
-  (void)input;
-  (void)remainder;
-  (void)flags;
-  (void)groupParams;
-  return hipErrorNotSupported;
-}
-
 HIPAPI hipError_t hipDeviceComputeCapability(int* major, int* minor,
                                              hipDevice_t device) {
   (void)major;

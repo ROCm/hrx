@@ -84,6 +84,22 @@ hipError_t iree_hip_execution_resource_split_sm_by_count(
     hipDevResource* out_resources, unsigned int* inout_group_count,
     hipDevResource* out_remainder);
 
+// Splits resolved |input_set| into structured disjoint exact SM resources.
+//
+// |group_parameters| supplies one requested partition shape per output. Zero
+// counts request ordered automatic sizing and automatically-sized backfill
+// groups may absorb otherwise unassigned resources. The parameter array is
+// normalized in place only after the complete split succeeds. A NULL
+// |out_resources| performs a dry run and permits automatically-sized groups to
+// discover zero resources. |out_remainder| is still populated when requested.
+// All outputs are unchanged on failure.
+hipError_t iree_hip_execution_resource_split_sm(
+    iree_hal_streaming_device_t* device,
+    const iree_hal_streaming_execution_resource_set_t* input_set,
+    const hipDevResource* input, unsigned int group_count, unsigned int flags,
+    hipDevSmResourceGroupParams* group_parameters,
+    hipDevResource* out_resources, hipDevResource* out_remainder);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

@@ -3098,6 +3098,34 @@ HIPAPI hipError_t hipDevSmResourceSplitByCount(hipDevResource* result,
   HIP_RETURN_ERROR(split_result);
 }
 
+HIPAPI hipError_t hipDevSmResourceSplit(
+    hipDevResource* result, unsigned int group_count,
+    const hipDevResource* input, hipDevResource* remainder, unsigned int flags,
+    hipDevSmResourceGroupParams* group_parameters) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (!input || !group_parameters || group_count == 0) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidValue);
+  }
+  hipError_t init_result = iree_hip_ensure_initialized();
+  if (init_result != hipSuccess) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(init_result);
+  }
+
+  iree_hal_streaming_device_t* device = NULL;
+  const iree_hal_streaming_execution_resource_set_t* input_set = NULL;
+  hipError_t split_result =
+      iree_hip_execution_resource_resolve_sm(input, &device, &input_set);
+  if (split_result == hipSuccess) {
+    split_result = iree_hip_execution_resource_split_sm(
+        device, input_set, input, group_count, flags, group_parameters, result,
+        remainder);
+  }
+  IREE_TRACE_ZONE_END(z0);
+  HIP_RETURN_ERROR(split_result);
+}
+
 HIPAPI hipError_t hipDevResourceGenerateDesc(hipDevResourceDesc_t* descriptor,
                                              hipDevResource* resources,
                                              unsigned int resource_count) {

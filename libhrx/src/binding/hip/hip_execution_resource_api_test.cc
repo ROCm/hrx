@@ -46,6 +46,10 @@ using HipDevSmResourceSplitByCountFn =
     hipError_t (*)(hipDevResource* result, unsigned int* group_count,
                    const hipDevResource* input, hipDevResource* remainder,
                    unsigned int flags, unsigned int minimum_count);
+using HipDevSmResourceSplitFn = hipError_t (*)(
+    hipDevResource* result, unsigned int group_count,
+    const hipDevResource* input, hipDevResource* remainder, unsigned int flags,
+    hipDevSmResourceGroupParams* group_parameters);
 using HipDevResourceGenerateDescFn =
     hipError_t (*)(hipDevResourceDesc_t* descriptor, hipDevResource* resources,
                    unsigned int resource_count);
@@ -209,6 +213,9 @@ struct HipRuntimeApi {
   // Splits one exact SM resource into equal-size partitions.
   HipDevSmResourceSplitByCountFn split_sm_by_count = nullptr;
 
+  // Splits one exact SM resource into caller-shaped partitions.
+  HipDevSmResourceSplitFn split_sm = nullptr;
+
   // Generates a one-shot descriptor from exact execution resources.
   HipDevResourceGenerateDescFn generate_descriptor = nullptr;
 
@@ -321,6 +328,8 @@ class HipExecutionResourceApiTest : public testing::Test {
               api_.library, "hipDeviceGetExecutionCtx");
       api_.split_sm_by_count = ResolveHipSymbol<HipDevSmResourceSplitByCountFn>(
           api_.library, "hipDevSmResourceSplitByCount");
+      api_.split_sm = ResolveHipSymbol<HipDevSmResourceSplitFn>(
+          api_.library, "hipDevSmResourceSplit");
       api_.generate_descriptor = ResolveHipSymbol<HipDevResourceGenerateDescFn>(
           api_.library, "hipDevResourceGenerateDesc");
       api_.create_context = ResolveHipSymbol<HipGreenCtxCreateFn>(
@@ -391,6 +400,7 @@ class HipExecutionResourceApiTest : public testing::Test {
     ASSERT_NE(api_.device_get_resource, nullptr);
     ASSERT_NE(api_.device_execution_context, nullptr);
     ASSERT_NE(api_.split_sm_by_count, nullptr);
+    ASSERT_NE(api_.split_sm, nullptr);
     ASSERT_NE(api_.generate_descriptor, nullptr);
     ASSERT_NE(api_.create_context, nullptr);
     ASSERT_NE(api_.destroy_context, nullptr);
@@ -547,6 +557,40 @@ TEST_F(HipExecutionResourceApiTest, SplitsFullResourceThroughPublicAbi) {
     ASSERT_GT(remainder.sm.smCoscheduledAlignment, 0u);
     EXPECT_GT(remainder.sm.smCount, 0u);
     EXPECT_EQ(remainder.sm.smCount % remainder.sm.smCoscheduledAlignment, 0u);
+    returned_sm_count += remainder.sm.smCount;
+  } else {
+    EXPECT_EQ(remainder.type, hipDevResourceTypeInvalid);
+  }
+  EXPECT_EQ(returned_sm_count, full_resource.sm.smCount);
+}
+
+TEST_F(HipExecutionResourceApiTest, SplitsStructuredResourcesThroughPublicAbi) {
+  hipDevResource full_resource;
+  ASSERT_EQ(hipSuccess, api_.device_get_resource(device_, &full_resource,
+                                                 hipDevResourceTypeSm));
+  ASSERT_GT(full_resource.sm.minSmPartitionSize, 0u);
+  ASSERT_GE(full_resource.sm.smCount, 3u * full_resource.sm.minSmPartitionSize);
+
+  hipDevSmResourceGroupParams group_parameters[2] = {};
+  group_parameters[0].smCount = 2u * full_resource.sm.minSmPartitionSize;
+  group_parameters[1].smCount = full_resource.sm.minSmPartitionSize;
+  hipDevResource partitions[2];
+  hipDevResource remainder;
+  ASSERT_EQ(hipSuccess,
+            api_.split_sm(partitions, /*group_count=*/2, &full_resource,
+                          &remainder, /*flags=*/0, group_parameters));
+
+  EXPECT_EQ(partitions[0].sm.smCount, group_parameters[0].smCount);
+  EXPECT_EQ(partitions[1].sm.smCount, group_parameters[1].smCount);
+  for (const auto& parameter : group_parameters) {
+    EXPECT_EQ(parameter.coscheduledSmCount,
+              full_resource.sm.smCoscheduledAlignment);
+    EXPECT_EQ(parameter.preferredCoscheduledSmCount,
+              parameter.coscheduledSmCount);
+  }
+  uint64_t returned_sm_count =
+      partitions[0].sm.smCount + partitions[1].sm.smCount;
+  if (remainder.type == hipDevResourceTypeSm) {
     returned_sm_count += remainder.sm.smCount;
   } else {
     EXPECT_EQ(remainder.type, hipDevResourceTypeInvalid);
