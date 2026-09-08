@@ -381,5 +381,7 @@ is intentionally no public generic close operation.
 - [`variant.h`](variant.h) defines the host call value and typed adapter model.
 - [`reflection.h`](reflection.h) defines public descriptions and metadata.
 - [`bytecode/spec/`](bytecode/spec/) is the authoritative module-format and ISA
-  model. The bytecode loader and interpreter are a later module implementation,
-  not part of the generic API reconstructed here.
+  model. [`bytecode/module.h`](bytecode/module.h) creates verified or trusted
+  bytecode modules implementing the same generic interface, while the verifier,
+  interpreter, assembler, and disassembler remain private implementation
+  components behind their narrow public entry points.

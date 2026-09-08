@@ -214,6 +214,104 @@ iree_cc_library(
   PUBLIC
 )
 
+iree_cc_library(
+  NAME
+    module
+  HDRS
+    "module.h"
+  SRCS
+    "image.c"
+    "image.h"
+    "interpreter.c"
+    "interpreter.h"
+    "interpreter_atomic.c"
+    "interpreter_atomic.h"
+    "interpreter_buffer.h"
+    "interpreter_call.c"
+    "interpreter_call.h"
+    "interpreter_conversion.c"
+    "interpreter_conversion.h"
+    "interpreter_float.h"
+    "interpreter_float_impl.inl"
+    "interpreter_float_math.c"
+    "interpreter_float_math.h"
+    "interpreter_frame.c"
+    "interpreter_frame.h"
+    "interpreter_integer.h"
+    "interpreter_integer_impl.inl"
+    "interpreter_memory.h"
+    "interpreter_tables.inl"
+    "module.c"
+    "process.c"
+    "process.h"
+    "reflection.c"
+    "reflection.h"
+  DEPS
+    ::layout
+    ::verifier
+    ::wire
+    iree::base
+    iree::base::core_headers
+    iree::base::internal
+    iree::math
+    iree::vm
+  PUBLIC
+)
+
+iree_cc_binary_benchmark(
+  NAME
+    module_benchmark
+  SRCS
+    "module_benchmark.cc"
+  DEPS
+    ::launch_config_testdata
+    ::layout
+    ::module
+    ::module_fixture
+    iree::base
+    iree::testing::benchmark
+    iree::testing::benchmark_main
+    iree::third_party::google_benchmark
+    iree::vm
+  TESTONLY
+)
+
+iree_cc_test(
+  NAME
+    interpreter_test
+  SRCS
+    "interpreter_test.cc"
+  DEPS
+    ::execution_testdata
+    ::module
+    ::module_fixture
+    iree::base
+    iree::testing::gtest
+    iree::testing::gtest_main
+    iree::vm
+    iree::vm::invocation_test_module
+)
+
+iree_cc_test(
+  NAME
+    module_test
+  SRCS
+    "image.h"
+    "module_test.cc"
+  DEPS
+    ::execution_testdata
+    ::launch_config_testdata
+    ::layout
+    ::module
+    ::module_fixture
+    iree::base
+    iree::base::internal
+    iree::testing::gtest
+    iree::testing::gtest_main
+    iree::vm
+    iree::vm::test_support
+)
+
 iree_cc_test(
   NAME
     verifier_test
@@ -270,6 +368,155 @@ iree_cc_test(
     ::module_fixture
     ::wire
     iree::base
+    iree::testing::gtest
+    iree::testing::gtest_main
+)
+
+iree_cc_test(
+  NAME
+    reflection_test
+  SRCS
+    "image.h"
+    "reflection.h"
+    "reflection_test.cc"
+  DEPS
+    ::execution_testdata
+    ::layout
+    ::module
+    ::module_fixture
+    ::verifier
+    iree::base
+    iree::base::internal
+    iree::testing::gtest
+    iree::testing::gtest_main
+    iree::vm
+)
+
+iree_cc_test(
+  NAME
+    process_test
+  SRCS
+    "image.h"
+    "process.h"
+    "process_test.cc"
+  DEPS
+    ::layout
+    ::module
+    ::module_fixture
+    ::verifier
+    ::verifier_testdata
+    iree::base
+    iree::base::internal
+    iree::testing::gtest
+    iree::testing::gtest_main
+    iree::vm
+)
+
+iree_cc_test(
+  NAME
+    interpreter_atomic_test
+  SRCS
+    "interpreter_atomic.h"
+    "interpreter_atomic_test.cc"
+  DEPS
+    ::module
+    ::wire
+    iree::base
+    iree::base::core_headers
+    iree::testing::gtest
+    iree::testing::gtest_main
+)
+
+iree_cc_test(
+  NAME
+    interpreter_buffer_test
+  SRCS
+    "interpreter_buffer.h"
+    "interpreter_buffer_test.cc"
+  DEPS
+    ::module
+    iree::base
+    iree::testing::gtest
+    iree::testing::gtest_main
+    iree::vm
+)
+
+iree_cc_test(
+  NAME
+    interpreter_conversion_test
+  SRCS
+    "interpreter_conversion.h"
+    "interpreter_conversion_test.cc"
+    "interpreter_conversion_test_vectors.inl"
+  DEPS
+    ::module
+    ::wire
+    iree::base
+    iree::base::internal
+    iree::testing::gtest
+    iree::testing::gtest_main
+)
+
+iree_cc_test(
+  NAME
+    interpreter_memory_test
+  SRCS
+    "interpreter_memory.h"
+    "interpreter_memory_test.cc"
+  DEPS
+    ::module
+    ::wire
+    iree::base
+    iree::base::core_headers
+    iree::testing::gtest
+    iree::testing::gtest_main
+)
+
+iree_cc_test(
+  NAME
+    interpreter_float_math_test
+  SRCS
+    "interpreter_float.h"
+    "interpreter_float_impl.inl"
+    "interpreter_float_math.h"
+    "interpreter_float_math_test.cc"
+  DEPS
+    ::module
+    ::wire
+    iree::base
+    iree::base::internal::fpu_state
+    iree::testing::gtest
+    iree::testing::gtest_main
+)
+
+iree_cc_test(
+  NAME
+    interpreter_float_test
+  SRCS
+    "interpreter_float.h"
+    "interpreter_float_impl.inl"
+    "interpreter_float_math.h"
+    "interpreter_float_test.cc"
+  DEPS
+    ::module
+    ::wire
+    iree::base
+    iree::testing::gtest
+    iree::testing::gtest_main
+)
+
+iree_cc_test(
+  NAME
+    interpreter_integer_test
+  SRCS
+    "interpreter_integer.h"
+    "interpreter_integer_impl.inl"
+    "interpreter_integer_test.cc"
+  DEPS
+    ::module
+    ::wire
+    iree::base
+    iree::base::internal
     iree::testing::gtest
     iree::testing::gtest_main
 )

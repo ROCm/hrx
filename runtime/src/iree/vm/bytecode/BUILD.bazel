@@ -257,6 +257,100 @@ iree_runtime_cc_library(
     ],
 )
 
+iree_runtime_cc_library(
+    name = "module",
+    srcs = [
+        "image.c",
+        "image.h",
+        "interpreter.c",
+        "interpreter.h",
+        "interpreter_atomic.c",
+        "interpreter_atomic.h",
+        "interpreter_buffer.h",
+        "interpreter_call.c",
+        "interpreter_call.h",
+        "interpreter_conversion.c",
+        "interpreter_conversion.h",
+        "interpreter_float.h",
+        "interpreter_float_impl.inl",
+        "interpreter_float_math.c",
+        "interpreter_float_math.h",
+        "interpreter_frame.c",
+        "interpreter_frame.h",
+        "interpreter_integer.h",
+        "interpreter_integer_impl.inl",
+        "interpreter_memory.h",
+        "interpreter_tables.inl",
+        "module.c",
+        "process.c",
+        "process.h",
+        "reflection.c",
+        "reflection.h",
+    ],
+    hdrs = ["module.h"],
+    deps = [
+        ":layout",
+        ":verifier",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base:core_headers",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/math",
+        "//runtime/src/iree/vm",
+    ],
+)
+
+iree_runtime_cc_benchmark(
+    name = "module_benchmark",
+    srcs = ["module_benchmark.cc"],
+    deps = [
+        ":launch_config_testdata",
+        ":layout",
+        ":module",
+        ":module_fixture",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:benchmark",
+        "//runtime/src/iree/testing:benchmark_main",
+        "//runtime/src/iree/vm",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_test",
+    srcs = ["interpreter_test.cc"],
+    deps = [
+        ":execution_testdata",
+        ":module",
+        ":module_fixture",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+        "//runtime/src/iree/vm",
+        "//runtime/src/iree/vm:invocation_test_module",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "module_test",
+    srcs = [
+        "image.h",
+        "module_test.cc",
+    ],
+    deps = [
+        ":execution_testdata",
+        ":launch_config_testdata",
+        ":layout",
+        ":module",
+        ":module_fixture",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+        "//runtime/src/iree/vm",
+        "//runtime/src/iree/vm:test_support",
+    ],
+)
+
 iree_runtime_cc_test(
     name = "verifier_test",
     srcs = [
@@ -313,6 +407,164 @@ iree_runtime_cc_test(
     ],
 )
 
+iree_runtime_cc_test(
+    name = "reflection_test",
+    srcs = [
+        "image.h",
+        "reflection.h",
+        "reflection_test.cc",
+    ],
+    deps = [
+        ":execution_testdata",
+        ":layout",
+        ":module",
+        ":module_fixture",
+        ":verifier",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+        "//runtime/src/iree/vm",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "process_test",
+    srcs = [
+        "image.h",
+        "process.h",
+        "process_test.cc",
+    ],
+    deps = [
+        ":layout",
+        ":module",
+        ":module_fixture",
+        ":verifier",
+        ":verifier_testdata",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+        "//runtime/src/iree/vm",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_atomic_test",
+    srcs = [
+        "interpreter_atomic.h",
+        "interpreter_atomic_test.cc",
+    ],
+    deps = [
+        ":module",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base:core_headers",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_buffer_test",
+    srcs = [
+        "interpreter_buffer.h",
+        "interpreter_buffer_test.cc",
+    ],
+    deps = [
+        ":module",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+        "//runtime/src/iree/vm",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_conversion_test",
+    srcs = [
+        "interpreter_conversion.h",
+        "interpreter_conversion_test.cc",
+        "interpreter_conversion_test_vectors.inl",
+    ],
+    deps = [
+        ":module",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_memory_test",
+    srcs = [
+        "interpreter_memory.h",
+        "interpreter_memory_test.cc",
+    ],
+    deps = [
+        ":module",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base:core_headers",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_float_math_test",
+    srcs = [
+        "interpreter_float.h",
+        "interpreter_float_impl.inl",
+        "interpreter_float_math.h",
+        "interpreter_float_math_test.cc",
+    ],
+    deps = [
+        ":module",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal:fpu_state",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_float_test",
+    srcs = [
+        "interpreter_float.h",
+        "interpreter_float_impl.inl",
+        "interpreter_float_math.h",
+        "interpreter_float_test.cc",
+    ],
+    deps = [
+        ":module",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_integer_test",
+    srcs = [
+        "interpreter_integer.h",
+        "interpreter_integer_impl.inl",
+        "interpreter_integer_test.cc",
+    ],
+    deps = [
+        ":module",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
 test_suite(
     name = "tests",
     tests = [
@@ -320,6 +572,17 @@ test_suite(
         ":assembler_symbols_test",
         ":assembler_test",
         ":disassembler_test",
+        ":interpreter_atomic_test",
+        ":interpreter_buffer_test",
+        ":interpreter_conversion_test",
+        ":interpreter_float_math_test",
+        ":interpreter_float_test",
+        ":interpreter_integer_test",
+        ":interpreter_memory_test",
+        ":interpreter_test",
+        ":module_test",
+        ":process_test",
+        ":reflection_test",
         ":verifier_test",
     ],
 )
