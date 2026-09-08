@@ -164,9 +164,11 @@ iree_cc_library(
 )
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
+if(AMDF_BUILD AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows"))
 set(_core_platform_deps "")
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  list(APPEND _core_platform_deps libamdf::src::platform::linux)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
   list(APPEND _core_platform_deps libamdf::src::platform::windows)
 endif()
 iree_cc_library(

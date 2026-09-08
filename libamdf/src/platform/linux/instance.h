@@ -1,0 +1,17 @@
+// Copyright 2026 The IREE Authors
+//
+// Licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+#ifndef AMDF_SRC_PLATFORM_LINUX_INSTANCE_H_
+#define AMDF_SRC_PLATFORM_LINUX_INSTANCE_H_
+
+#include "libamdf/src/platform/instance.h"
+
+struct amdf_platform_instance_t {
+  // Owned sysfs root used for discovery without process-global state.
+  int sysfs_descriptor;
+};
+
+#endif  // AMDF_SRC_PLATFORM_LINUX_INSTANCE_H_

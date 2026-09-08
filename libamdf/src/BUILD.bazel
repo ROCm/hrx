@@ -113,7 +113,11 @@ amdf_cc_library(
 
 amdf_cc_library(
     name = "core",
-    target_compatible_with = ["@platforms//os:windows"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:windows": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
     visibility = ["//libamdf/src/provider:__pkg__"],
     deps = [
         ":device",
@@ -125,6 +129,7 @@ amdf_cc_library(
         ":pci",
         ":structure",
     ] + select({
+        "@platforms//os:linux": ["//libamdf/src/platform/linux"],
         "@platforms//os:windows": ["//libamdf/src/platform/windows"],
         "//conditions:default": [],
     }),
