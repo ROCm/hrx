@@ -63,7 +63,8 @@ static iree_status_t iree_hal_amdgpu_host_queue_validate_dispatch_flags(
       IREE_HAL_DISPATCH_FLAG_STATIC_INDIRECT_PARAMETERS |
       IREE_HAL_DISPATCH_FLAG_CUSTOM_DIRECT_ARGUMENTS |
       IREE_HAL_DISPATCH_FLAG_ALLOW_INLINE_EXECUTION |
-      IREE_HAL_DISPATCH_FLAG_BORROW_RESOURCE_LIFETIMES;
+      IREE_HAL_DISPATCH_FLAG_BORROW_RESOURCE_LIFETIMES |
+      IREE_HAL_DISPATCH_FLAG_COOPERATIVE;
   if (IREE_UNLIKELY(iree_any_bit_set(flags, ~supported_flags))) {
     return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                             "unsupported dispatch flags: 0x%" PRIx64, flags);
@@ -382,11 +383,19 @@ static bool iree_hal_amdgpu_host_queue_dispatch_has_implicit_args(
 
 static iree_status_t iree_hal_amdgpu_host_queue_prepare_dispatch_grid_sync_info(
     const iree_hal_amdgpu_host_queue_t* queue,
-    const iree_hal_dispatch_config_t config,
+    const iree_hal_dispatch_config_t config, iree_hal_dispatch_flags_t flags,
     iree_hal_amdgpu_host_queue_dispatch_plan_t* inout_plan) {
-  if (!iree_any_bit_set(queue->base.features,
-                        IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH) ||
-      !iree_hal_amdgpu_host_queue_dispatch_has_implicit_args(inout_plan)) {
+  if (!iree_any_bit_set(flags, IREE_HAL_DISPATCH_FLAG_COOPERATIVE)) {
+    return iree_ok_status();
+  }
+  if (IREE_UNLIKELY(!iree_any_bit_set(
+          queue->base.features,
+          IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH))) {
+    return iree_make_status(
+        IREE_STATUS_FAILED_PRECONDITION,
+        "cooperative AMDGPU dispatch requires a cooperative-capable queue");
+  }
+  if (!iree_hal_amdgpu_host_queue_dispatch_has_implicit_args(inout_plan)) {
     return iree_ok_status();
   }
   if (IREE_UNLIKELY(inout_plan->uses_indirect_parameters)) {
@@ -427,7 +436,7 @@ static iree_status_t iree_hal_amdgpu_host_queue_prepare_dispatch_plan(
       &out_plan->kernarg_layout, &out_plan->custom_layout,
       &out_plan->kernarg_block_count, &out_plan->operation_resource_count));
   return iree_hal_amdgpu_host_queue_prepare_dispatch_grid_sync_info(
-      queue, config, out_plan);
+      queue, config, flags, out_plan);
 }
 
 static iree_status_t iree_hal_amdgpu_host_queue_resolve_validated_binding_ptr(

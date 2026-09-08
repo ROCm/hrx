@@ -492,6 +492,16 @@ IREE_API_EXPORT iree_status_t iree_hal_command_buffer_dispatch(
             iree_hal_executable_queue_family(executable)),
         iree_hal_queue_family_ordinal(command_buffer->queue_family));
   }
+  if (IREE_UNLIKELY(
+          iree_any_bit_set(flags, IREE_HAL_DISPATCH_FLAG_COOPERATIVE) &&
+          !iree_any_bit_set(
+              iree_hal_queue_family_spec(command_buffer->queue_family)
+                  ->supported_queue_features,
+              IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH))) {
+    return iree_make_status(
+        IREE_STATUS_FAILED_PRECONDITION,
+        "cooperative dispatch requires a cooperative-capable queue family");
+  }
 
   IREE_TRACE_ZONE_BEGIN(z0);
 #if IREE_HAL_VERBOSE_TRACING_ENABLE

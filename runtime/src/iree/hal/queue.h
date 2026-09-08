@@ -311,6 +311,13 @@ enum iree_hal_dispatch_flag_bits_t {
   // is expressed by command buffer modes such as
   // IREE_HAL_COMMAND_BUFFER_MODE_UNRETAINED.
   IREE_HAL_DISPATCH_FLAG_BORROW_RESOURCE_LIFETIMES = 1ull << 6,
+
+  // Requires cooperative grid synchronization for this dispatch. The exact
+  // queue executing the operation must advertise
+  // IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH. Each execution receives
+  // independent synchronization state and may overlap other executions of the
+  // same command buffer.
+  IREE_HAL_DISPATCH_FLAG_COOPERATIVE = 1ull << 7,
 };
 
 // Returns true if the given dispatch uses indirect workgroup parameters.

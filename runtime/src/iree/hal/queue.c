@@ -255,7 +255,8 @@ IREE_API_EXPORT iree_status_t iree_hal_queue_dispatch(
       IREE_HAL_DISPATCH_FLAG_DYNAMIC_INDIRECT_ARGUMENTS |
       IREE_HAL_DISPATCH_FLAG_STATIC_INDIRECT_ARGUMENTS |
       IREE_HAL_DISPATCH_FLAG_ALLOW_INLINE_EXECUTION |
-      IREE_HAL_DISPATCH_FLAG_BORROW_RESOURCE_LIFETIMES;
+      IREE_HAL_DISPATCH_FLAG_BORROW_RESOURCE_LIFETIMES |
+      IREE_HAL_DISPATCH_FLAG_COOPERATIVE;
   if (IREE_UNLIKELY(!queue)) {
     IREE_RETURN_AND_END_ZONE_IF_ERROR(
         z0, iree_make_status(IREE_STATUS_INVALID_ARGUMENT, "queue is null"));
@@ -291,6 +292,16 @@ IREE_API_EXPORT iree_status_t iree_hal_queue_dispatch(
         z0,
         iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                          "unsupported dispatch flags: 0x%016" PRIx64, flags));
+  }
+  if (IREE_UNLIKELY(
+          iree_any_bit_set(flags, IREE_HAL_DISPATCH_FLAG_COOPERATIVE) &&
+          !iree_any_bit_set(
+              iree_hal_queue_features(queue),
+              IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH))) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(
+                IREE_STATUS_FAILED_PRECONDITION,
+                "cooperative dispatch requires a cooperative-capable queue"));
   }
   iree_status_t status = _VTABLE_DISPATCH(queue, dispatch)(
       queue, wait_semaphore_list, signal_semaphore_list, executable, function,
