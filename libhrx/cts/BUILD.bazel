@@ -24,7 +24,11 @@ AMD_GPU_CTS_TAGS = [
     "runtime-resource=amd-gpu",
 ]
 
-_LINUX_COMPATIBILITY = ["@platforms//os:linux"]
+# HIP GPU tests require a compiled AMDGPU backend before runtime device discovery.
+_HIP_GPU_COMPATIBILITY = ["@platforms//os:linux"] + select({
+    "//runtime/config/hal:driver_amdgpu": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
 
 iree_amdgpu_binary_variants_embed_data(
     name = "amdgpu_executable_test_kernels",
@@ -154,7 +158,7 @@ hrx_cc_test(
     },
     sanitizer_suppressions = hsa_suppressions,
     tags = AMD_GPU_CTS_TAGS,
-    target_compatible_with = _LINUX_COMPATIBILITY,
+    target_compatible_with = _HIP_GPU_COMPATIBILITY,
     deps = [
         "//build_tools/bazel:dl",
         "//libhrx/src/binding/hip:launch_params",
@@ -177,7 +181,7 @@ hrx_cc_test(
     },
     sanitizer_suppressions = hsa_suppressions,
     tags = AMD_GPU_CTS_TAGS,
-    target_compatible_with = _LINUX_COMPATIBILITY,
+    target_compatible_with = _HIP_GPU_COMPATIBILITY,
     deps = [
         ":amdgpu_executable_test_kernels",
         "//build_tools/amdgpu:target_map_h",
@@ -203,7 +207,7 @@ hrx_cc_test(
     },
     sanitizer_suppressions = hsa_suppressions,
     tags = AMD_GPU_CTS_TAGS,
-    target_compatible_with = _LINUX_COMPATIBILITY,
+    target_compatible_with = _HIP_GPU_COMPATIBILITY,
     deps = [
         ":amdgpu_executable_test_kernels",
         ":amdgpu_hip_printf_test_kernels",
@@ -229,7 +233,7 @@ hrx_cc_test(
     },
     sanitizer_suppressions = hsa_suppressions,
     tags = AMD_GPU_CTS_TAGS,
-    target_compatible_with = _LINUX_COMPATIBILITY,
+    target_compatible_with = _HIP_GPU_COMPATIBILITY,
     deps = [
         ":amdgpu_hip_printf_test_kernels",
         "//build_tools/amdgpu:target_map_h",
@@ -254,7 +258,7 @@ hrx_cc_test(
     },
     sanitizer_suppressions = hsa_suppressions,
     tags = AMD_GPU_CTS_TAGS + ["manual"],
-    target_compatible_with = _LINUX_COMPATIBILITY,
+    target_compatible_with = _HIP_GPU_COMPATIBILITY,
     deps = [
         ":amdgpu_hip_printf_test_kernels",
         "//build_tools/amdgpu:target_map_h",
