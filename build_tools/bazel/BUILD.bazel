@@ -12,6 +12,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 load("//build_tools/bazel:cc.bzl", "iree_cc_binary", "iree_cc_library")
 load("//build_tools/bazel:cc_link.bzl", "cc_link")
+load("//build_tools/bazel:msvc.bzl", "iree_msvc_masm_toolchain")
 load("//build_tools/bazel:python.bzl", "iree_py_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -46,6 +47,32 @@ platform(
         "@platforms//os:windows",
         "@bazel_tools//tools/cpp:clang-cl",
     ],
+)
+
+toolchain_type(name = "msvc_masm_toolchain_type")
+
+iree_msvc_masm_toolchain(
+    name = "msvc_masm",
+    arguments = [
+        "/nologo",
+        "/Zi",
+        "/c",
+    ],
+    assembler = ":msvc_masm_wrapper.bat",
+)
+
+toolchain(
+    name = "msvc_masm_toolchain",
+    exec_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:windows",
+    ],
+    target_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:windows",
+    ],
+    toolchain = ":msvc_masm",
+    toolchain_type = ":msvc_masm_toolchain_type",
 )
 
 exports_files([

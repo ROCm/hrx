@@ -7,6 +7,7 @@
 # buildifier: disable=bzl-visibility
 load("@rules_cc//cc/private/toolchain:windows_cc_toolchain_config.bzl", "cc_toolchain_config")
 load("@rules_cc//cc/toolchains:cc_toolchain.bzl", "cc_toolchain")
+load("//build_tools/bazel:msvc.bzl", "iree_msvc_masm_toolchain")
 
 def _unavailable_asan_runtime_impl(ctx):
     fail("%s requires Windows compiler-rt libraries and DLLs matching the selected LLVM. Windows compiler-rt is not configured for this local toolchain. Use a build without --config=asan." % ctx.label)
@@ -127,4 +128,17 @@ def windows_cc_toolchain(name, repository_path, execution_architecture, msvc_ver
         target_compatible_with = ["@platforms//cpu:x86_64", "@platforms//os:windows"],
         toolchain = ":cc_toolchain",
         toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+    )
+    iree_msvc_masm_toolchain(
+        name = "masm",
+        arguments = ["-m64", "/c"],
+        assembler = "tools/llvm-ml",
+        data = ["bin/llvm-ml", ":host_dynamic_libraries"],
+    )
+    native.toolchain(
+        name = "masm_toolchain",
+        exec_compatible_with = ["@platforms//cpu:" + execution_architecture, "@platforms//os:linux"],
+        target_compatible_with = ["@platforms//cpu:x86_64", "@platforms//os:windows"],
+        toolchain = ":masm",
+        toolchain_type = Label("//build_tools/bazel:msvc_masm_toolchain_type"),
     )

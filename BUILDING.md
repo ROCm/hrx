@@ -51,9 +51,9 @@ python dev.py cmake hook
 ### Windows targets from Linux
 
 `--config=windows-x86_64` builds Windows x86-64 executables and DLLs using
-clang-cl and lld-link from the selected Linux LLVM installation. Build-time
-generators continue to run on Linux. Native Windows uses its existing clang-cl
-toolchain with the same destination config.
+clang-cl, lld-link, and llvm-ml from the selected Linux LLVM installation.
+Build-time generators continue to run on Linux. Native Windows uses its existing
+clang-cl toolchain with the same destination config.
 
 Provide a Linux LLVM installation and a Windows SDK/MSVC sysroot. The Bazel
 repository reads `LLVM_ROOT` and `WINSDK_ROOT` from the environment or explicit

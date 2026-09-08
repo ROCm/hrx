@@ -13,6 +13,7 @@ _TOOLS = [
     "clang-cl",
     "lld-link",
     "llvm-lib",
+    "llvm-ml",
     "llvm-cov",
     "llvm-nm",
     "llvm-objcopy",
@@ -52,8 +53,9 @@ def _windows_toolchain_repository_impl(repository_ctx):
         repository_ctx.file("BUILD.bazel", """
 package(default_visibility = ["//visibility:public"])
 alias(name = "toolchain", actual = "@local_config_cc//:cc-toolchain-x64_windows-clang-cl")
+alias(name = "masm_toolchain", actual = {masm_toolchain})
 alias(name = "address_sanitizer_runtime", actual = "@local_config_cc//:clang_cl_x64_asan_runtime")
-""")
+""".format(masm_toolchain = repr(str(repository_ctx.attr._masm_toolchain))))
         return
     if repository_ctx.os.name != "linux":
         fail("The local Windows toolchain currently executes on Linux or Windows; host is %s." % repository_ctx.os.name)
@@ -120,6 +122,7 @@ windows_cc_toolchain(
 windows_toolchain_repository = repository_rule(
     implementation = _windows_toolchain_repository_impl,
     attrs = {
+        "_masm_toolchain": attr.label(default = Label("//build_tools/bazel:msvc_masm_toolchain")),
         "_toolchain_bzl": attr.label(default = Label("//build_tools/windows:toolchain.bzl")),
     },
     local = True,
