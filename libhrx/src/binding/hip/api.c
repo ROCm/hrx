@@ -24201,6 +24201,12 @@ HIPAPI const char* hipGetErrorString(hipError_t error) {
       return "hipErrorStreamCaptureWrongThread";
     case hipErrorGraphExecUpdateFailure:
       return "hipErrorGraphExecUpdateFailure";
+    case hipErrorInvalidResourceType:
+      return "hipErrorInvalidResourceType";
+    case hipErrorInvalidResourceConfiguration:
+      return "hipErrorInvalidResourceConfiguration";
+    case hipErrorStreamDetached:
+      return "hipErrorStreamDetached";
     case hipErrorUnknown:
     default:
       return "hipErrorUnknown";

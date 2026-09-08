@@ -21,9 +21,8 @@
 #include "libhrx/src/binding/hip/api.h"
 #include "libhrx/src/binding/hip/binding_internal.h"
 
-// Local compatibility declarations for unsupported ABI entries. These symbols
-// only need type-correct call boundaries here; their implementations below
-// always return hipErrorNotSupported.
+// Local compatibility declarations for ABI entries not represented by the
+// core binding header. These keep the exported call boundaries type-correct.
 typedef const struct hipArray_st* hipArray_const_t;
 typedef struct hipMipmappedArray_st* hipMipmappedArray_t;
 typedef const struct hipMipmappedArray_st* hipMipmappedArray_const_t;
@@ -42,8 +41,6 @@ typedef struct hipArrayMemoryRequirements {
 } hipArrayMemoryRequirements;
 typedef struct hipDeviceProp_tR0000 hipDeviceProp_tR0000;
 typedef hipDeviceProp_t hipDeviceProp_tR0600;
-typedef struct ihipDevResourceDesc_t* hipDevResourceDesc_t;
-typedef struct ihipExecutionCtx_t* hipExecutionCtx_t;
 typedef void* hipExternalMemory_t;
 typedef struct hipExternalMemoryBufferDesc_st hipExternalMemoryBufferDesc;
 typedef struct hipExternalMemoryHandleDesc_st hipExternalMemoryHandleDesc;
@@ -123,9 +120,6 @@ typedef struct hipMemcpy3DBatchOp {
 typedef struct hipResourceDesc hipResourceDesc;
 typedef struct hipResourceViewDesc hipResourceViewDesc;
 typedef struct hipTextureDesc hipTextureDesc;
-typedef struct hipDevResource_st hipDevResource;
-typedef struct hipDevSmResourceGroupParams_st hipDevSmResourceGroupParams;
-typedef int hipDevResourceType;
 typedef int hipDriverEntryPointQueryResult;
 typedef int hipFunction_attribute;
 typedef int hipJitInputType;
