@@ -1,0 +1,118 @@
+aie2p.target<array> @array_target
+
+aie2p.target<core> @core_target
+
+pipeline.def<kernel> public retain target(@array_target) @extsi_i16x16_i32x16_array() launch(%input: buffer, %output: buffer) {
+  %worker_lanes = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %worker_lanes : index -> group
+  %input_view = buffer.view %input[%base] : buffer -> view<16xi16>
+  %output_view = buffer.view %output[%base] : buffer -> view<16xi32>
+  %input_tile = pipeline.read %input_view on %workers : view<16xi16>, group -> pipeline.flow<tile<16xi16>>
+  %result = pipeline.stage @extsi_i16x16_i32x16 on %workers(%input_tile) : (group, pipeline.flow<tile<16xi16>>) -> (pipeline.flow<tile<16xi32>>)
+  pipeline.write %result to %output_view : pipeline.flow<tile<16xi32>>, view<16xi32>
+  pipeline.return
+}
+
+pipeline.def<kernel> public retain target(@array_target) @extui_i8x64_i32x64_array() launch(%input: buffer, %output: buffer) {
+  %worker_lanes = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %worker_lanes : index -> group
+  %input_view = buffer.view %input[%base] : buffer -> view<64xi8>
+  %output_view = buffer.view %output[%base] : buffer -> view<64xi32>
+  %input_tile = pipeline.read %input_view on %workers : view<64xi8>, group -> pipeline.flow<tile<64xi8>>
+  %result = pipeline.stage @extui_i8x64_i32x64 on %workers(%input_tile) : (group, pipeline.flow<tile<64xi8>>) -> (pipeline.flow<tile<64xi32>>)
+  pipeline.write %result to %output_view : pipeline.flow<tile<64xi32>>, view<64xi32>
+  pipeline.return
+}
+
+pipeline.def<kernel> public retain target(@array_target) @extsi_i16x32_i64x32_array() launch(%input: buffer, %output: buffer) {
+  %worker_lanes = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %worker_lanes : index -> group
+  %input_view = buffer.view %input[%base] : buffer -> view<32xi16>
+  %output_view = buffer.view %output[%base] : buffer -> view<32xi64>
+  %input_tile = pipeline.read %input_view on %workers : view<32xi16>, group -> pipeline.flow<tile<32xi16>>
+  %result = pipeline.stage @extsi_i16x32_i64x32 on %workers(%input_tile) : (group, pipeline.flow<tile<32xi16>>) -> (pipeline.flow<tile<32xi64>>)
+  pipeline.write %result to %output_view : pipeline.flow<tile<32xi64>>, view<32xi64>
+  pipeline.return
+}
+
+pipeline.def<kernel> public retain target(@array_target) @trunci_i16x32_i8x32_array() launch(%input: buffer, %output: buffer) {
+  %worker_lanes = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %worker_lanes : index -> group
+  %input_view = buffer.view %input[%base] : buffer -> view<32xi16>
+  %output_view = buffer.view %output[%base] : buffer -> view<32xi8>
+  %input_tile = pipeline.read %input_view on %workers : view<32xi16>, group -> pipeline.flow<tile<32xi16>>
+  %result = pipeline.stage @trunci_i16x32_i8x32 on %workers(%input_tile) : (group, pipeline.flow<tile<32xi16>>) -> (pipeline.flow<tile<32xi8>>)
+  pipeline.write %result to %output_view : pipeline.flow<tile<32xi8>>, view<32xi8>
+  pipeline.return
+}
+
+pipeline.def<kernel> public retain target(@array_target) @bitpack_i8x128_i4x128_array() launch(%input: buffer, %output: buffer) {
+  %worker_lanes = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %worker_lanes : index -> group
+  %input_view = buffer.view %input[%base] : buffer -> view<128xi8>
+  %output_view = buffer.view %output[%base] : buffer -> view<64xi8>
+  %input_tile = pipeline.read %input_view on %workers : view<128xi8>, group -> pipeline.flow<tile<128xi8>>
+  %result = pipeline.stage @bitpack_i8x128_i4x128 on %workers(%input_tile) : (group, pipeline.flow<tile<128xi8>>) -> (pipeline.flow<tile<64xi8>>)
+  pipeline.write %result to %output_view : pipeline.flow<tile<64xi8>>, view<64xi8>
+  pipeline.return
+}
+
+func.def target(@core_target) @extsi_i16x16_i32x16(%input: buffer, %output: buffer) {
+  %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 64} : buffer, buffer
+  %base = index.constant 0 : offset
+  %input_view = buffer.view %input_aligned[%base] : buffer -> view<16xi16>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<16xi32>
+  %input_value = vector.load %input_view[0] : view<16xi16> -> vector<16xi16>
+  %result = vector.extsi %input_value : vector<16xi16> to vector<16xi32>
+  vector.store %result, %output_view[0] : vector<16xi32>, view<16xi32>
+  func.return
+}
+
+func.def target(@core_target) @extui_i8x64_i32x64(%input: buffer, %output: buffer) {
+  %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 64} : buffer, buffer
+  %base = index.constant 0 : offset
+  %input_view = buffer.view %input_aligned[%base] : buffer -> view<64xi8>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<64xi32>
+  %input_value = vector.load %input_view[0] : view<64xi8> -> vector<64xi8>
+  %result = vector.extui %input_value : vector<64xi8> to vector<64xi32>
+  vector.store %result, %output_view[0] : vector<64xi32>, view<64xi32>
+  func.return
+}
+
+func.def target(@core_target) @extsi_i16x32_i64x32(%input: buffer, %output: buffer) {
+  %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 64} : buffer, buffer
+  %base = index.constant 0 : offset
+  %input_view = buffer.view %input_aligned[%base] : buffer -> view<32xi16>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<32xi64>
+  %input_value = vector.load %input_view[0] : view<32xi16> -> vector<32xi16>
+  %result = vector.extsi %input_value : vector<32xi16> to vector<32xi64>
+  vector.store %result, %output_view[0] : vector<32xi64>, view<32xi64>
+  func.return
+}
+
+func.def target(@core_target) @trunci_i16x32_i8x32(%input: buffer, %output: buffer) {
+  %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 64} : buffer, buffer
+  %base = index.constant 0 : offset
+  %input_view = buffer.view %input_aligned[%base] : buffer -> view<32xi16>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<32xi8>
+  %input_value = vector.load %input_view[0] : view<32xi16> -> vector<32xi16>
+  %result = vector.trunci %input_value : vector<32xi16> to vector<32xi8>
+  vector.store %result, %output_view[0] : vector<32xi8>, view<32xi8>
+  func.return
+}
+
+func.def target(@core_target) @bitpack_i8x128_i4x128(%input: buffer, %output: buffer) {
+  %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 64} : buffer, buffer
+  %base = index.constant 0 : offset
+  %input_view = buffer.view %input_aligned[%base] : buffer -> view<128xi8>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<64xi8>
+  %input_value = vector.load %input_view[0] : view<128xi8> -> vector<128xi8>
+  %result = vector.bitpack<4> %input_value : vector<128xi8> -> vector<64xi8>
+  vector.store %result, %output_view[0] : vector<64xi8>, view<64xi8>
+  func.return
+}

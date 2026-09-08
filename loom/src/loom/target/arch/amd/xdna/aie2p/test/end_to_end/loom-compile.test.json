@@ -263,6 +263,45 @@
       ]
     },
     {
+      "name": "compiles native integer packet conversions into one XDNA product",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/native_integer_conversion.loom",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--output={tmp}/native_integer_conversion.xdna",
+          "--compile-report=summary"
+        ]
+      },
+      "stderr": {
+        "contains": {
+          "unordered": [
+            "\"artifact_kind\":\"hal-executable\"",
+            "\"backend\":\"xdna\"",
+            "\"artifact_format\":\"elf\"",
+            "\"status\":{\"code\":0,\"name\":\"OK\"}",
+            "\"entries\":{\"count\":10",
+            "\"function\":\"extsi_i16x32_i64x32\"",
+            "\"function\":\"bitpack_i8x128_i4x128_array$worker$0\"",
+            "\"plan_key\":\"native_signed_i16x16_to_i32x16\"",
+            "\"plan_key\":\"native_unsigned_i8x64_to_i32x64\"",
+            "\"plan_key\":\"native_signed_i16x32_to_i64x32\"",
+            "\"plan_key\":\"native_trunc_i16x32_to_i8x32\"",
+            "\"plan_key\":\"native_bitpack_i8x128_to_i4x128\"",
+            "\"spill_count\":0",
+            "\"allocation_materialized_copy_count\":0"
+          ]
+        }
+      },
+      "files": [
+        {
+          "path": "{tmp}/native_integer_conversion.xdna",
+          "non_empty": true
+        }
+      ]
+    },
+    {
       "name": "compiles a canonical GGML Q4_K gate/up SwiGLU pipeline",
       "run": {
         "tool": "loom-compile",
