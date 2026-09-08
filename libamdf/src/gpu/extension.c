@@ -9,6 +9,7 @@
 #include <stddef.h>
 
 #include "amdf/gpu.h"
+#include "libamdf/src/gpu/device.h"
 #include "libamdf/src/gpu/endpoint_profile.h"
 #include "libamdf/src/gpu/umd/endpoint_profile.h"
 #include "libamdf/src/structure.h"
@@ -46,6 +47,8 @@ static const amdf_gpu_api_t amdf_gpu_api_v1 = {
     .structure_size = sizeof(amdf_gpu_api_t),
     .extension_version = AMDF_GPU_EXTENSION_VERSION_1,
     .endpoint_query_info = amdf_gpu_endpoint_query_info,
+    .device_create = amdf_gpu_device_create,
+    .device_query_info = amdf_gpu_device_query_info,
 };
 
 void amdf_gpu_extension_initialize_endpoint(amdf_endpoint_t* endpoint) {

@@ -13,6 +13,18 @@ package(
 )
 
 amdf_cc_library(
+    name = "device",
+    srcs = ["device.c"],
+    hdrs = ["device.h"],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        "//libamdf/src/gpu/umd:device",
+        "//libamdf/src/platform/windows:endpoint",
+        "//libamdf/src/platform/windows:kmt_api",
+    ],
+)
+
+amdf_cc_library(
     name = "endpoint_profile",
     srcs = ["endpoint_profile.c"],
     target_compatible_with = ["@platforms//os:windows"],
@@ -30,5 +42,8 @@ amdf_cc_library(
     name = "wddm",
     target_compatible_with = ["@platforms//os:windows"],
     visibility = ["//libamdf/src/gpu/umd:__pkg__"],
-    deps = [":endpoint_profile"],
+    deps = [
+        ":device",
+        ":endpoint_profile",
+    ],
 )

@@ -25,6 +25,13 @@ extern "C" {
 #define AMDF_STRUCTURE_TYPE_GPU_ENDPOINT_INFO \
   ((amdf_structure_type_t)0x00020001u)
 
+/// An `amdf_gpu_device_create_info_t` input structure.
+#define AMDF_STRUCTURE_TYPE_GPU_DEVICE_CREATE_INFO \
+  ((amdf_structure_type_t)0x00020002u)
+
+/// An `amdf_gpu_device_info_t` output structure.
+#define AMDF_STRUCTURE_TYPE_GPU_DEVICE_INFO ((amdf_structure_type_t)0x00020003u)
+
 /// Immutable target identity and compute topology of one GPU endpoint.
 ///
 /// This record contains live provider-qualified hardware facts. It does not
@@ -74,6 +81,33 @@ typedef struct amdf_gpu_endpoint_info_t {
   } topology;
 } amdf_gpu_endpoint_info_t;
 
+/// Parameters used to materialize one program-independent GPU device.
+///
+/// A device owns one native GPU execution and address domain. Queue,
+/// executable, and memory policy are selected by later operations.
+typedef struct amdf_gpu_device_create_info_t {
+  /// Must be `AMDF_STRUCTURE_TYPE_GPU_DEVICE_CREATE_INFO`.
+  amdf_structure_type_t type;
+  /// Must be at least `sizeof(amdf_gpu_device_create_info_t)`.
+  uint32_t structure_size;
+  /// Optional input extension chain. No extensions are currently defined.
+  const void* next;
+} amdf_gpu_device_create_info_t;
+
+/// Immutable identity and reset state of one live GPU device.
+typedef struct amdf_gpu_device_info_t {
+  /// Must be `AMDF_STRUCTURE_TYPE_GPU_DEVICE_INFO`.
+  amdf_structure_type_t type;
+  /// Must be at least `sizeof(amdf_gpu_device_info_t)`.
+  uint32_t structure_size;
+  /// Optional output extension chain. No extensions are currently defined.
+  void* next;
+  /// Opaque identity of this live materialized device.
+  amdf_device_id_t id;
+  /// Monotonic provider epoch invalidating state after a device reset.
+  uint64_t reset_epoch;
+} amdf_gpu_device_info_t;
+
 /// Immutable entry-point table for one negotiated GPU extension version.
 ///
 /// Tables grow only by appending fields. The table and every function pointer
@@ -95,6 +129,26 @@ typedef struct amdf_gpu_api_t {
   /// its complete extension chain.
   amdf_status_t(AMDF_CALL* endpoint_query_info)(
       amdf_endpoint_t* endpoint, amdf_gpu_endpoint_info_t* out_info);
+
+  /// Materializes one program-independent GPU execution and address domain.
+  ///
+  /// `endpoint` remains query-only and may create independent devices. The
+  /// returned device borrows the endpoint, which must outlive it. No queue,
+  /// executable, command stream, or memory allocation is created. On failure,
+  /// `out_device` is set to `NULL`.
+  amdf_status_t(AMDF_CALL* device_create)(
+      amdf_endpoint_t* endpoint,
+      const amdf_gpu_device_create_info_t* create_info,
+      amdf_device_t** out_device);
+
+  /// Copies the identity and current reset epoch of `device`.
+  ///
+  /// The operation is thread-safe and performs no system call, allocation,
+  /// device initialization, retry, sleep, or device wait. The caller
+  /// initializes `out_info` and its complete extension chain. No output is
+  /// modified when validation or engine compatibility fails.
+  amdf_status_t(AMDF_CALL* device_query_info)(amdf_device_t* device,
+                                              amdf_gpu_device_info_t* out_info);
 } amdf_gpu_api_t;
 
 #ifdef __cplusplus

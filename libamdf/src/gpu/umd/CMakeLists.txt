@@ -12,6 +12,19 @@ iree_add_all_subdirs()
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
 iree_cc_library(
   NAME
+    device
+  HDRS
+    "device.h"
+  DEPS
+    amdf::headers
+    libamdf::src::platform
+  PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
+iree_cc_library(
+  NAME
     endpoint_profile
   HDRS
     "endpoint_profile.h"
@@ -28,6 +41,7 @@ iree_cc_library(
   NAME
     umd
   DEPS
+    ::device
     ::endpoint_profile
     amdf::headers
     libamdf::src::gpu::umd::wddm

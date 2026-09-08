@@ -85,6 +85,9 @@ amdf_status_t AMDF_CALL amdf_memory_create(
   if (!amdf_status_is_ok(status)) {
     return status;
   }
+  if (device->vtable->memory_create == NULL) {
+    return amdf_make_api_status(AMDF_STATUS_CODE_UNSUPPORTED);
+  }
   return device->vtable->memory_create(device, create_info, out_memory);
 }
 

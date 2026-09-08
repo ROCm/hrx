@@ -15,7 +15,7 @@ extern "C" {
 #endif  // __cplusplus
 
 typedef struct amdf_device_vtable_t {
-  // Creates physical memory attached to this device.
+  // Creates physical memory attached to this device, or NULL when unsupported.
   amdf_status_t (*memory_create)(amdf_device_t* device,
                                  const amdf_memory_create_info_t* create_info,
                                  amdf_memory_t** out_memory);

@@ -83,7 +83,11 @@ amdf_status_t amdf_kmt_api_initialize(amdf_kmt_api_t* out_api);
 // Unloads system KMT modules after every child handle has been closed.
 amdf_status_t amdf_kmt_api_deinitialize(amdf_kmt_api_t* api);
 
-// Returns true when the complete device/paging/context procedure set exists.
+// Returns true when the complete logical-device and paging procedure set
+// exists.
+bool amdf_kmt_api_supports_paging_devices(const amdf_kmt_api_t* api);
+
+// Returns true when paging devices and virtual contexts are supported.
 bool amdf_kmt_api_supports_device_contexts(const amdf_kmt_api_t* api);
 
 // Returns true when the complete physical-memory procedure set exists.

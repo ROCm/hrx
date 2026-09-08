@@ -70,10 +70,13 @@ static amdf_status_t amdf_kmt_resolve_procedures(amdf_kmt_api_t* api) {
   return AMDF_STATUS_OK;
 }
 
-bool amdf_kmt_api_supports_device_contexts(const amdf_kmt_api_t* api) {
+bool amdf_kmt_api_supports_paging_devices(const amdf_kmt_api_t* api) {
   return api->create_device != NULL && api->destroy_device != NULL &&
-         api->create_paging_queue != NULL &&
-         api->destroy_paging_queue != NULL &&
+         api->create_paging_queue != NULL && api->destroy_paging_queue != NULL;
+}
+
+bool amdf_kmt_api_supports_device_contexts(const amdf_kmt_api_t* api) {
+  return amdf_kmt_api_supports_paging_devices(api) &&
          api->create_context_virtual != NULL && api->destroy_context != NULL;
 }
 

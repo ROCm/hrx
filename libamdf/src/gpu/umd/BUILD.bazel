@@ -13,6 +13,14 @@ package(
 )
 
 amdf_cc_library(
+    name = "device",
+    hdrs = ["device.h"],
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//libamdf/src/gpu:__subpackages__"],
+    deps = ["//libamdf/src/platform"],
+)
+
+amdf_cc_library(
     name = "endpoint_profile",
     hdrs = ["endpoint_profile.h"],
     target_compatible_with = ["@platforms//os:windows"],
@@ -28,6 +36,7 @@ amdf_cc_library(
     target_compatible_with = ["@platforms//os:windows"],
     visibility = ["//libamdf/src/gpu:__pkg__"],
     deps = [
+        ":device",
         ":endpoint_profile",
         "//libamdf/src/gpu/umd/wddm",
     ],

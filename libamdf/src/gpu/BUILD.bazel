@@ -21,11 +21,24 @@ amdf_cc_library(
 )
 
 amdf_cc_library(
+    name = "device",
+    srcs = ["device.c"],
+    hdrs = ["device.h"],
+    deps = [
+        "//libamdf/src:device",
+        "//libamdf/src:endpoint",
+        "//libamdf/src:structure",
+        "//libamdf/src/gpu/umd:device",
+    ],
+)
+
+amdf_cc_library(
     name = "extension",
     srcs = ["extension.c"],
     hdrs = ["extension.h"],
     visibility = ["//libamdf/src/provider:__pkg__"],
     deps = [
+        ":device",
         ":endpoint_profile",
         "//libamdf/src:endpoint",
         "//libamdf/src:structure",
