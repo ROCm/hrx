@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 
+#include "libamdf/src/wait.h"
 #include "libamdf/src/xdna/umd/mcdm/legacy_submission.h"
 
 #ifdef __cplusplus
@@ -77,7 +78,7 @@ amdf_status_t amdf_windows_xdna_kernel_execution_query_terminal_status(
 // Waits for one native submission with caller-selected active polling.
 amdf_status_t amdf_windows_xdna_kernel_execution_wait(
     amdf_windows_xdna_kernel_execution_t* execution, uint64_t native_submission,
-    uint64_t timeout_nanoseconds, uint64_t poll_duration_nanoseconds);
+    const amdf_wait_deadline_t* deadline);
 
 #ifdef __cplusplus
 }  // extern "C"

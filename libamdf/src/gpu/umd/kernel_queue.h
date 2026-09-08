@@ -11,6 +11,7 @@
 
 #include "amdf/amdf.h"
 #include "libamdf/src/gpu/umd/device.h"
+#include "libamdf/src/wait.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,7 +41,7 @@ amdf_status_t amdf_gpu_umd_kernel_queue_query_terminal_status(
 // Waits for one native progress value with caller-selected polling.
 amdf_status_t amdf_gpu_umd_kernel_queue_wait(
     amdf_gpu_umd_kernel_queue_t* queue, uint64_t native_submission,
-    uint64_t timeout_nanoseconds, uint64_t poll_duration_nanoseconds);
+    const amdf_wait_deadline_t* deadline);
 
 // Releases an idle native GPU queue.
 amdf_status_t amdf_gpu_umd_kernel_queue_destroy(

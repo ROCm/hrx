@@ -13,7 +13,9 @@
 #include "libamdf/src/device.h"
 #include "libamdf/src/endpoint.h"
 #include "libamdf/src/kernel_queue.h"
+#include "libamdf/src/platform/wait.h"
 #include "libamdf/src/structure.h"
+#include "libamdf/src/wait.h"
 #include "libamdf/src/xdna/command.h"
 #include "libamdf/src/xdna/device.h"
 #include "libamdf/src/xdna/program.h"
@@ -110,6 +112,8 @@ static bool amdf_xdna_kernel_queue_try_retire(amdf_xdna_kernel_queue_t* queue,
              observed_occupancy == AMDF_XDNA_KERNEL_QUEUE_OCCUPANCY_RESERVING));
   }
 
+  amdf_xdna_umd_kernel_queue_retire_command(
+      queue->umd, amdf_xdna_command_get_umd(queue->pending_command));
   amdf_xdna_command_unregister_submission(queue->pending_command);
   queue->pending_command = NULL;
   amdf_atomic_uint64_store_release(
@@ -153,15 +157,17 @@ static amdf_status_t amdf_xdna_kernel_queue_wait(
   if (submission > amdf_xdna_kernel_queue_slot_submission(slot_state)) {
     return amdf_make_api_status(AMDF_STATUS_CODE_OUT_OF_RANGE);
   }
+  amdf_wait_deadline_t deadline;
+  amdf_status_t status = amdf_wait_deadline_initialize(
+      timeout_nanoseconds, poll_duration_nanoseconds, &deadline);
+  if (!amdf_status_is_ok(status)) return status;
+  // Even an expired deadline permits the first nonblocking native refresh.
+  bool native_polled = false;
   for (;;) {
+    const bool retired = amdf_xdna_kernel_queue_try_retire(queue, submission);
     const amdf_status_t terminal_status =
         amdf_xdna_umd_kernel_queue_query_terminal_status(queue->umd);
-    if (!amdf_status_is_ok(terminal_status)) {
-      return terminal_status;
-    }
-    if (amdf_xdna_kernel_queue_try_retire(queue, submission)) {
-      return AMDF_STATUS_OK;
-    }
+    if (!amdf_status_is_ok(terminal_status) || retired) return terminal_status;
 
     slot_state = amdf_atomic_uint64_load_acquire(&queue->slot_state);
     const uint64_t slot_submission =
@@ -172,12 +178,18 @@ static amdf_status_t amdf_xdna_kernel_queue_wait(
         (submission == slot_submission &&
          (occupancy == AMDF_XDNA_KERNEL_QUEUE_OCCUPANCY_FREE ||
           occupancy == AMDF_XDNA_KERNEL_QUEUE_OCCUPANCY_RESERVING))) {
-      return AMDF_STATUS_OK;
+      return amdf_xdna_umd_kernel_queue_query_terminal_status(queue->umd);
+    }
+    amdf_wait_budget_t remaining;
+    status = amdf_wait_deadline_query_remaining(&deadline, &remaining);
+    if (!amdf_status_is_ok(status)) return status;
+    if (remaining.timeout == 0 &&
+        (native_polled ||
+         occupancy == AMDF_XDNA_KERNEL_QUEUE_OCCUPANCY_RETIRING)) {
+      return amdf_make_api_status(AMDF_STATUS_CODE_DEADLINE_EXCEEDED);
     }
     if (occupancy == AMDF_XDNA_KERNEL_QUEUE_OCCUPANCY_RETIRING) {
-      // Another thread has already observed native completion and is releasing
-      // the command borrow. This critical section contains only bounded host
-      // bookkeeping; wait for its retirement publication before returning.
+      amdf_platform_wait_yield();
       continue;
     }
     if (occupancy != AMDF_XDNA_KERNEL_QUEUE_OCCUPANCY_PENDING ||
@@ -189,12 +201,14 @@ static amdf_status_t amdf_xdna_kernel_queue_wait(
     if (slot_state != amdf_atomic_uint64_load_acquire(&queue->slot_state)) {
       continue;
     }
-    const amdf_status_t status = amdf_xdna_umd_kernel_queue_wait(
-        queue->umd, pending_native_submission, timeout_nanoseconds,
-        poll_duration_nanoseconds);
-    if (!amdf_status_is_ok(status)) {
-      return status;
-    }
+    native_polled = true;
+    status = amdf_xdna_umd_kernel_queue_wait(
+        queue->umd, pending_native_submission, &deadline);
+    // A wait error is observable even if another thread established progress.
+    // Still release the borrow when independently confirmed retirement permits
+    // it.
+    amdf_xdna_kernel_queue_try_retire(queue, submission);
+    if (!amdf_status_is_ok(status)) return status;
   }
 }
 

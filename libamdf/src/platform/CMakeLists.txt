@@ -22,4 +22,33 @@ iree_cc_library(
 )
 endif()
 
+if(AMDF_BUILD)
+iree_cc_library(
+  NAME
+    wait
+  HDRS
+    "wait.h"
+  DEPS
+    amdf::headers
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows"))
+set(_native_wait_platform_deps "")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  list(APPEND _native_wait_platform_deps libamdf::src::platform::linux::wait)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+  list(APPEND _native_wait_platform_deps libamdf::src::platform::windows::wait)
+endif()
+iree_cc_library(
+  NAME
+    native_wait
+  DEPS
+    amdf::headers
+    ${_native_wait_platform_deps}
+  PUBLIC
+)
+endif()
+
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###

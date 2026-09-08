@@ -68,6 +68,20 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND AMDF_BUILD)
 iree_cc_library(
   NAME
+    wait
+  SRCS
+    "wait.c"
+  DEPS
+    ::file
+    amdf::headers
+    libamdf::src::platform::wait
+  PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND AMDF_BUILD)
+iree_cc_library(
+  NAME
     instance
   HDRS
     "instance.h"

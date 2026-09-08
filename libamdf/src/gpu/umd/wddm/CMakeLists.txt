@@ -53,7 +53,9 @@ iree_cc_library(
     amdf::headers
     libamdf::src::gpu::umd::kernel_queue
     libamdf::src::gpu::umd::wddm::wkmi::adapter
+    libamdf::src::platform::wait
     libamdf::src::platform::windows::kmt_api
+    libamdf::src::wait
   PUBLIC
 )
 endif()

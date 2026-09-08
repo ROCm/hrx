@@ -51,12 +51,19 @@ uint64_t amdf_xdna_umd_kernel_queue_query_progress(
   return progress;
 }
 
+void amdf_xdna_umd_kernel_queue_retire_command(
+    amdf_xdna_umd_kernel_queue_t* queue,
+    const amdf_xdna_umd_command_t* command) {
+  // MCDM publishes retirement and terminal device status in queue-owned state.
+  (void)queue;
+  (void)command;
+}
+
 amdf_status_t amdf_xdna_umd_kernel_queue_wait(
     amdf_xdna_umd_kernel_queue_t* queue, uint64_t native_submission,
-    uint64_t timeout_nanoseconds, uint64_t poll_duration_nanoseconds) {
-  return amdf_windows_xdna_kernel_execution_wait(
-      queue->execution, native_submission, timeout_nanoseconds,
-      poll_duration_nanoseconds);
+    const amdf_wait_deadline_t* deadline) {
+  return amdf_windows_xdna_kernel_execution_wait(queue->execution,
+                                                 native_submission, deadline);
 }
 
 amdf_status_t amdf_xdna_umd_kernel_queue_query_terminal_status(

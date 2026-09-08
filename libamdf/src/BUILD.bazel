@@ -20,6 +20,17 @@ amdf_cc_library(
 )
 
 amdf_cc_library(
+    name = "wait",
+    srcs = ["wait.c"],
+    hdrs = ["wait.h"],
+    visibility = ["//libamdf/src:__subpackages__"],
+    deps = [
+        "//libamdf/src/platform:native_wait",
+        "//libamdf/src/platform:wait",
+    ],
+)
+
+amdf_cc_library(
     name = "child_tracker",
     srcs = ["child_tracker.c"],
     hdrs = ["child_tracker.h"],
@@ -133,6 +144,17 @@ amdf_cc_library(
         "@platforms//os:windows": ["//libamdf/src/platform/windows"],
         "//conditions:default": [],
     }),
+)
+
+amdf_cc_test(
+    name = "wait_test",
+    srcs = ["wait_test.cc"],
+    deps = [
+        ":wait",
+        "//libamdf/src/platform:wait",
+        "//third_party:google_test",
+        "//third_party:google_test_main",
+    ],
 )
 
 amdf_cc_test(

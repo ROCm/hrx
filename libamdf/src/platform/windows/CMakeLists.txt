@@ -12,6 +12,19 @@ iree_add_all_subdirs()
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
 iree_cc_library(
   NAME
+    wait
+  SRCS
+    "wait.c"
+  DEPS
+    amdf::headers
+    libamdf::src::platform::wait
+  PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
+iree_cc_library(
+  NAME
     host_cache
   HDRS
     "host_cache.h"

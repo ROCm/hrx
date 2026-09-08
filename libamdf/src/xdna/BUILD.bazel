@@ -93,6 +93,8 @@ amdf_cc_library(
         "//libamdf/src:endpoint",
         "//libamdf/src:kernel_queue",
         "//libamdf/src:structure",
+        "//libamdf/src:wait",
+        "//libamdf/src/platform:wait",
         "//libamdf/src/xdna/umd:kernel_queue",
     ],
 )
@@ -139,6 +141,24 @@ amdf_cc_test(
     srcs = ["transaction_test.cc"],
     deps = [
         ":transaction",
+        "//third_party:google_test",
+        "//third_party:google_test_main",
+    ],
+)
+
+amdf_cc_test(
+    name = "kernel_queue_test",
+    srcs = ["kernel_queue_test.cc"],
+    deps = [
+        ":command",
+        ":device",
+        ":kernel_queue",
+        ":program",
+        "//libamdf/src:child_tracker",
+        "//libamdf/src:device",
+        "//libamdf/src:endpoint",
+        "//libamdf/src:kernel_queue",
+        "//libamdf/src/xdna/umd:kernel_queue",
         "//third_party:google_test",
         "//third_party:google_test_main",
     ],

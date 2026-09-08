@@ -57,6 +57,7 @@ iree_cc_library(
   DEPS
     ::device
     amdf::headers
+    libamdf::src::wait
   PUBLIC
 )
 endif()

@@ -24,6 +24,22 @@ endif()
 if(AMDF_BUILD)
 iree_cc_library(
   NAME
+    wait
+  HDRS
+    "wait.h"
+  SRCS
+    "wait.c"
+  DEPS
+    amdf::headers
+    libamdf::src::platform::native_wait
+    libamdf::src::platform::wait
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD)
+iree_cc_library(
+  NAME
     child_tracker
   HDRS
     "child_tracker.h"
@@ -186,6 +202,23 @@ iree_cc_library(
     amdf::headers
     ${_core_platform_deps}
   PUBLIC
+)
+endif()
+
+if(AMDF_BUILD)
+iree_cc_test(
+  NAME
+    wait_test
+  SRCS
+    "wait_test.cc"
+  DEPS
+    ::wait
+    amdf::headers
+    iree::third_party::google_test
+    iree::third_party::google_test_main
+    libamdf::src::platform::wait
+  LABELS
+    "iree-build-requirement=libamdf"
 )
 endif()
 

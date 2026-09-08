@@ -781,15 +781,19 @@ typedef struct amdf_api_t {
   /// output is modified when validation fails. ACTIVE means no terminal failure
   /// has been observed, not that a fresh native health check was performed.
   /// Rejection and timeout errors do not themselves mark a queue failed. A
-  /// terminal failure remains sticky and does not advance retirement.
+  /// terminal failure remains sticky and is not itself retirement proof.
+  /// Providers without a mapped completion fence report cached progress;
+  /// `kernel_queue_wait`, including a zero-time wait, refreshes that progress.
   amdf_status_t(AMDF_CALL* kernel_queue_query_status)(
       amdf_kernel_queue_t* queue, amdf_kernel_queue_status_t* out_status);
 
   /// Waits until `submission` retires, a failure is observed, or time expires.
   ///
-  /// `timeout_nanoseconds` includes active polling and the subsequent event
-  /// wait. `poll_duration_nanoseconds` is clipped to that timeout; zero
-  /// disables active polling. `AMDF_TIMEOUT_INFINITE` requests no deadline. A
+  /// `timeout_nanoseconds` includes host contention, active polling, and native
+  /// waiting under one deadline. A zero timeout performs one nonblocking native
+  /// poll when progress is not already known. `poll_duration_nanoseconds` is
+  /// clipped to that timeout; zero disables active polling.
+  /// `AMDF_TIMEOUT_INFINITE` requests no deadline. A
   /// timeout observes but never cancels accepted work or releases its command
   /// borrows. The operation is thread-safe with submission and status queries.
   /// A native wait error is returned even if progress concurrently advances;

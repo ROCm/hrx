@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "libamdf/src/platform/wait.h"
+#include "libamdf/src/wait.h"
 #include "libamdf/src/xdna/target/npu5/bootstrap.h"
 #include "libamdf/src/xdna/transaction.h"
 
@@ -71,22 +73,7 @@ struct amdf_windows_xdna_kernel_execution_t {
   uint64_t initialization_submission;
   // Greatest progress value assigned to a native submission.
   uint64_t last_native_submission;
-  // Query-performance-counter ticks per second.
-  uint64_t performance_counter_frequency;
 };
-
-static uint64_t amdf_windows_xdna_query_counter(void) {
-  LARGE_INTEGER value;
-  QueryPerformanceCounter(&value);
-  return (uint64_t)value.QuadPart;
-}
-
-static uint64_t amdf_windows_xdna_counter_elapsed_nanoseconds(
-    uint64_t begin, uint64_t end, uint64_t frequency) {
-  const uint64_t elapsed = end - begin;
-  return (elapsed / frequency) * UINT64_C(1000000000) +
-         ((elapsed % frequency) * UINT64_C(1000000000)) / frequency;
-}
 
 uint64_t amdf_windows_xdna_kernel_execution_query_progress(
     const amdf_windows_xdna_kernel_execution_t* execution) {
@@ -183,16 +170,6 @@ static amdf_status_t amdf_windows_xdna_kernel_execution_submit_setup(
 
 static amdf_status_t amdf_windows_xdna_kernel_execution_create_wait_state(
     amdf_windows_xdna_kernel_execution_t* execution) {
-  if (execution->performance_counter_frequency == 0) {
-    LARGE_INTEGER frequency;
-    if (!QueryPerformanceFrequency(&frequency)) {
-      return amdf_make_status(AMDF_STATUS_DOMAIN_WIN32, GetLastError());
-    }
-    if (frequency.QuadPart <= 0) {
-      return amdf_make_api_status(AMDF_STATUS_CODE_INTERNAL);
-    }
-    execution->performance_counter_frequency = (uint64_t)frequency.QuadPart;
-  }
   if (execution->wait_event == NULL) {
     execution->wait_event = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (execution->wait_event == NULL) {
@@ -661,45 +638,46 @@ amdf_status_t amdf_windows_xdna_kernel_execution_submit(
 
 amdf_status_t amdf_windows_xdna_kernel_execution_wait(
     amdf_windows_xdna_kernel_execution_t* execution, uint64_t native_submission,
-    uint64_t timeout_nanoseconds, uint64_t poll_duration_nanoseconds) {
-  if (execution == NULL || native_submission == 0) {
-    return amdf_make_api_status(AMDF_STATUS_CODE_INVALID_ARGUMENT);
-  }
+    const amdf_wait_deadline_t* deadline) {
   const amdf_status_t terminal_status =
       amdf_windows_xdna_kernel_execution_query_terminal_status(execution);
-  if (!amdf_status_is_ok(terminal_status)) {
-    return terminal_status;
-  }
-  const uint64_t begin = amdf_windows_xdna_query_counter();
-  const uint64_t poll_limit =
-      timeout_nanoseconds == AMDF_TIMEOUT_INFINITE
-          ? poll_duration_nanoseconds
-          : (poll_duration_nanoseconds < timeout_nanoseconds
-                 ? poll_duration_nanoseconds
-                 : timeout_nanoseconds);
+  if (!amdf_status_is_ok(terminal_status)) return terminal_status;
+  amdf_wait_budget_t remaining;
   while (amdf_windows_xdna_kernel_execution_query_progress(execution) <
          native_submission) {
-    const uint64_t now = amdf_windows_xdna_query_counter();
-    if (amdf_windows_xdna_counter_elapsed_nanoseconds(
-            begin, now, execution->performance_counter_frequency) >=
-        poll_limit) {
-      break;
-    }
+    const amdf_status_t status =
+        amdf_wait_deadline_query_remaining(deadline, &remaining);
+    if (!amdf_status_is_ok(status)) return status;
+    if (remaining.poll == 0) break;
     YieldProcessor();
   }
-  if (amdf_windows_xdna_kernel_execution_query_progress(execution) >=
-      native_submission) {
-    MemoryBarrier();
-    return AMDF_STATUS_OK;
+  // A finite waiter never blocks acquiring the reusable event behind an
+  // infinite native wait. Contention consumes the same original deadline.
+  for (;;) {
+    if (amdf_windows_xdna_kernel_execution_query_progress(execution) >=
+        native_submission) {
+      MemoryBarrier();
+      return AMDF_STATUS_OK;
+    }
+    const amdf_status_t status =
+        amdf_wait_deadline_query_remaining(deadline, &remaining);
+    if (!amdf_status_is_ok(status)) return status;
+    if (remaining.timeout == 0) {
+      return amdf_make_api_status(AMDF_STATUS_CODE_DEADLINE_EXCEEDED);
+    }
+    if (TryAcquireSRWLockExclusive(&execution->wait_lock)) break;
+    amdf_platform_wait_yield();
   }
-  if (timeout_nanoseconds == 0 || poll_limit == timeout_nanoseconds) {
-    return amdf_make_api_status(AMDF_STATUS_CODE_DEADLINE_EXCEEDED);
-  }
-
-  AcquireSRWLockExclusive(&execution->wait_lock);
   amdf_status_t status = AMDF_STATUS_OK;
-  while (amdf_windows_xdna_kernel_execution_query_progress(execution) <
-         native_submission) {
+  while (amdf_status_is_ok(status) &&
+         amdf_windows_xdna_kernel_execution_query_progress(execution) <
+             native_submission) {
+    status = amdf_wait_deadline_query_remaining(deadline, &remaining);
+    if (!amdf_status_is_ok(status)) break;
+    if (remaining.timeout == 0) {
+      status = amdf_make_api_status(AMDF_STATUS_CODE_DEADLINE_EXCEEDED);
+      break;
+    }
     if (execution->wait_event_submission == 0) {
       if (!ResetEvent(execution->wait_event)) {
         status = amdf_make_status(AMDF_STATUS_DOMAIN_WIN32, GetLastError());
@@ -721,34 +699,20 @@ amdf_status_t amdf_windows_xdna_kernel_execution_wait(
       }
       execution->wait_event_submission = native_submission;
     }
-
+    // Native event registration may itself consume time, so sample again.
+    status = amdf_wait_deadline_query_remaining(deadline, &remaining);
+    if (!amdf_status_is_ok(status)) break;
     DWORD wait_milliseconds = INFINITE;
-    if (timeout_nanoseconds != AMDF_TIMEOUT_INFINITE) {
-      const uint64_t elapsed_nanoseconds =
-          amdf_windows_xdna_counter_elapsed_nanoseconds(
-              begin, amdf_windows_xdna_query_counter(),
-              execution->performance_counter_frequency);
-      if (elapsed_nanoseconds >= timeout_nanoseconds) {
-        status = amdf_make_api_status(AMDF_STATUS_CODE_DEADLINE_EXCEEDED);
-        break;
-      }
-      const uint64_t remaining_nanoseconds =
-          timeout_nanoseconds - elapsed_nanoseconds;
-      const uint64_t remaining_milliseconds =
-          (remaining_nanoseconds + UINT64_C(999999)) / UINT64_C(1000000);
-      wait_milliseconds = remaining_milliseconds >= MAXDWORD
-                              ? MAXDWORD - 1
-                              : (DWORD)remaining_milliseconds;
+    if (remaining.timeout != AMDF_TIMEOUT_INFINITE) {
+      const uint64_t milliseconds =
+          remaining.timeout / UINT64_C(1000000) +
+          (remaining.timeout % UINT64_C(1000000) != 0);
+      wait_milliseconds =
+          milliseconds >= MAXDWORD ? MAXDWORD - 1 : (DWORD)milliseconds;
     }
     const DWORD wait_result =
         WaitForSingleObject(execution->wait_event, wait_milliseconds);
-    if (wait_result == WAIT_TIMEOUT) {
-      if (amdf_windows_xdna_kernel_execution_query_progress(execution) <
-          native_submission) {
-        status = amdf_make_api_status(AMDF_STATUS_CODE_DEADLINE_EXCEEDED);
-      }
-      break;
-    }
+    if (wait_result == WAIT_TIMEOUT) continue;
     if (wait_result != AMDF_WINDOWS_WAIT_SIGNALED) {
       status = wait_result == WAIT_FAILED
                    ? amdf_make_status(AMDF_STATUS_DOMAIN_WIN32, GetLastError())
@@ -758,8 +722,6 @@ amdf_status_t amdf_windows_xdna_kernel_execution_wait(
     execution->wait_event_submission = 0;
   }
   ReleaseSRWLockExclusive(&execution->wait_lock);
-  if (amdf_status_is_ok(status)) {
-    MemoryBarrier();
-  }
+  if (amdf_status_is_ok(status)) MemoryBarrier();
   return status;
 }

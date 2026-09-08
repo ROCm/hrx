@@ -9,6 +9,8 @@
 #include <stdlib.h>
 
 #include "libamdf/src/gpu/umd/wddm/device.h"
+#include "libamdf/src/platform/wait.h"
+#include "libamdf/src/wait.h"
 
 enum {
   AMDF_GPU_WINDOWS_WAIT_SIGNALED = 0,
@@ -37,23 +39,7 @@ struct amdf_gpu_umd_kernel_queue_t {
   uint64_t wait_event_submission;
   // Greatest progress value assigned to a native submission.
   uint64_t last_native_submission;
-  // Query-performance-counter ticks per second.
-  uint64_t performance_counter_frequency;
 };
-
-static uint64_t amdf_gpu_wddm_query_counter(void) {
-  LARGE_INTEGER value;
-  QueryPerformanceCounter(&value);
-  return (uint64_t)value.QuadPart;
-}
-
-static uint64_t amdf_gpu_wddm_counter_elapsed_nanoseconds(uint64_t begin,
-                                                          uint64_t end,
-                                                          uint64_t frequency) {
-  const uint64_t elapsed = end - begin;
-  return (elapsed / frequency) * UINT64_C(1000000000) +
-         ((elapsed % frequency) * UINT64_C(1000000000)) / frequency;
-}
 
 amdf_status_t amdf_gpu_umd_kernel_queue_create(
     amdf_gpu_umd_device_t* device, amdf_queue_command_type_t command_type,
@@ -78,20 +64,10 @@ amdf_status_t amdf_gpu_umd_kernel_queue_create(
   queue->device = device;
   InitializeSRWLock(&queue->wait_lock);
 
-  LARGE_INTEGER frequency;
   amdf_status_t status = AMDF_STATUS_OK;
-  if (!QueryPerformanceFrequency(&frequency)) {
+  queue->wait_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+  if (queue->wait_event == NULL) {
     status = amdf_make_status(AMDF_STATUS_DOMAIN_WIN32, GetLastError());
-  } else if (frequency.QuadPart <= 0) {
-    status = amdf_make_api_status(AMDF_STATUS_CODE_INTERNAL);
-  } else {
-    queue->performance_counter_frequency = (uint64_t)frequency.QuadPart;
-  }
-  if (amdf_status_is_ok(status)) {
-    queue->wait_event = CreateEventW(NULL, TRUE, FALSE, NULL);
-    if (queue->wait_event == NULL) {
-      status = amdf_make_status(AMDF_STATUS_DOMAIN_WIN32, GetLastError());
-    }
   }
 
   amdf_wkmi_bridge_gpu_kernel_queue_info_t queue_info = {0};
@@ -178,37 +154,43 @@ uint64_t amdf_gpu_umd_kernel_queue_query_progress(
 
 amdf_status_t amdf_gpu_umd_kernel_queue_wait(
     amdf_gpu_umd_kernel_queue_t* queue, uint64_t native_submission,
-    uint64_t timeout_nanoseconds, uint64_t poll_duration_nanoseconds) {
+    const amdf_wait_deadline_t* deadline) {
   const amdf_status_t terminal_status =
       amdf_gpu_umd_kernel_queue_query_terminal_status(queue);
-  if (!amdf_status_is_ok(terminal_status)) {
-    return terminal_status;
-  }
-  const uint64_t begin = amdf_gpu_wddm_query_counter();
-  const uint64_t poll_limit =
-      timeout_nanoseconds == AMDF_TIMEOUT_INFINITE
-          ? poll_duration_nanoseconds
-          : (poll_duration_nanoseconds < timeout_nanoseconds
-                 ? poll_duration_nanoseconds
-                 : timeout_nanoseconds);
+  if (!amdf_status_is_ok(terminal_status)) return terminal_status;
+  amdf_wait_budget_t remaining;
   while (amdf_gpu_umd_kernel_queue_query_progress(queue) < native_submission) {
-    const uint64_t now = amdf_gpu_wddm_query_counter();
-    if (amdf_gpu_wddm_counter_elapsed_nanoseconds(
-            begin, now, queue->performance_counter_frequency) >= poll_limit) {
-      break;
-    }
+    const amdf_status_t status =
+        amdf_wait_deadline_query_remaining(deadline, &remaining);
+    if (!amdf_status_is_ok(status)) return status;
+    if (remaining.poll == 0) break;
     YieldProcessor();
   }
-  if (amdf_gpu_umd_kernel_queue_query_progress(queue) >= native_submission) {
-    return AMDF_STATUS_OK;
+  // A finite waiter never blocks acquiring the reusable event behind an
+  // infinite native wait. Contention consumes the same original deadline.
+  for (;;) {
+    if (amdf_gpu_umd_kernel_queue_query_progress(queue) >= native_submission) {
+      MemoryBarrier();
+      return AMDF_STATUS_OK;
+    }
+    const amdf_status_t status =
+        amdf_wait_deadline_query_remaining(deadline, &remaining);
+    if (!amdf_status_is_ok(status)) return status;
+    if (remaining.timeout == 0) {
+      return amdf_make_api_status(AMDF_STATUS_CODE_DEADLINE_EXCEEDED);
+    }
+    if (TryAcquireSRWLockExclusive(&queue->wait_lock)) break;
+    amdf_platform_wait_yield();
   }
-  if (timeout_nanoseconds == 0 || poll_limit == timeout_nanoseconds) {
-    return amdf_make_api_status(AMDF_STATUS_CODE_DEADLINE_EXCEEDED);
-  }
-
-  AcquireSRWLockExclusive(&queue->wait_lock);
   amdf_status_t status = AMDF_STATUS_OK;
-  while (amdf_gpu_umd_kernel_queue_query_progress(queue) < native_submission) {
+  while (amdf_status_is_ok(status) &&
+         amdf_gpu_umd_kernel_queue_query_progress(queue) < native_submission) {
+    status = amdf_wait_deadline_query_remaining(deadline, &remaining);
+    if (!amdf_status_is_ok(status)) break;
+    if (remaining.timeout == 0) {
+      status = amdf_make_api_status(AMDF_STATUS_CODE_DEADLINE_EXCEEDED);
+      break;
+    }
     if (queue->wait_event_submission == 0) {
       if (!ResetEvent(queue->wait_event)) {
         status = amdf_make_status(AMDF_STATUS_DOMAIN_WIN32, GetLastError());
@@ -229,31 +211,20 @@ amdf_status_t amdf_gpu_umd_kernel_queue_wait(
       }
       queue->wait_event_submission = native_submission;
     }
-
+    // Native event registration may itself consume time, so sample again.
+    status = amdf_wait_deadline_query_remaining(deadline, &remaining);
+    if (!amdf_status_is_ok(status)) break;
     DWORD wait_milliseconds = INFINITE;
-    if (timeout_nanoseconds != AMDF_TIMEOUT_INFINITE) {
-      const uint64_t elapsed_nanoseconds =
-          amdf_gpu_wddm_counter_elapsed_nanoseconds(
-              begin, amdf_gpu_wddm_query_counter(),
-              queue->performance_counter_frequency);
-      if (elapsed_nanoseconds >= timeout_nanoseconds) {
-        status = amdf_make_api_status(AMDF_STATUS_CODE_DEADLINE_EXCEEDED);
-        break;
-      }
-      const uint64_t remaining_nanoseconds =
-          timeout_nanoseconds - elapsed_nanoseconds;
-      const uint64_t remaining_milliseconds =
-          remaining_nanoseconds / UINT64_C(1000000) +
-          (remaining_nanoseconds % UINT64_C(1000000) != 0);
-      wait_milliseconds = remaining_milliseconds >= MAXDWORD
-                              ? MAXDWORD - 1
-                              : (DWORD)remaining_milliseconds;
+    if (remaining.timeout != AMDF_TIMEOUT_INFINITE) {
+      const uint64_t milliseconds =
+          remaining.timeout / UINT64_C(1000000) +
+          (remaining.timeout % UINT64_C(1000000) != 0);
+      wait_milliseconds =
+          milliseconds >= MAXDWORD ? MAXDWORD - 1 : (DWORD)milliseconds;
     }
     const DWORD wait_result =
         WaitForSingleObject(queue->wait_event, wait_milliseconds);
-    if (wait_result == WAIT_TIMEOUT) {
-      continue;
-    }
+    if (wait_result == WAIT_TIMEOUT) continue;
     if (wait_result != AMDF_GPU_WINDOWS_WAIT_SIGNALED) {
       status = wait_result == WAIT_FAILED
                    ? amdf_make_status(AMDF_STATUS_DOMAIN_WIN32, GetLastError())
@@ -263,6 +234,7 @@ amdf_status_t amdf_gpu_umd_kernel_queue_wait(
     queue->wait_event_submission = 0;
   }
   ReleaseSRWLockExclusive(&queue->wait_lock);
+  if (amdf_status_is_ok(status)) MemoryBarrier();
   return status;
 }
 

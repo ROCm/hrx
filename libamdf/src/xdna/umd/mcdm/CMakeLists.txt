@@ -111,6 +111,8 @@ iree_cc_library(
     ::device_state
     ::legacy_submission
     amdf::headers
+    libamdf::src::platform::wait
+    libamdf::src::wait
     libamdf::src::xdna::target::npu5::bootstrap
     libamdf::src::xdna::transaction
   PUBLIC

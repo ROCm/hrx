@@ -39,7 +39,10 @@ amdf_cc_library(
     name = "kernel_queue",
     hdrs = ["kernel_queue.h"],
     visibility = ["//libamdf/src/gpu:__subpackages__"],
-    deps = [":device"],
+    deps = [
+        ":device",
+        "//libamdf/src:wait",
+    ],
 )
 
 amdf_cc_library(

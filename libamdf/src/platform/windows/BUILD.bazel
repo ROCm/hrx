@@ -16,6 +16,14 @@ package(
 WINDOWS_COMPATIBILITY = ["@platforms//os:windows"]
 
 amdf_cc_library(
+    name = "wait",
+    srcs = ["wait.c"],
+    target_compatible_with = WINDOWS_COMPATIBILITY,
+    visibility = ["//libamdf/src/platform:__pkg__"],
+    deps = ["//libamdf/src/platform:wait"],
+)
+
+amdf_cc_library(
     name = "host_cache",
     srcs = ["host_cache_x86_64.c"],
     hdrs = ["host_cache.h"],

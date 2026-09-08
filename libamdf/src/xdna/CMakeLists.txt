@@ -121,7 +121,9 @@ iree_cc_library(
     libamdf::src::device
     libamdf::src::endpoint
     libamdf::src::kernel_queue
+    libamdf::src::platform::wait
     libamdf::src::structure
+    libamdf::src::wait
     libamdf::src::xdna::umd::kernel_queue
   PUBLIC
 )
@@ -189,6 +191,31 @@ iree_cc_test(
     amdf::headers
     iree::third_party::google_test
     iree::third_party::google_test_main
+  LABELS
+    "iree-build-requirement=libamdf"
+    "iree-build-requirement=libamdf.xdna"
+)
+endif()
+
+if(AMDF_BUILD AND AMDF_FAMILY_XDNA)
+iree_cc_test(
+  NAME
+    kernel_queue_test
+  SRCS
+    "kernel_queue_test.cc"
+  DEPS
+    ::command
+    ::device
+    ::kernel_queue
+    ::program
+    amdf::headers
+    iree::third_party::google_test
+    iree::third_party::google_test_main
+    libamdf::src::child_tracker
+    libamdf::src::device
+    libamdf::src::endpoint
+    libamdf::src::kernel_queue
+    libamdf::src::xdna::umd::kernel_queue
   LABELS
     "iree-build-requirement=libamdf"
     "iree-build-requirement=libamdf.xdna"

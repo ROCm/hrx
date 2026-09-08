@@ -79,6 +79,8 @@ amdf_cc_library(
     deps = [
         ":device_state",
         ":legacy_submission",
+        "//libamdf/src:wait",
+        "//libamdf/src/platform:wait",
         "//libamdf/src/xdna:transaction",
         "//libamdf/src/xdna/target/npu5:bootstrap",
     ],

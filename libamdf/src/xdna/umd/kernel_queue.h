@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include "amdf/amdf.h"
+#include "libamdf/src/wait.h"
 #include "libamdf/src/xdna/umd/command.h"
 
 #ifdef __cplusplus
@@ -31,6 +32,14 @@ amdf_status_t amdf_xdna_umd_kernel_queue_submit(
 uint64_t amdf_xdna_umd_kernel_queue_query_progress(
     const amdf_xdna_umd_kernel_queue_t* queue);
 
+// Observes command-owned completion data after native progress proves
+// retirement. The caller exclusively owns the pending slot and retains the
+// command borrow throughout this call. Records execution failure without
+// delaying retirement.
+void amdf_xdna_umd_kernel_queue_retire_command(
+    amdf_xdna_umd_kernel_queue_t* queue,
+    const amdf_xdna_umd_command_t* command);
+
 // Returns the observed terminal device failure without native queries. An
 // operation error alone does not fail the queue or establish retirement.
 amdf_status_t amdf_xdna_umd_kernel_queue_query_terminal_status(
@@ -39,7 +48,7 @@ amdf_status_t amdf_xdna_umd_kernel_queue_query_terminal_status(
 // Waits for one native progress value with caller-selected polling.
 amdf_status_t amdf_xdna_umd_kernel_queue_wait(
     amdf_xdna_umd_kernel_queue_t* queue, uint64_t native_submission,
-    uint64_t timeout_nanoseconds, uint64_t poll_duration_nanoseconds);
+    const amdf_wait_deadline_t* deadline);
 
 // Releases an idle native queue lease.
 amdf_status_t amdf_xdna_umd_kernel_queue_destroy(

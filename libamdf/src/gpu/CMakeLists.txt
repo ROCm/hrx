@@ -63,7 +63,9 @@ iree_cc_library(
     libamdf::src::gpu::umd::kernel_queue
     libamdf::src::kernel_queue
     libamdf::src::memory
+    libamdf::src::platform::wait
     libamdf::src::structure
+    libamdf::src::wait
   PUBLIC
 )
 endif()
