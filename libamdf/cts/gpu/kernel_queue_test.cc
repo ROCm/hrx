@@ -16,8 +16,10 @@
 namespace {
 
 constexpr uint64_t kCommandByteOffset = 0;
-constexpr uint64_t kSourceByteOffset = 64;
-constexpr uint64_t kTargetByteOffset = 128;
+constexpr uint64_t kStagedCommandByteOffset = 512;
+constexpr uint64_t kVerifiedCommandByteOffset = 640;
+constexpr uint64_t kSourceByteOffset = 1024;
+constexpr uint64_t kTargetByteOffset = 1088;
 constexpr uint64_t kLocalByteOffset = 256;
 constexpr uint64_t kMemoryByteLength = 4096;
 constexpr uint32_t kCopyDataDwordCount = 6;
@@ -45,16 +47,16 @@ std::array<uint32_t, kCopyDataDwordCount> MakeCopyData32(
 class GpuKernelQueueTest : public GpuDeviceFixture {
  protected:
   void TearDown() override {
-    if (mapping_ != nullptr) {
+    if (mapping_ != nullptr && !indirect_memory_may_be_in_use_) {
       EXPECT_TRUE(amdf_status_is_ok(api_->host_mapping_destroy(mapping_)));
     }
     if (queue_ != nullptr) {
       EXPECT_TRUE(amdf_status_is_ok(api_->kernel_queue_destroy(queue_)));
     }
-    if (local_memory_ != nullptr && !local_memory_may_be_in_use_) {
+    if (local_memory_ != nullptr && !indirect_memory_may_be_in_use_) {
       EXPECT_TRUE(amdf_status_is_ok(api_->memory_destroy(local_memory_)));
     }
-    if (memory_ != nullptr) {
+    if (memory_ != nullptr && !indirect_memory_may_be_in_use_) {
       EXPECT_TRUE(amdf_status_is_ok(api_->memory_destroy(memory_)));
     }
     GpuDeviceFixture::TearDown();
@@ -128,11 +130,34 @@ class GpuKernelQueueTest : public GpuDeviceFixture {
     return mapping_info;
   }
 
+  amdf_memory_info_t CreateLocalExecutableMemory() {
+    amdf_memory_create_info_t create_info = {};
+    create_info.type = AMDF_STRUCTURE_TYPE_MEMORY_CREATE_INFO;
+    create_info.structure_size = sizeof(create_info);
+    create_info.memory_class = AMDF_MEMORY_CLASS_LOCAL;
+    create_info.required_flags = AMDF_MEMORY_FLAG_DEVICE_LOCAL |
+                                 AMDF_MEMORY_FLAG_EXECUTABLE |
+                                 AMDF_MEMORY_FLAG_DEVICE_ADDRESS;
+    create_info.byte_length = kMemoryByteLength;
+    EXPECT_TRUE(amdf_status_is_ok(
+        api_->memory_create(device_, &create_info, &local_memory_)));
+
+    amdf_memory_info_t memory_info = {};
+    memory_info.type = AMDF_STRUCTURE_TYPE_MEMORY_INFO;
+    memory_info.structure_size = sizeof(memory_info);
+    EXPECT_TRUE(amdf_status_is_ok(
+        api_->memory_query_info(local_memory_, &memory_info)));
+    EXPECT_EQ(memory_info.flags & create_info.required_flags,
+              create_info.required_flags);
+    EXPECT_GE(memory_info.byte_length, kMemoryByteLength);
+    return memory_info;
+  }
+
   amdf_memory_t* memory_ = nullptr;
   amdf_memory_t* local_memory_ = nullptr;
   amdf_host_mapping_t* mapping_ = nullptr;
   amdf_kernel_queue_t* queue_ = nullptr;
-  bool local_memory_may_be_in_use_ = false;
+  bool indirect_memory_may_be_in_use_ = false;
 };
 
 TEST_F(GpuKernelQueueTest, ExecutesMaterializedCopyData) {
@@ -252,24 +277,9 @@ TEST_F(GpuKernelQueueTest, CopiesThroughDeviceLocalExecutableMemory) {
   ASSERT_NE(mapping_info.pointer, nullptr);
   ASSERT_GE(mapping_info.byte_length, kMemoryByteLength);
 
-  amdf_memory_create_info_t local_create_info = {};
-  local_create_info.type = AMDF_STRUCTURE_TYPE_MEMORY_CREATE_INFO;
-  local_create_info.structure_size = sizeof(local_create_info);
-  local_create_info.memory_class = AMDF_MEMORY_CLASS_LOCAL;
-  local_create_info.required_flags = AMDF_MEMORY_FLAG_DEVICE_LOCAL |
-                                     AMDF_MEMORY_FLAG_EXECUTABLE |
-                                     AMDF_MEMORY_FLAG_DEVICE_ADDRESS;
-  local_create_info.byte_length = kMemoryByteLength;
-  ASSERT_TRUE(amdf_status_is_ok(
-      api_->memory_create(device_, &local_create_info, &local_memory_)));
-  amdf_memory_info_t local_memory_info = {};
-  local_memory_info.type = AMDF_STRUCTURE_TYPE_MEMORY_INFO;
-  local_memory_info.structure_size = sizeof(local_memory_info);
-  ASSERT_TRUE(amdf_status_is_ok(
-      api_->memory_query_info(local_memory_, &local_memory_info)));
-  EXPECT_EQ(local_memory_info.flags & local_create_info.required_flags,
-            local_create_info.required_flags);
-  ASSERT_GE(local_memory_info.byte_length, kMemoryByteLength);
+  const amdf_memory_info_t local_memory_info = CreateLocalExecutableMemory();
+  ASSERT_NE(local_memory_, nullptr);
+  ASSERT_NE(local_memory_info.device_address, 0u);
 
   constexpr uint32_t kSourceValue = 0x2468ACE0u;
   constexpr uint32_t kTargetSentinel = 0xA5A5A5A5u;
@@ -304,11 +314,120 @@ TEST_F(GpuKernelQueueTest, CopiesThroughDeviceLocalExecutableMemory) {
   uint64_t submission = 0;
   ASSERT_TRUE(amdf_status_is_ok(
       gpu_api_->kernel_queue_submit(queue_, &submission_info, &submission)));
-  local_memory_may_be_in_use_ = true;
+  indirect_memory_may_be_in_use_ = true;
 
   ASSERT_TRUE(amdf_status_is_ok(api_->kernel_queue_wait(
       queue_, submission, UINT64_C(5000000000), UINT64_C(50000))));
-  local_memory_may_be_in_use_ = false;
+  indirect_memory_may_be_in_use_ = false;
+  ASSERT_TRUE(amdf_status_is_ok(api_->host_mapping_cache_control(
+      mapping_, AMDF_HOST_CACHE_OPERATION_INVALIDATE, kTargetByteOffset,
+      sizeof(uint32_t))));
+  uint32_t target_value = 0;
+  std::memcpy(&target_value, bytes + kTargetByteOffset, sizeof(target_value));
+  EXPECT_EQ(target_value, kSourceValue);
+
+  ASSERT_TRUE(amdf_status_is_ok(api_->host_mapping_destroy(mapping_)));
+  mapping_ = nullptr;
+  ASSERT_TRUE(amdf_status_is_ok(api_->kernel_queue_destroy(queue_)));
+  queue_ = nullptr;
+  ASSERT_TRUE(amdf_status_is_ok(api_->memory_destroy(local_memory_)));
+  local_memory_ = nullptr;
+  ASSERT_TRUE(amdf_status_is_ok(api_->memory_destroy(memory_)));
+  memory_ = nullptr;
+}
+
+TEST_F(GpuKernelQueueTest, ExecutesDeviceLocalCommandStream) {
+  const uint32_t family_ordinal = FindKernelQueueFamily();
+  if (family_ordinal == UINT32_MAX) {
+    GTEST_SKIP() << "GPU endpoint exposes no kernel-mediated PM4 queue";
+  }
+  CreateQueue(family_ordinal);
+
+  const amdf_memory_info_t memory_info = CreateCommandMemory();
+  ASSERT_NE(memory_, nullptr);
+  const amdf_host_mapping_info_t mapping_info = MapCommandMemory();
+  ASSERT_NE(mapping_, nullptr);
+  ASSERT_NE(mapping_info.pointer, nullptr);
+  ASSERT_GE(mapping_info.byte_length, kMemoryByteLength);
+  const amdf_memory_info_t local_memory_info = CreateLocalExecutableMemory();
+  ASSERT_NE(local_memory_, nullptr);
+  ASSERT_NE(local_memory_info.device_address, 0u);
+
+  constexpr uint32_t kSourceValue = 0x10203040u;
+  constexpr uint32_t kTargetSentinel = 0xA5A5A5A5u;
+  uint8_t* const bytes = static_cast<uint8_t*>(mapping_info.pointer);
+  std::memcpy(bytes + kSourceByteOffset, &kSourceValue, sizeof(kSourceValue));
+  std::memcpy(bytes + kTargetByteOffset, &kTargetSentinel,
+              sizeof(kTargetSentinel));
+
+  const std::array<uint32_t, kCopyDataDwordCount> local_command =
+      MakeCopyData32(memory_info.device_address + kSourceByteOffset,
+                     memory_info.device_address + kTargetByteOffset);
+  std::memcpy(bytes + kStagedCommandByteOffset, local_command.data(),
+              sizeof(local_command));
+  std::array<uint32_t, 2 * kCopyDataDwordCount * kCopyDataDwordCount>
+      upload_command = {};
+  for (uint32_t i = 0; i < kCopyDataDwordCount; ++i) {
+    const std::array<uint32_t, kCopyDataDwordCount> upload_word =
+        MakeCopyData32(memory_info.device_address + kStagedCommandByteOffset +
+                           i * sizeof(uint32_t),
+                       local_memory_info.device_address + kLocalByteOffset +
+                           i * sizeof(uint32_t));
+    const std::array<uint32_t, kCopyDataDwordCount> verify_word =
+        MakeCopyData32(local_memory_info.device_address + kLocalByteOffset +
+                           i * sizeof(uint32_t),
+                       memory_info.device_address + kVerifiedCommandByteOffset +
+                           i * sizeof(uint32_t));
+    std::memcpy(upload_command.data() + 2 * i * kCopyDataDwordCount,
+                upload_word.data(), sizeof(upload_word));
+    std::memcpy(upload_command.data() + (2 * i + 1) * kCopyDataDwordCount,
+                verify_word.data(), sizeof(verify_word));
+  }
+  std::memcpy(bytes + kCommandByteOffset, upload_command.data(),
+              sizeof(upload_command));
+  ASSERT_TRUE(amdf_status_is_ok(api_->host_mapping_cache_control(
+      mapping_, AMDF_HOST_CACHE_OPERATION_FLUSH, 0, kMemoryByteLength)));
+
+  const amdf_gpu_kernel_command_t upload_descriptor = {
+      memory_,
+      kCommandByteOffset,
+      sizeof(upload_command),
+  };
+  amdf_gpu_kernel_queue_submission_info_t submission_info = {};
+  submission_info.type = AMDF_STRUCTURE_TYPE_GPU_KERNEL_QUEUE_SUBMISSION_INFO;
+  submission_info.structure_size = sizeof(submission_info);
+  submission_info.command_count = 1;
+  submission_info.commands = &upload_descriptor;
+  uint64_t upload_submission = 0;
+  ASSERT_TRUE(amdf_status_is_ok(gpu_api_->kernel_queue_submit(
+      queue_, &submission_info, &upload_submission)));
+  indirect_memory_may_be_in_use_ = true;
+  ASSERT_TRUE(amdf_status_is_ok(api_->kernel_queue_wait(
+      queue_, upload_submission, UINT64_C(5000000000), UINT64_C(50000))));
+  indirect_memory_may_be_in_use_ = false;
+  ASSERT_TRUE(amdf_status_is_ok(api_->host_mapping_cache_control(
+      mapping_, AMDF_HOST_CACHE_OPERATION_INVALIDATE,
+      kVerifiedCommandByteOffset, sizeof(local_command))));
+  EXPECT_EQ(std::memcmp(bytes + kVerifiedCommandByteOffset,
+                        local_command.data(), sizeof(local_command)),
+            0);
+
+  const amdf_gpu_kernel_command_t local_command_descriptor = {
+      local_memory_,
+      kLocalByteOffset,
+      sizeof(local_command),
+  };
+  submission_info.commands = &local_command_descriptor;
+  uint64_t local_submission = 0;
+  ASSERT_TRUE(amdf_status_is_ok(gpu_api_->kernel_queue_submit(
+      queue_, &submission_info, &local_submission)));
+  indirect_memory_may_be_in_use_ = true;
+  EXPECT_EQ(amdf_status_code(api_->memory_destroy(local_memory_)),
+            AMDF_STATUS_CODE_BUSY);
+  ASSERT_TRUE(amdf_status_is_ok(api_->kernel_queue_wait(
+      queue_, local_submission, UINT64_C(5000000000), UINT64_C(50000))));
+  indirect_memory_may_be_in_use_ = false;
+
   ASSERT_TRUE(amdf_status_is_ok(api_->host_mapping_cache_control(
       mapping_, AMDF_HOST_CACHE_OPERATION_INVALIDATE, kTargetByteOffset,
       sizeof(uint32_t))));
