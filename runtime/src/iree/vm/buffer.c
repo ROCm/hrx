@@ -4,63 +4,13 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree/vm/buffer.h"
-
 #include <stddef.h>
 #include <string.h>
 
-// Returns the process-static provider table for the core "vm" family.
-// This is a private seam consumed only by environment construction.
-const iree_vm_ref_type_table_t* iree_vm_buffer_provider_table(void);
-
-// Private representation bits sharing the public access word.
-enum iree_vm_buffer_flag_bits_e {
-  // The buffer is a proper view retaining a flattened root.
-  IREE_VM_BUFFER_FLAG_VIEW = 1u << 2,
-  // The root wraps storage released by a callback.
-  IREE_VM_BUFFER_FLAG_EXTERNAL = 1u << 3,
-};
-typedef uint32_t iree_vm_buffer_flags_t;
+#include "iree/vm/buffer_provider.h"
 
 #define IREE_VM_BUFFER_ACCESS_MASK \
   (IREE_VM_BUFFER_ACCESS_FLAG_READ | IREE_VM_BUFFER_ACCESS_FLAG_WRITE)
-
-// Uniform buffer object. The fields through |root| form the access-hot prefix;
-// the allocator and release callback are touched only during construction and
-// final destruction.
-struct iree_vm_buffer_t {
-  // Required offset-zero VM ref-count prefix.
-  iree_vm_ref_object_t ref_object;
-  // Public access bits and private representation bits.
-  iree_vm_buffer_flags_t flags;
-  // Immutable logical byte length.
-  iree_host_size_t length;
-  // Direct root or cached-view byte start.
-  uint8_t* data;
-  // Retained flattened root, or null when this object is a root.
-  iree_vm_buffer_t* root;
-  // Allocator owning this complete buffer object.
-  iree_allocator_t host_allocator;
-  // External root storage release callback, or null for heaps and views.
-  iree_vm_buffer_release_callback_t release_callback;
-};
-
-#define IREE_VM_BUFFER_HOT_SIZE \
-  (8 + sizeof(iree_host_size_t) + 2 * sizeof(void*))
-
-static_assert(offsetof(iree_vm_buffer_t, ref_object) == 0,
-              "VM buffers require an offset-zero ref object");
-static_assert(offsetof(iree_vm_buffer_t, flags) == 4,
-              "VM buffer flags must follow the ref object");
-static_assert(offsetof(iree_vm_buffer_t, length) == 8,
-              "VM buffer length must begin at byte eight");
-static_assert(offsetof(iree_vm_buffer_t, host_allocator) ==
-                  IREE_VM_BUFFER_HOT_SIZE,
-              "VM buffer hot prefix layout changed");
-static_assert(sizeof(void*) != 8 || IREE_VM_BUFFER_HOT_SIZE == 32,
-              "64-bit VM buffer hot prefix must remain 32 bytes");
-static_assert(sizeof(void*) != 8 || sizeof(iree_vm_buffer_t) == 64,
-              "64-bit VM buffer object must remain 64 bytes");
 
 static void iree_vm_buffer_destroy(void* object);
 
@@ -131,11 +81,28 @@ static iree_status_t iree_vm_buffer_allocate_storage(
     iree_vm_buffer_access_flags_t access, iree_host_size_t length,
     iree_host_size_t minimum_alignment, iree_allocator_t host_allocator,
     iree_vm_buffer_t** out_buffer) {
+  if (!iree_host_size_is_valid_alignment(minimum_alignment)) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "minimum alignment must be zero or a representable power of two");
+  }
+
+  // Own the complete storage-layout contract here. Callers should not need to
+  // know the object prefix or aligned-allocation overhead to determine whether
+  // a buffer request is representable.
+  const iree_host_size_t data_offset = sizeof(iree_vm_buffer_t);
+  const iree_host_size_t allocation_alignment =
+      iree_max(minimum_alignment, iree_max_align_t);
   iree_host_size_t total_size = 0;
-  iree_host_size_t data_offset = 0;
-  IREE_RETURN_IF_ERROR(
-      IREE_STRUCT_LAYOUT(sizeof(iree_vm_buffer_t), &total_size,
-                         IREE_STRUCT_FIELD(length, uint8_t, &data_offset)));
+  iree_host_size_t allocator_size = 0;
+  if (!iree_host_size_checked_add(data_offset, length, &total_size) ||
+      !iree_host_size_checked_add(sizeof(uintptr_t), total_size,
+                                  &allocator_size) ||
+      !iree_host_size_checked_add(allocator_size, allocation_alignment,
+                                  &allocator_size)) {
+    return iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
+                            "buffer allocation size is not representable");
+  }
 
   iree_vm_buffer_t* buffer = NULL;
   IREE_RETURN_IF_ERROR(iree_allocator_malloc_aligned(
@@ -150,7 +117,7 @@ static iree_status_t iree_vm_buffer_allocate_storage(
   return iree_ok_status();
 }
 
-static iree_status_t iree_vm_buffer_map_range(
+iree_status_t iree_vm_buffer_map_range(
     const iree_vm_buffer_t* buffer,
     iree_vm_buffer_access_flags_t required_access, iree_host_size_t offset,
     iree_host_size_t length, iree_byte_span_t* out_span) {
@@ -390,5 +357,4 @@ IREE_API_EXPORT const void* iree_vm_buffer_const_data(
   return buffer->data;
 }
 
-#undef IREE_VM_BUFFER_HOT_SIZE
 #undef IREE_VM_BUFFER_ACCESS_MASK
