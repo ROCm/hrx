@@ -9,6 +9,7 @@
 
 #include "libamdf/src/platform/endpoint.h"
 #include "libamdf/src/platform/linux/instance.h"
+#include "libamdf/src/platform/linux/release_list.h"
 
 struct amdf_platform_endpoint_t {
   // Instance borrowed for fresh device-file identity validation.
@@ -17,10 +18,15 @@ struct amdf_platform_endpoint_t {
   int descriptor;
   // Immutable identity and PCI properties established on open.
   amdf_endpoint_info_t info;
-  // DRM interface major version reported by the opened file.
-  uint32_t driver_major_version;
-  // DRM interface minor version reported by the opened file.
-  uint32_t driver_minor_version;
+  // DRM interface version reported by the opened file.
+  struct {
+    // Major ABI version.
+    uint32_t major_version;
+    // Minor ABI revision.
+    uint32_t minor_version;
+  } driver;
+  // Unpublished devices retained after a failed native construction rollback.
+  amdf_linux_release_list_t failed_constructions;
 };
 
 #ifdef __cplusplus

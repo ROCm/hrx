@@ -12,6 +12,50 @@ iree_add_all_subdirs()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND AMDF_BUILD)
 iree_cc_library(
   NAME
+    release_list
+  HDRS
+    "release_list.h"
+  SRCS
+    "release_list.c"
+  DEPS
+    amdf::headers
+  PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND IREE_ARCH STREQUAL "x86_64" AND AMDF_BUILD)
+iree_cc_library(
+  NAME
+    host_cache
+  HDRS
+    "host_cache.h"
+  SRCS
+    "host_cache_x86_64.c"
+  DEPS
+    amdf::headers
+  PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND AMDF_BUILD)
+iree_cc_test(
+  NAME
+    release_list_test
+  SRCS
+    "release_list_test.cc"
+  DEPS
+    ::release_list
+    amdf::headers
+    iree::third_party::google_test
+    iree::third_party::google_test_main
+  LABELS
+    "iree-build-requirement=libamdf"
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND AMDF_BUILD)
+iree_cc_library(
+  NAME
     file
   HDRS
     "file.h"
@@ -48,6 +92,7 @@ iree_cc_library(
   DEPS
     ::file
     ::instance
+    ::release_list
     amdf::headers
     libamdf::src::pci
     libamdf::src::platform

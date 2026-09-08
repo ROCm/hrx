@@ -282,8 +282,8 @@ static amdf_status_t amdf_linux_open_endpoint(
       memcmp(driver, expected_driver, version.name_len) != 0) {
     return amdf_make_api_status(AMDF_STATUS_CODE_NOT_FOUND);
   }
-  endpoint->driver_major_version = (uint32_t)version.version_major;
-  endpoint->driver_minor_version = (uint32_t)version.version_minor;
+  endpoint->driver.major_version = (uint32_t)version.version_major;
+  endpoint->driver.minor_version = (uint32_t)version.version_minor;
   return AMDF_STATUS_OK;
 }
 
@@ -332,15 +332,19 @@ amdf_platform_endpoint_query_queue_publication_modes(
     amdf_queue_command_type_t command_type) {
   if (command_type == AMDF_QUEUE_COMMAND_TYPE_XDNA &&
       endpoint->info.engine_kind == AMDF_ENGINE_KIND_XDNA &&
-      endpoint->driver_major_version == 0 &&
-      endpoint->driver_minor_version >= 8) {
+      endpoint->driver.major_version == 0 &&
+      endpoint->driver.minor_version >= 8) {
     return AMDF_QUEUE_PUBLICATION_MODE_KERNEL;
   }
   return 0;
 }
 
 amdf_status_t amdf_platform_endpoint_close(amdf_platform_endpoint_t* endpoint) {
-  const amdf_status_t status = amdf_linux_file_close(&endpoint->descriptor);
+  amdf_status_t status =
+      amdf_linux_release_list_drain(&endpoint->failed_constructions);
+  if (amdf_status_is_ok(status)) {
+    status = amdf_linux_file_close(&endpoint->descriptor);
+  }
   if (amdf_status_is_ok(status)) free(endpoint);
   return status;
 }

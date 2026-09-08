@@ -18,3 +18,9 @@ amdf_cc_library(
     hdrs = ["bootstrap.h"],
     visibility = ["//libamdf/src/xdna:__subpackages__"],
 )
+
+amdf_cc_library(
+    name = "context",
+    hdrs = ["context.h"],
+    visibility = ["//libamdf/src/xdna:__subpackages__"],
+)

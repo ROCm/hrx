@@ -14,6 +14,36 @@ package(
 )
 
 amdf_cc_library(
+    name = "release_list",
+    srcs = ["release_list.c"],
+    hdrs = ["release_list.h"],
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//libamdf/src:__subpackages__"],
+)
+
+amdf_cc_library(
+    name = "host_cache",
+    srcs = ["host_cache_x86_64.c"],
+    hdrs = ["host_cache.h"],
+    target_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+    visibility = ["//libamdf/src:__subpackages__"],
+)
+
+amdf_cc_test(
+    name = "release_list_test",
+    srcs = ["release_list_test.cc"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":release_list",
+        "//third_party:google_test",
+        "//third_party:google_test_main",
+    ],
+)
+
+amdf_cc_library(
     name = "file",
     hdrs = ["file.h"],
     target_compatible_with = ["@platforms//os:linux"],
@@ -40,6 +70,7 @@ amdf_cc_library(
     deps = [
         ":file",
         ":instance",
+        ":release_list",
         "//libamdf/src:pci",
         "//libamdf/src/platform",
     ],
