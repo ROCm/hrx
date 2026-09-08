@@ -87,39 +87,6 @@ iree_hal_streaming_timestamp_domain_t iree_hal_streaming_query_timestamp_domain(
   return domain;
 }
 
-static iree_status_t iree_hal_streaming_context_select_queue(
-    iree_hal_device_t* device, iree_hal_queue_t** out_queue) {
-  const iree_hal_queue_family_role_flags_t required_roles =
-      IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_TRANSFER |
-      IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH;
-  const iree_hal_device_queue_spec_t* queue_spec =
-      iree_hal_device_spec_queues(iree_hal_device_spec(device));
-  for (iree_host_size_t family_ordinal = 0;
-       family_ordinal < queue_spec->family_count; ++family_ordinal) {
-    const iree_hal_queue_family_spec_t* family_spec =
-        &queue_spec->families[family_ordinal];
-    if (family_spec->provisioned_queue_count == 0 ||
-        !iree_all_bits_set(family_spec->role_flags, required_roles)) {
-      continue;
-    }
-    iree_hal_queue_t* queue = iree_hal_device_queue(
-        device, (iree_hal_queue_family_ordinal_t)family_ordinal,
-        /*queue_ordinal=*/0);
-    if (!queue) {
-      return iree_make_status(
-          IREE_STATUS_FAILED_PRECONDITION,
-          "device advertises provisioned queue family %" PRIhsz
-          " but the queue is unavailable",
-          family_ordinal);
-    }
-    *out_queue = queue;
-    return iree_ok_status();
-  }
-  return iree_make_status(
-      IREE_STATUS_FAILED_PRECONDITION,
-      "device has no provisioned transfer-and-dispatch queue");
-}
-
 iree_status_t iree_hal_streaming_context_create(
     iree_hal_streaming_device_t* device_entry,
     iree_hal_streaming_context_flags_t flags, iree_allocator_t host_allocator,
@@ -199,8 +166,8 @@ iree_status_t iree_hal_streaming_context_create(
   iree_hal_streaming_event_timestamp_pool_initialize(
       context->device_allocator, host_allocator, &context->timestamp_pool);
 
-  iree_status_t status =
-      iree_hal_streaming_context_select_queue(context->device, &context->queue);
+  iree_status_t status = iree_hal_streaming_device_select_primary_queue(
+      device_entry, &context->queue);
 
   // Initialize symbol map with global registry as the backing store.
   if (iree_status_is_ok(status)) {

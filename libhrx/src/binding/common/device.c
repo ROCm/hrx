@@ -25,6 +25,43 @@ iree_status_t iree_hal_streaming_device_count(iree_host_size_t* out_count) {
   return iree_ok_status();
 }
 
+iree_status_t iree_hal_streaming_device_select_primary_queue(
+    iree_hal_streaming_device_t* device, iree_hal_queue_t** out_queue) {
+  IREE_ASSERT_ARGUMENT(device);
+  IREE_ASSERT_ARGUMENT(out_queue);
+
+  const iree_hal_queue_family_role_flags_t required_roles =
+      IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_TRANSFER |
+      IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH;
+  const iree_hal_device_queue_spec_t* queue_spec =
+      iree_hal_device_spec_queues(iree_hal_device_spec(device->hal_device));
+  for (iree_host_size_t family_ordinal = 0;
+       queue_spec && family_ordinal < queue_spec->family_count;
+       ++family_ordinal) {
+    const iree_hal_queue_family_spec_t* family_spec =
+        &queue_spec->families[family_ordinal];
+    if (family_spec->provisioned_queue_count == 0 ||
+        !iree_all_bits_set(family_spec->role_flags, required_roles)) {
+      continue;
+    }
+    iree_hal_queue_t* queue = iree_hal_device_queue(
+        device->hal_device, (iree_hal_queue_family_ordinal_t)family_ordinal,
+        /*queue_ordinal=*/0);
+    if (IREE_UNLIKELY(!queue)) {
+      return iree_make_status(
+          IREE_STATUS_FAILED_PRECONDITION,
+          "device advertises provisioned queue family %" PRIhsz
+          " but the queue is unavailable",
+          family_ordinal);
+    }
+    *out_queue = queue;
+    return iree_ok_status();
+  }
+  return iree_make_status(
+      IREE_STATUS_FAILED_PRECONDITION,
+      "device has no provisioned transfer-and-dispatch queue");
+}
+
 static iree_status_t iree_hal_streaming_device_by_ordinal(
     iree_hal_streaming_device_ordinal_t ordinal,
     iree_hal_streaming_device_t** out_device) {

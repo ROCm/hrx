@@ -1404,6 +1404,13 @@ iree_status_t iree_hal_streaming_device_count(iree_host_size_t* out_count);
 iree_hal_streaming_device_t* iree_hal_streaming_device_entry(
     iree_hal_streaming_device_ordinal_t ordinal);
 
+// Selects the borrowed provisioned queue defining the device's primary
+// compatibility execution domain. Dynamic domains acquire queues from the same
+// family. |out_queue| is unchanged on failure.
+// Synchronization: none (queries immutable device facts).
+iree_status_t iree_hal_streaming_device_select_primary_queue(
+    iree_hal_streaming_device_t* device, iree_hal_queue_t** out_queue);
+
 // Synchronization: none (queries device properties).
 iree_status_t iree_hal_streaming_device_name(
     iree_hal_streaming_device_ordinal_t ordinal, char* name,
