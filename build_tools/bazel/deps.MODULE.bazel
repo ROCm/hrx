@@ -29,6 +29,13 @@ cc_configure = use_extension(
 )
 use_repo(cc_configure, "local_config_cc")
 
+windows_toolchain_repository = use_repo_rule(
+    "//build_tools/windows:toolchain_repository.bzl",
+    "windows_toolchain_repository",
+)
+
+windows_toolchain_repository(name = "iree_windows_toolchain")
+
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 python.defaults(python_version = "3.12")
 python.toolchain(python_version = "3.12")

@@ -94,7 +94,6 @@ _MSVC_COPTS = [
     "/DNOMINMAX",
     "/D_USE_MATH_DEFINES",
     "/D_CRT_SECURE_NO_WARNINGS",
-    "/D_CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES",
     "/EHsc",
     "/bigobj",
     "/wd4200",  # Nonstandard extension used: zero-sized array in struct/union.

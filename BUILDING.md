@@ -48,6 +48,66 @@ python dev.py cmake hook
 
 ## Command Shape
 
+### Windows targets from Linux
+
+`--config=windows-x86_64` builds Windows x86-64 executables and DLLs using
+clang-cl and lld-link from the selected Linux LLVM installation. Build-time
+generators continue to run on Linux. Native Windows uses its existing clang-cl
+toolchain with the same destination config.
+
+Provide a Linux LLVM installation and a Windows SDK/MSVC sysroot. The Bazel
+repository reads `LLVM_ROOT` and `WINSDK_ROOT` from the environment or explicit
+`--repo_env` options; acquisition is independent of the build configuration.
+For example, [xwin](https://github.com/Jake-Shadle/xwin) can prepare a sysroot
+with the required versioned MSVC/Windows Kits layout and case-correction
+symlinks:
+
+```bash
+xwin --accept-license --arch x86_64 splat \
+  --use-winsysroot-style --preserve-ms-arch-notation \
+  --include-debug-libs --output /path/to/windows-sysroot
+export LLVM_ROOT=/path/to/llvm
+export WINSDK_ROOT=/path/to/windows-sysroot
+```
+
+Equivalent explicit selections are `--repo_env=LLVM_ROOT=/path/to/llvm` and
+`--repo_env=WINSDK_ROOT=/path/to/windows-sysroot`. The build consumes headers
+and libraries; it does not require a particular installer or a runtime-DLL
+packaging layout. Native Linux builds do not require the Windows sysroot.
+
+```bash
+iree-bazel-build --config=windows-x86_64 //tools:iree-dump-cpuinfo
+iree-bazel-build --config=windows-x86_64 -c dbg \
+  //runtime/src/iree/base/testing:dynamic_library_test
+iree-bazel-build --config=windows-x86_64 -c opt //tools:iree-dump-cpuinfo
+```
+
+Debug and fastbuild outputs include PDBs. DLLs declare exports with
+`__declspec(dllexport)` or a `win_def_file`; this config disables Bazel's
+Windows-only automatic export extractor. The default CRT is dynamic (`/MD`,
+or `/MDd` in debug). Execution requires the corresponding Windows runtime DLLs,
+installed on the Windows machine or deployed beside the executable.
+`--features=static_link_msvcrt` selects `/MT` or `/MTd` when a consumer requires
+a static CRT.
+
+The resulting PE binaries execute on Windows. `bazel build` works locally;
+Linux `bazel run` and `bazel test` cannot execute them. Transfer the executable,
+its PDB, runtime DLLs, and any consumer runfiles to the Windows machine for
+execution. Target selection does not configure a remote executor or test runner.
+
+Windows ASAN requires compiler-rt libraries and DLLs matching the selected LLVM.
+This local toolchain does not yet configure Windows compiler-rt; selecting
+`--config=asan` reports that missing runtime during analysis.
+
+Compiler/SDK paths visible to Windows build actions are relative to the Bazel
+execution root. Compiler and linker actions declare separate file sets and
+carry LLVM's resolved non-glibc shared libraries. The local machine supplies
+the Linux loader and glibc, and host generators still use its native toolchain.
+Cross-machine remote caching/execution requires a separately specified execution
+environment and is not established by this local configuration.
+
+### Wrapper arguments
+
 Put wrapper execution and tool-environment options before the build-system
 command:
 

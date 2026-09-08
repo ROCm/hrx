@@ -55,6 +55,12 @@ build:windows-clang-cl --extra_execution_platforms=//build_tools/bazel:x64_windo
 build:windows-msvc --extra_toolchains=
 build:windows-msvc --extra_execution_platforms=
 
+# Destination configs preserve the build host for code generators. Windows
+# libraries expose their ABI through explicit exports or .def files.
+build:windows-x86_64 --platforms=//build_tools/windows:windows_x86_64
+build:windows-x86_64 --extra_toolchains=@iree_windows_toolchain//:toolchain
+build:windows-x86_64 --features=no_windows_export_all_symbols
+
 # -----------------------------------------------------------------------------
 # Test presets.
 # -----------------------------------------------------------------------------
