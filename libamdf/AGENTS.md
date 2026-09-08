@@ -5,6 +5,13 @@ XDNA device services. Keep the boundary independent of `runtime/`, `loom/`, and
 `libhrx/`; those projects may consume libamdf, but libamdf must not consume
 them.
 
+## Commit subjects
+
+Commits editing `libamdf/` use the `[libamdf]` subject prefix, including native
+GPU/XDNA providers, public headers, build metadata, tests, and this guide. This
+subtree rule takes precedence over the repository's broader subsystem prefixes.
+Runtime-only consumers outside `libamdf/` retain their own subsystem prefix.
+
 ## API and ownership
 
 - Public declarations live under `include/amdf/`. Public headers are the ABI
