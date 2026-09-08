@@ -393,6 +393,138 @@ TEST_F(CallableInlineTest, AppendsLexicallyClosedCfgSplice) {
   IREE_ASSERT_OK(loom_verify_module(module_, &verify_options, &verify_result));
 }
 
+TEST_F(CallableInlineTest, CapturesCfgEntryArgumentsWithoutPredecessors) {
+  const loom_type_t i32 = loom_type_scalar(LOOM_SCALAR_TYPE_I32);
+  const loom_symbol_ref_t callee_ref = MakeSymbol(IREE_SV("forward"));
+  const loom_symbol_ref_t caller_ref = MakeSymbol(IREE_SV("caller"));
+
+  loom_op_t* callee_op = nullptr;
+  IREE_ASSERT_OK(loom_func_def_build(
+      &module_builder_, 0, 0, 0, 0, 0, 0, 0, loom_symbol_ref_null(), 0,
+      loom_named_attr_slice_empty(), LOOM_STRING_ID_INVALID,
+      loom_named_attr_slice_empty(), callee_ref, &i32, 1, &i32, 1, nullptr, 0,
+      nullptr, 0, LOOM_LOCATION_UNKNOWN, &callee_op));
+  loom_func_like_t callee = loom_func_like_cast(module_, callee_op);
+  uint16_t callee_arg_count = 0;
+  const loom_value_id_t* callee_args =
+      loom_func_like_arg_ids(callee, &callee_arg_count);
+  ASSERT_EQ(callee_arg_count, 1u);
+  loom_region_t* callee_body = loom_func_like_body(callee);
+  loom_block_t* callee_exit = nullptr;
+  IREE_ASSERT_OK(loom_region_append_block(module_, callee_body, &callee_exit));
+  loom_builder_t callee_builder = BodyBuilder(callee_op);
+  loom_value_id_t forwarded = LOOM_VALUE_ID_INVALID;
+  IREE_ASSERT_OK(loom_builder_define_block_arg(&callee_builder, callee_exit,
+                                               i32, &forwarded));
+  loom_op_t* callee_branch = nullptr;
+  IREE_ASSERT_OK(loom_cfg_br_build(&callee_builder, callee_exit, callee_args, 1,
+                                   LOOM_LOCATION_UNKNOWN, &callee_branch));
+  loom_builder_set_block(&callee_builder, callee_exit);
+  loom_op_t* callee_return = nullptr;
+  IREE_ASSERT_OK(loom_func_return_build(&callee_builder, &forwarded, 1,
+                                        LOOM_LOCATION_UNKNOWN, &callee_return));
+
+  loom_op_t* call_op = nullptr;
+  loom_op_t* caller_op = BuildCaller(caller_ref, callee_ref, i32, &call_op);
+  loom_func_like_t caller = loom_func_like_cast(module_, caller_op);
+  uint16_t caller_arg_count = 0;
+  const loom_value_id_t* caller_args =
+      loom_func_like_arg_ids(caller, &caller_arg_count);
+  ASSERT_EQ(caller_arg_count, 1u);
+
+  loom_rewriter_t rewriter = {};
+  IREE_ASSERT_OK(
+      loom_rewriter_initialize(&rewriter, module_, &rewriter_arena_));
+  IREE_ASSERT_OK(loom_callable_inline_direct_call(&rewriter, call_op));
+  loom_rewriter_deinitialize(&rewriter);
+
+  loom_region_t* caller_body = loom_func_like_body(caller);
+  ASSERT_EQ(caller_body->block_count, 4u);
+  loom_block_t* caller_entry = loom_region_block(caller_body, 0);
+  loom_block_t* cloned_entry = loom_region_block(caller_body, 1);
+  loom_block_t* cloned_exit = loom_region_block(caller_body, 2);
+  loom_block_t* continuation = loom_region_block(caller_body, 3);
+  ASSERT_EQ(cloned_entry->arg_count, 0u);
+  ASSERT_TRUE(loom_cfg_br_isa(caller_entry->last_op));
+  EXPECT_EQ(loom_cfg_br_dest(caller_entry->last_op), cloned_entry);
+  EXPECT_EQ(loom_cfg_br_args(caller_entry->last_op).count, 0u);
+  ASSERT_TRUE(loom_cfg_br_isa(cloned_entry->last_op));
+  EXPECT_EQ(loom_cfg_br_dest(cloned_entry->last_op), cloned_exit);
+  EXPECT_EQ(loom_cfg_br_args(cloned_entry->last_op).values[0], caller_args[0]);
+  ASSERT_EQ(cloned_exit->arg_count, 1u);
+  ASSERT_EQ(continuation->arg_count, 1u);
+
+  const loom_verify_options_t verify_options = {};
+  loom_verify_result_t verify_result = {};
+  IREE_ASSERT_OK(loom_verify_module(module_, &verify_options, &verify_result));
+  EXPECT_EQ(verify_result.error_count, 0u);
+}
+
+TEST_F(CallableInlineTest, PreservesCfgEntryArgumentsAcrossBackedges) {
+  const loom_type_t i32 = loom_type_scalar(LOOM_SCALAR_TYPE_I32);
+  const loom_symbol_ref_t callee_ref = MakeSymbol(IREE_SV("spin"));
+  const loom_symbol_ref_t caller_ref = MakeSymbol(IREE_SV("caller"));
+
+  loom_op_t* callee_op = nullptr;
+  IREE_ASSERT_OK(loom_func_def_build(
+      &module_builder_, 0, 0, 0, 0, 0, 0, 0, loom_symbol_ref_null(), 0,
+      loom_named_attr_slice_empty(), LOOM_STRING_ID_INVALID,
+      loom_named_attr_slice_empty(), callee_ref, &i32, 1, nullptr, 0, nullptr,
+      0, nullptr, 0, LOOM_LOCATION_UNKNOWN, &callee_op));
+  loom_func_like_t callee = loom_func_like_cast(module_, callee_op);
+  uint16_t callee_arg_count = 0;
+  const loom_value_id_t* callee_args =
+      loom_func_like_arg_ids(callee, &callee_arg_count);
+  ASSERT_EQ(callee_arg_count, 1u);
+  loom_block_t* callee_entry =
+      loom_region_entry_block(loom_func_like_body(callee));
+  loom_builder_t callee_builder = BodyBuilder(callee_op);
+  loom_op_t* loop_branch = nullptr;
+  IREE_ASSERT_OK(loom_cfg_br_build(&callee_builder, callee_entry, callee_args,
+                                   1, LOOM_LOCATION_UNKNOWN, &loop_branch));
+
+  loom_op_t* caller_op = nullptr;
+  IREE_ASSERT_OK(loom_func_def_build(
+      &module_builder_, 0, 0, 0, 0, 0, 0, 0, loom_symbol_ref_null(), 0,
+      loom_named_attr_slice_empty(), LOOM_STRING_ID_INVALID,
+      loom_named_attr_slice_empty(), caller_ref, &i32, 1, nullptr, 0, nullptr,
+      0, nullptr, 0, LOOM_LOCATION_UNKNOWN, &caller_op));
+  loom_func_like_t caller = loom_func_like_cast(module_, caller_op);
+  uint16_t caller_arg_count = 0;
+  const loom_value_id_t* caller_args =
+      loom_func_like_arg_ids(caller, &caller_arg_count);
+  ASSERT_EQ(caller_arg_count, 1u);
+  loom_builder_t caller_builder = BodyBuilder(caller_op);
+  loom_op_t* call_op = nullptr;
+  IREE_ASSERT_OK(loom_func_call_build(&caller_builder, 0, 0, 0, 0, callee_ref,
+                                      caller_args, 1, nullptr, 0, nullptr, 0,
+                                      LOOM_LOCATION_UNKNOWN, &call_op));
+  loom_op_t* caller_return = nullptr;
+  IREE_ASSERT_OK(loom_func_return_build(&caller_builder, nullptr, 0,
+                                        LOOM_LOCATION_UNKNOWN, &caller_return));
+
+  loom_rewriter_t rewriter = {};
+  IREE_ASSERT_OK(
+      loom_rewriter_initialize(&rewriter, module_, &rewriter_arena_));
+  IREE_ASSERT_OK(loom_callable_inline_direct_call(&rewriter, call_op));
+  loom_rewriter_deinitialize(&rewriter);
+
+  loom_region_t* caller_body = loom_func_like_body(caller);
+  ASSERT_EQ(caller_body->block_count, 3u);
+  loom_block_t* caller_entry = loom_region_block(caller_body, 0);
+  loom_block_t* cloned_entry = loom_region_block(caller_body, 1);
+  ASSERT_EQ(cloned_entry->arg_count, 1u);
+  EXPECT_EQ(loom_cfg_br_args(caller_entry->last_op).values[0], caller_args[0]);
+  EXPECT_EQ(loom_cfg_br_dest(cloned_entry->last_op), cloned_entry);
+  EXPECT_EQ(loom_cfg_br_args(cloned_entry->last_op).values[0],
+            loom_block_arg_id(cloned_entry, 0));
+
+  const loom_verify_options_t verify_options = {};
+  loom_verify_result_t verify_result = {};
+  IREE_ASSERT_OK(loom_verify_module(module_, &verify_options, &verify_result));
+  EXPECT_EQ(verify_result.error_count, 0u);
+}
+
 TEST_F(CallableInlineTest, OrdersCfgSpliceBeforeExternalTailResultUse) {
   const loom_type_t f32 = loom_type_scalar(LOOM_SCALAR_TYPE_F32);
   const loom_symbol_ref_t callee_ref = MakeSymbol(IREE_SV("spin"));
