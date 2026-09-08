@@ -29,6 +29,8 @@ static void CreateDeviceSpecForProcessor(
       /*.numa=*/{/*.node_id=*/1},
       /*.physical_ordinal=*/7,
       /*.queue_count=*/2,
+      /*.supported_queue_features=*/
+      IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH,
       /*.queue_execution_resources=*/{},
       /*.wavefront_size=*/wavefront_size,
       /*.maximum_waves_per_compute_unit=*/64,
@@ -86,6 +88,8 @@ TEST(DeviceSpecTest, CreatesSpecFromParams) {
   EXPECT_EQ(queue_family.priorities[0], -1);
   EXPECT_EQ(queue_family.priorities[1], IREE_HAL_QUEUE_PRIORITY_NORMAL);
   EXPECT_EQ(queue_family.priorities[2], 1);
+  EXPECT_EQ(queue_family.supported_queue_features,
+            IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH);
   EXPECT_EQ(queue_family.execution_unit_count, 40u);
   ASSERT_EQ(queue_family.execution_resource_group_count, 1u);
   EXPECT_EQ(
@@ -194,6 +198,7 @@ TEST(DeviceSpecTest, AdvertisesTargetsPerPhysicalDevice) {
           /*.numa=*/{},
           /*.physical_ordinal=*/4,
           /*.queue_count=*/1,
+          /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
           /*.queue_execution_resources=*/{},
           /*.wavefront_size=*/32,
           /*.maximum_waves_per_compute_unit=*/64,
@@ -209,6 +214,7 @@ TEST(DeviceSpecTest, AdvertisesTargetsPerPhysicalDevice) {
           /*.numa=*/{},
           /*.physical_ordinal=*/9,
           /*.queue_count=*/1,
+          /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
           /*.queue_execution_resources=*/{},
           /*.wavefront_size=*/32,
           /*.maximum_waves_per_compute_unit=*/64,

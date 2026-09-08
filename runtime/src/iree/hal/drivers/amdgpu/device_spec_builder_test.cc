@@ -34,6 +34,7 @@ static void MakePhysicalDeviceParams(
       /*.numa=*/{/*.node_id=*/1},
       /*.physical_ordinal=*/physical_ordinal,
       /*.queue_count=*/2,
+      /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
       /*.queue_execution_resources=*/{},
       /*.wavefront_size=*/64,
       /*.maximum_waves_per_compute_unit=*/32,

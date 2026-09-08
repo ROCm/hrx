@@ -1826,6 +1826,10 @@ static iree_status_t iree_hal_amdgpu_logical_device_create_device_spec(
     iree_allocator_t host_allocator) {
   const iree_host_size_t physical_device_count =
       logical_device->physical_device_count;
+  const bool dynamic_queue_acquisition_available =
+      !options->tsan.enabled &&
+      iree_hal_amdgpu_logical_device_provisioned_queue_count(logical_device) <
+          IREE_HAL_AMDGPU_LOGICAL_DEVICE_QUEUE_SLOT_COUNT;
   iree_hal_amdgpu_device_spec_physical_device_params_t* physical_devices = NULL;
   IREE_RETURN_IF_ERROR(iree_allocator_malloc_array(
       host_allocator, physical_device_count, sizeof(*physical_devices),
@@ -1874,6 +1878,11 @@ static iree_status_t iree_hal_amdgpu_logical_device_create_device_spec(
         (uint32_t)physical_device->device_ordinal;
     physical_params->queue_count =
         (uint32_t)physical_device->host_queue_capacity;
+    physical_params->supported_queue_features =
+        dynamic_queue_acquisition_available &&
+                physical_device->supports_cooperative_dispatch
+            ? IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH
+            : IREE_HAL_QUEUE_FEATURE_FLAG_NONE;
     physical_params->queue_execution_resources =
         physical_device->queue_execution_resources;
     physical_params->wavefront_size = physical_device->wavefront_size;
@@ -1902,9 +1911,7 @@ static iree_status_t iree_hal_amdgpu_logical_device_create_device_spec(
         logical_device->system->info.dmabuf_supported
             ? IREE_HAL_AMDGPU_DEVICE_SPEC_PARAM_FLAG_DMABUF
             : IREE_HAL_AMDGPU_DEVICE_SPEC_PARAM_FLAG_NONE;
-    if (!options->tsan.enabled &&
-        iree_hal_amdgpu_logical_device_provisioned_queue_count(logical_device) <
-            IREE_HAL_AMDGPU_LOGICAL_DEVICE_QUEUE_SLOT_COUNT) {
+    if (dynamic_queue_acquisition_available) {
       spec_flags |=
           IREE_HAL_AMDGPU_DEVICE_SPEC_PARAM_FLAG_DYNAMIC_QUEUE_ACQUISITION;
     }

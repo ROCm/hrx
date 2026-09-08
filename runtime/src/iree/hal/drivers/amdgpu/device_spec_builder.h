@@ -46,6 +46,9 @@ typedef struct iree_hal_amdgpu_device_spec_physical_device_params_t {
   uint32_t physical_ordinal;
   // Host queue count initialized for this physical device.
   uint32_t queue_count;
+  // Immutable feature bits available on queues in this physical device's
+  // family.
+  iree_hal_queue_feature_flags_t supported_queue_features;
   // Derived queue execution-resource topology for this physical device.
   iree_hal_amdgpu_queue_execution_resource_topology_t queue_execution_resources;
   // Native wavefront size in lanes.

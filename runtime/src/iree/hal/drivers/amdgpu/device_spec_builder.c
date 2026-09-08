@@ -409,6 +409,7 @@ static iree_status_t iree_hal_amdgpu_device_spec_populate_queues(
         .execution_resource_groups = &groups[group_offset],
         .execution_resource_count = resource_count,
         .execution_resources = &resources[resource_offset],
+        .supported_queue_features = physical_device->supported_queue_features,
         .timestamp_valid_bits = 64,
         .timestamp_frequency_hz = physical_device->timestamp_frequency_hz,
         .physical_device_affinity = 1ull << i,
