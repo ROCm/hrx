@@ -28,6 +28,7 @@
 
 #include "binding/hip/binding_internal.h"
 #include "binding/hip/blocking_printf_provider.h"
+#include "binding/hip/execution_resource.h"
 #include "binding/hip/handle_registry.h"
 #include "binding/hip/launch_params.h"
 #include "common/direct_transfer.h"
@@ -3037,6 +3038,52 @@ HIPAPI hipError_t hipDeviceGetStreamPriorityRange(int* leastPriority,
   if (greatestPriority) {
     *greatestPriority = -1;  // Highest priority
   }
+  return hipSuccess;
+}
+
+// Returns the complete process-visible execution resource for a device.
+// The resource is derived from the same provisioned queue family used by the
+// primary compatibility execution domain.
+HIPAPI hipError_t hipDeviceGetDevResource(hipDevice_t device,
+                                          hipDevResource* resource,
+                                          hipDevResourceType type) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (!resource) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidValue);
+  }
+  if (type != hipDevResourceTypeSm) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidResourceType);
+  }
+
+  hipError_t init_result = iree_hip_ensure_initialized();
+  if (init_result != hipSuccess) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(init_result);
+  }
+  iree_hal_streaming_device_t* device_entry =
+      iree_hal_streaming_device_entry(device);
+  if (!device_entry) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidDevice);
+  }
+
+  iree_hal_queue_t* primary_queue = NULL;
+  HIP_RETURN_STATUS_AND_END_ZONE_IF_ERROR(
+      z0,
+      iree_hal_streaming_device_select_primary_queue(device_entry,
+                                                     &primary_queue),
+      hipErrorNotSupported);
+  hipDevResource result;
+  HIP_RETURN_STATUS_AND_END_ZONE_IF_ERROR(
+      z0, iree_hip_execution_resource_create_sm(
+              device_entry, iree_hal_queue_family(primary_queue),
+              (iree_hal_queue_execution_resource_list_t){0},
+              hipDevSmResourceGroupDefault, &result));
+
+  *resource = result;
+  IREE_TRACE_ZONE_END(z0);
   return hipSuccess;
 }
 

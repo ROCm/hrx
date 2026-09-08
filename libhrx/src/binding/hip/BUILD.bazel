@@ -27,6 +27,13 @@ package(
 # its loader and symbol-export mechanisms before relaxing this constraint.
 _LINUX_COMPATIBILITY = ["@platforms//os:linux"]
 
+# HIP GPU tests require a compiled AMDGPU backend before runtime device
+# discovery.
+_HIP_GPU_COMPATIBILITY = _LINUX_COMPATIBILITY + select({
+    "//runtime/config/hal:driver_amdgpu": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
 hrx_cc_library(
     name = "printf_format",
     srcs = ["printf_format.c"],
@@ -165,6 +172,7 @@ hrx_cc_shared_library(
     target_compatible_with = _LINUX_COMPATIBILITY,
     deps = [
         ":blocking_printf_provider",
+        ":execution_resource",
         ":handle_registry",
         ":launch_params",
         "//libhrx/src/binding/common",
@@ -226,6 +234,27 @@ hrx_cc_test(
     },
     target_compatible_with = _LINUX_COMPATIBILITY,
     deps = [
+        "//build_tools/bazel:dl",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+hrx_cc_test(
+    name = "hip_execution_resource_api_test",
+    srcs = ["hip_execution_resource_api_test.cc"],
+    data = [":amdhip64"],
+    env = {
+        "HRX_TEST_LIBAMDHIP64": "$(location :amdhip64)",
+    },
+    sanitizer_suppressions = hsa_suppressions,
+    tags = [
+        "iree-run-requirement=runtime.resource.amd_gpu",
+        "runtime-resource=amd-gpu",
+    ],
+    target_compatible_with = _HIP_GPU_COMPATIBILITY,
+    deps = [
+        ":execution_resource",
         "//build_tools/bazel:dl",
         "//runtime/src/iree/testing:gtest",
         "//runtime/src/iree/testing:gtest_main",

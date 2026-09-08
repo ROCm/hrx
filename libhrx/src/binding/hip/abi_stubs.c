@@ -635,15 +635,6 @@ HIPAPI hipError_t hipDeviceComputeCapability(int* major, int* minor,
   return hipErrorNotSupported;
 }
 
-HIPAPI hipError_t hipDeviceGetDevResource(hipDevice_t device,
-                                          hipDevResource* resource,
-                                          hipDevResourceType type) {
-  (void)device;
-  (void)resource;
-  (void)type;
-  return hipErrorNotSupported;
-}
-
 HIPAPI hipError_t hipDeviceGetExecutionCtx(hipExecutionCtx_t* ctx,
                                            hipDevice_t device) {
   (void)ctx;
