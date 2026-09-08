@@ -691,8 +691,10 @@ typedef struct amdf_api_t {
   ///
   /// The caller must have exclusive access. Returns
   /// `AMDF_STATUS_CODE_BUSY` without native mutation while a child remains
-  /// live. Destruction performs no implicit device wait. A native teardown
-  /// failure leaves the device live so destruction can be retried.
+  /// live. Caller-submitted work must already be retired before its owning
+  /// children are destroyed. Native teardown may wait for provider-owned
+  /// initialization work retained after a failed construction. A native
+  /// teardown failure leaves the device live so destruction can be retried.
   amdf_status_t(AMDF_CALL* device_destroy)(amdf_device_t* device);
 
   /// Creates physical backing and one stable attachment to `device`.
