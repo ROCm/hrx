@@ -50,20 +50,20 @@ amdf_status_t amdf_gpu_wddm_wkmi_adapter_create_allocations(
     uint32_t allocation_handle_capacity, D3DKMT_HANDLE* out_allocation_handles,
     D3DKMT_HANDLE* out_resource, uint32_t* out_allocation_count);
 
-// Creates one native PM4 kernel queue through pinned WKMI.
+// Creates one native GPU kernel queue through pinned WKMI.
 amdf_status_t amdf_gpu_wddm_wkmi_adapter_create_kernel_queue(
     const amdf_gpu_wddm_wkmi_adapter_t* adapter,
     const amdf_wkmi_bridge_gpu_kernel_queue_create_info_t* create_info,
     amdf_wkmi_bridge_gpu_kernel_queue_t** out_queue,
     amdf_wkmi_bridge_gpu_kernel_queue_info_t* out_info);
 
-// Publishes one already-materialized PM4 command stream.
+// Publishes one already-materialized native GPU command stream.
 amdf_status_t amdf_gpu_wddm_wkmi_adapter_submit_kernel_queue(
     const amdf_gpu_wddm_wkmi_adapter_t* adapter,
     amdf_wkmi_bridge_gpu_kernel_queue_t* queue, uint64_t command_buffer_address,
     uint64_t command_buffer_byte_length, uint64_t progress_value);
 
-// Releases one native PM4 kernel queue.
+// Releases one native GPU kernel queue.
 amdf_status_t amdf_gpu_wddm_wkmi_adapter_destroy_kernel_queue(
     const amdf_gpu_wddm_wkmi_adapter_t* adapter,
     amdf_wkmi_bridge_gpu_kernel_queue_t* queue);

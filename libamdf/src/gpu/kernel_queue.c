@@ -36,7 +36,7 @@ enum {
 typedef struct amdf_gpu_kernel_queue_t {
   // Generic kernel-queue state shared by every engine implementation.
   amdf_kernel_queue_t base;
-  // Exact native kernel-mediated PM4 queue lease.
+  // Exact native kernel-mediated GPU queue lease.
   amdf_gpu_umd_kernel_queue_t* umd;
   // Submission sequence and ownership state of the single pending slot.
   amdf_atomic_uint64_t slot_state;
@@ -247,7 +247,8 @@ amdf_status_t AMDF_CALL amdf_gpu_kernel_queue_create(
   if (!amdf_status_is_ok(status)) {
     return status;
   }
-  if (family_info.command_type != AMDF_QUEUE_COMMAND_TYPE_GPU_PM4 ||
+  if ((family_info.command_type != AMDF_QUEUE_COMMAND_TYPE_GPU_PM4 &&
+       family_info.command_type != AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA) ||
       (family_info.publication_modes & AMDF_QUEUE_PUBLICATION_MODE_KERNEL) ==
           0) {
     return amdf_make_api_status(AMDF_STATUS_CODE_UNSUPPORTED);
@@ -276,8 +277,8 @@ amdf_status_t AMDF_CALL amdf_gpu_kernel_queue_create(
   status = amdf_kernel_queue_initialize(
       &queue->base, &amdf_gpu_kernel_queue_vtable, device, &info);
   if (amdf_status_is_ok(status)) {
-    status = amdf_gpu_umd_kernel_queue_create(amdf_gpu_device_get_umd(device),
-                                              &queue->umd);
+    status = amdf_gpu_umd_kernel_queue_create(
+        amdf_gpu_device_get_umd(device), family_info.command_type, &queue->umd);
   }
   if (amdf_status_is_ok(status)) {
     *out_queue = &queue->base;
@@ -297,7 +298,8 @@ amdf_status_t AMDF_CALL amdf_gpu_kernel_queue_submit(
   if (base_queue == NULL || out_submission == NULL) {
     return amdf_make_api_status(AMDF_STATUS_CODE_INVALID_ARGUMENT);
   }
-  if (base_queue->info.command_type != AMDF_QUEUE_COMMAND_TYPE_GPU_PM4) {
+  if (base_queue->info.command_type != AMDF_QUEUE_COMMAND_TYPE_GPU_PM4 &&
+      base_queue->info.command_type != AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA) {
     return amdf_make_api_status(AMDF_STATUS_CODE_UNSUPPORTED);
   }
   amdf_status_t status = amdf_structure_validate_input(

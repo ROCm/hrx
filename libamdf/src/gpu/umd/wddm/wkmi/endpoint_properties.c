@@ -57,6 +57,8 @@ bool amdf_gpu_wddm_wkmi_endpoint_properties_translate(
           },
       .supports_pm4_kernel_queue =
           provider_properties->supports_pm4_kernel_queue != 0,
+      .supports_sdma_kernel_queue =
+          provider_properties->supports_sdma_kernel_queue != 0,
   };
   *out_properties = properties;
   return true;

@@ -79,21 +79,42 @@ uint32_t amdf_gpu_extension_query_endpoint_queue_families(
     const amdf_gpu_endpoint_profile_t* profile,
     const amdf_platform_endpoint_t* platform_endpoint, uint32_t capacity,
     amdf_queue_family_info_t* out_families) {
-  if (profile == NULL || !profile->supports_pm4_kernel_queue || capacity == 0) {
+  if (profile == NULL || capacity == 0) {
     return 0;
   }
-  const amdf_queue_publication_modes_t publication_modes =
-      amdf_platform_endpoint_query_queue_publication_modes(
-          platform_endpoint, AMDF_QUEUE_COMMAND_TYPE_GPU_PM4);
-  if (publication_modes == 0) {
-    return 0;
+
+  struct {
+    // Native command representation accepted by this candidate family.
+    amdf_queue_command_type_t command_type;
+    // Whether the qualified endpoint can construct this native queue.
+    bool supported;
+  } candidates[] = {
+      {AMDF_QUEUE_COMMAND_TYPE_GPU_PM4, profile->supports_pm4_kernel_queue},
+      {AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA, profile->supports_sdma_kernel_queue},
+  };
+  uint32_t family_count = 0;
+  for (uint32_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]) &&
+                       family_count < capacity;
+       ++i) {
+    if (!candidates[i].supported) {
+      continue;
+    }
+    const amdf_queue_publication_modes_t publication_modes =
+        amdf_platform_endpoint_query_queue_publication_modes(
+            platform_endpoint, candidates[i].command_type);
+    if (publication_modes == 0) {
+      continue;
+    }
+    amdf_queue_family_info_t* family = &out_families[family_count];
+    *family = (amdf_queue_family_info_t){0};
+    family->type = AMDF_STRUCTURE_TYPE_QUEUE_FAMILY_INFO;
+    family->structure_size = sizeof(*family);
+    family->ordinal = family_count;
+    family->command_type = candidates[i].command_type;
+    family->publication_modes = publication_modes;
+    ++family_count;
   }
-  out_families[0].type = AMDF_STRUCTURE_TYPE_QUEUE_FAMILY_INFO;
-  out_families[0].structure_size = sizeof(out_families[0]);
-  out_families[0].ordinal = 0;
-  out_families[0].command_type = AMDF_QUEUE_COMMAND_TYPE_GPU_PM4;
-  out_families[0].publication_modes = publication_modes;
-  return 1;
+  return family_count;
 }
 
 amdf_status_t amdf_gpu_extension_query(uint32_t minimum_version,

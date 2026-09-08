@@ -13,13 +13,13 @@
 extern "C" {
 #endif  // __cplusplus
 
-// Acquires one kernel-mediated PM4 queue from a materialized GPU device.
+// Acquires one kernel-mediated native queue from a materialized GPU device.
 amdf_status_t AMDF_CALL amdf_gpu_kernel_queue_create(
     amdf_device_t* device,
     const amdf_gpu_kernel_queue_create_info_t* create_info,
     amdf_kernel_queue_t** out_queue);
 
-// Publishes one bounded array of already-materialized PM4 command streams.
+// Publishes one bounded array of already-materialized native command streams.
 amdf_status_t AMDF_CALL amdf_gpu_kernel_queue_submit(
     amdf_kernel_queue_t* queue,
     const amdf_gpu_kernel_queue_submission_info_t* submission_info,

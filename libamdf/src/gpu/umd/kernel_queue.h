@@ -18,11 +18,12 @@ extern "C" {
 
 typedef struct amdf_gpu_umd_kernel_queue_t amdf_gpu_umd_kernel_queue_t;
 
-// Acquires one native kernel-mediated PM4 queue.
+// Acquires one native kernel-mediated queue accepting |command_type|.
 amdf_status_t amdf_gpu_umd_kernel_queue_create(
-    amdf_gpu_umd_device_t* device, amdf_gpu_umd_kernel_queue_t** out_queue);
+    amdf_gpu_umd_device_t* device, amdf_queue_command_type_t command_type,
+    amdf_gpu_umd_kernel_queue_t** out_queue);
 
-// Publishes one immutable PM4 command range and returns its progress value.
+// Publishes one immutable native command range and returns its progress value.
 amdf_status_t amdf_gpu_umd_kernel_queue_submit(
     amdf_gpu_umd_kernel_queue_t* queue, uint64_t command_buffer_address,
     uint64_t command_buffer_byte_length, uint64_t* out_native_submission);
@@ -36,7 +37,7 @@ amdf_status_t amdf_gpu_umd_kernel_queue_wait(
     amdf_gpu_umd_kernel_queue_t* queue, uint64_t native_submission,
     uint64_t timeout_nanoseconds, uint64_t poll_duration_nanoseconds);
 
-// Releases an idle native PM4 queue.
+// Releases an idle native GPU queue.
 amdf_status_t amdf_gpu_umd_kernel_queue_destroy(
     amdf_gpu_umd_kernel_queue_t* queue);
 

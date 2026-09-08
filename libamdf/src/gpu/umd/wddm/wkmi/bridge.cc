@@ -57,15 +57,19 @@ void PopulateGpuProperties(Wkmi::DeviceInfo& device_info,
   properties.local_data_share_byte_length = device_info.lds_size;
   properties.xcc_count = device_info.num_xcc;
   properties.shader_engine_count = device_info.num_shader_engine;
-  const uint32_t compute_scheduler = device_info.compute_schedid;
+  const bool has_kernel_queue_api = Wkmi::GetContextPrivDataSize() > 0 &&
+                                    Wkmi::GetHwQueuePrivDataSize() > 0 &&
+                                    Wkmi::GetSubmitPrivDataSize() > 0;
+  uint32_t scheduler = 0;
   properties.supports_pm4_kernel_queue =
-      Wkmi::EngineOrdinal(compute_scheduler, &device_info) >= 0 &&
-              Wkmi::GetHwsEnabled(compute_scheduler, &device_info) &&
-              Wkmi::GetContextPrivDataSize() > 0 &&
-              Wkmi::GetHwQueuePrivDataSize() > 0 &&
-              Wkmi::GetSubmitPrivDataSize() > 0
-          ? 1u
-          : 0u;
+      has_kernel_queue_api &&
+      amdf::wkmi_bridge::SelectGpuHardwareQueueScheduler(
+          device_info, AMDF_WKMI_BRIDGE_GPU_QUEUE_COMMAND_TYPE_PM4, &scheduler);
+  properties.supports_sdma_kernel_queue =
+      has_kernel_queue_api &&
+      amdf::wkmi_bridge::SelectGpuHardwareQueueScheduler(
+          device_info, AMDF_WKMI_BRIDGE_GPU_QUEUE_COMMAND_TYPE_SDMA,
+          &scheduler);
   *out_properties = properties;
 }
 

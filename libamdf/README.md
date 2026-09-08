@@ -27,8 +27,9 @@ the pinned binary-only WKMI C++ and CRT ABI behind a versioned C table, retains
 no adapter state, and unloads before endpoint open returns. GPU information
 queries copy the cached exact GFX identity, ASIC revision, active compute
 geometry, LDS limit, and XCC topology without loading a library or entering the
-driver. GPU endpoints advertise a kernel-published PM4 family only when the
-loaded KMT and WKMI surfaces provide the complete native queue path.
+driver. GPU endpoints advertise kernel-published PM4 and SDMA families only
+when the loaded KMT and WKMI surfaces provide hardware-scheduled queues for
+the selected engine.
 
 Each opened endpoint also reports a dense immutable set of native queue
 families. A family identifies its accepted command representation (PM4, SDMA,
@@ -41,9 +42,10 @@ A materialized Windows GPU device owns one WDDM address domain and can attach
 system, device-local, and registered-host memory at stable GPU virtual
 addresses. Local allocations may be executable without being host-visible;
 callers stage their contents through prepared GPU commands. The current
-kernel-mediated PM4 queue accepts one immutable command range without reading
-or translating its bytes, borrows the command attachment until a monitored
-progress fence retires it, and supports bounded polling plus a kernel wait.
+kernel-mediated PM4 and SDMA queues accept one immutable native command range
+without reading or translating its bytes, borrow the command attachment until
+a monitored progress fence retires it, and support bounded polling plus a
+kernel wait.
 
 Advertising a command/publication pair promises that a matching queue can be
 constructed for that endpoint. Missing families mean the loaded provider has

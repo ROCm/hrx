@@ -9,14 +9,26 @@
 
 #include "libamdf/src/gpu/umd/wddm/wkmi/bridge_api.h"
 
+namespace Wkmi {
+struct DeviceInfo;
+}
+
 namespace amdf::wkmi_bridge {
+
+// Selects a scheduler whose node and hardware-scheduling capability both exist.
+// Qualification and construction share this predicate so an advertised family
+// cannot select a software-scheduled engine for a hardware queue.
+bool SelectGpuHardwareQueueScheduler(
+    Wkmi::DeviceInfo& device_info,
+    amdf_wkmi_bridge_gpu_queue_command_type_t command_type,
+    uint32_t* out_scheduler);
 
 // Verifies that no queue borrows `adapter` and drains deferred rollback state.
 amdf_wkmi_bridge_result_t PrepareGpuAdapterClose(
     amdf_wkmi_bridge_gpu_adapter_t* adapter,
     uint32_t* out_native_status) noexcept;
 
-// Creates one native PM4 hardware queue and execution context.
+// Creates one native GPU hardware queue and execution context.
 amdf_wkmi_bridge_result_t AMDF_WKMI_BRIDGE_CALL GpuKernelQueueCreate(
     amdf_wkmi_bridge_gpu_adapter_t* adapter,
     const amdf_wkmi_bridge_gpu_kernel_queue_create_info_t* create_info,
@@ -24,13 +36,13 @@ amdf_wkmi_bridge_result_t AMDF_WKMI_BRIDGE_CALL GpuKernelQueueCreate(
     amdf_wkmi_bridge_gpu_kernel_queue_info_t* out_info,
     uint32_t* out_native_status) noexcept;
 
-// Publishes one already-materialized PM4 command stream.
+// Publishes one already-materialized native command stream.
 amdf_wkmi_bridge_result_t AMDF_WKMI_BRIDGE_CALL GpuKernelQueueSubmit(
     amdf_wkmi_bridge_gpu_kernel_queue_t* queue, uint64_t command_buffer_address,
     uint64_t command_buffer_byte_length, uint64_t progress_value,
     uint32_t* out_native_status) noexcept;
 
-// Releases one native PM4 hardware queue and execution context.
+// Releases one native GPU hardware queue and execution context.
 amdf_wkmi_bridge_result_t AMDF_WKMI_BRIDGE_CALL
 GpuKernelQueueDestroy(amdf_wkmi_bridge_gpu_kernel_queue_t* queue,
                       uint32_t* out_native_status) noexcept;

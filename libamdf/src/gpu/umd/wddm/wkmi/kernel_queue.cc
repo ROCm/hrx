@@ -32,7 +32,7 @@
 struct amdf_wkmi_bridge_gpu_kernel_queue_t {
   // Parsed adapter state borrowed for the lifetime of the queue.
   amdf_wkmi_bridge_gpu_adapter_t* adapter = nullptr;
-  // Native compute context owning the hardware queue.
+  // Native execution context owning the hardware queue.
   D3DKMT_HANDLE context = 0;
   // Native kernel-mediated hardware queue.
   D3DKMT_HANDLE handle = 0;
@@ -87,19 +87,47 @@ void DeferQueueRollback(amdf_wkmi_bridge_gpu_adapter_t* adapter,
   ReleaseSRWLockExclusive(&adapter->queue_lock);
 }
 
+}  // namespace
+
+bool SelectGpuHardwareQueueScheduler(
+    Wkmi::DeviceInfo& device_info,
+    amdf_wkmi_bridge_gpu_queue_command_type_t command_type,
+    uint32_t* out_scheduler) {
+  if (command_type == AMDF_WKMI_BRIDGE_GPU_QUEUE_COMMAND_TYPE_PM4) {
+    const uint32_t scheduler = device_info.compute_schedid;
+    if (Wkmi::EngineOrdinal(scheduler, &device_info) < 0 ||
+        !Wkmi::GetHwsEnabled(scheduler, &device_info)) {
+      return false;
+    }
+    *out_scheduler = scheduler;
+    return true;
+  }
+  if (command_type == AMDF_WKMI_BRIDGE_GPU_QUEUE_COMMAND_TYPE_SDMA) {
+    for (int scheduler : device_info.sdma_schedid) {
+      if (scheduler >= 0 && Wkmi::EngineOrdinal(scheduler, &device_info) >= 0 &&
+          Wkmi::GetHwsEnabled(scheduler, &device_info)) {
+        *out_scheduler = static_cast<uint32_t>(scheduler);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+namespace {
+
 amdf_wkmi_bridge_result_t CreateNativeQueue(
     amdf_wkmi_bridge_gpu_adapter_t* adapter, uint32_t device_handle,
+    amdf_wkmi_bridge_gpu_queue_command_type_t command_type,
     amdf_wkmi_bridge_gpu_kernel_queue_t** out_queue,
     amdf_wkmi_bridge_gpu_kernel_queue_info_t* out_info,
     uint32_t* out_native_status) {
   Wkmi::DeviceInfo& device_info = adapter->device_info;
-  const uint32_t compute_scheduler = device_info.compute_schedid;
-  const int engine_ordinal =
-      Wkmi::EngineOrdinal(compute_scheduler, &device_info);
-  if (engine_ordinal < 0 ||
-      !Wkmi::GetHwsEnabled(compute_scheduler, &device_info)) {
+  uint32_t scheduler = 0;
+  if (!SelectGpuHardwareQueueScheduler(device_info, command_type, &scheduler)) {
     return AMDF_WKMI_BRIDGE_RESULT_UNSUPPORTED;
   }
+  const int engine_ordinal = Wkmi::EngineOrdinal(scheduler, &device_info);
 
   const int context_private_size = Wkmi::GetContextPrivDataSize();
   const int queue_private_size = Wkmi::GetHwQueuePrivDataSize();
@@ -122,8 +150,8 @@ amdf_wkmi_bridge_result_t CreateNativeQueue(
   queue->adapter = adapter;
 
   Wkmi::FillinContextPrivData(context_private.data(),
-                              device_info.state_shadowing_by_cpfw,
-                              compute_scheduler, 0);
+                              device_info.state_shadowing_by_cpfw, scheduler,
+                              0);
   D3DKMT_CREATECONTEXTVIRTUAL create_context = {};
   create_context.hDevice = static_cast<D3DKMT_HANDLE>(device_handle);
   create_context.EngineAffinity = 1;
@@ -228,17 +256,22 @@ amdf_wkmi_bridge_result_t AMDF_WKMI_BRIDGE_CALL GpuKernelQueueCreate(
     uint32_t* out_native_status) noexcept {
   if (adapter == nullptr || create_info == nullptr ||
       create_info->structure_size < sizeof(*create_info) ||
-      create_info->device_handle == 0 || create_info->reserved != 0 ||
-      out_queue == nullptr || out_info == nullptr ||
-      out_native_status == nullptr) {
+      create_info->device_handle == 0 ||
+      (create_info->command_type !=
+           AMDF_WKMI_BRIDGE_GPU_QUEUE_COMMAND_TYPE_PM4 &&
+       create_info->command_type !=
+           AMDF_WKMI_BRIDGE_GPU_QUEUE_COMMAND_TYPE_SDMA) ||
+      create_info->reserved != 0 || out_queue == nullptr ||
+      out_info == nullptr || out_native_status == nullptr) {
     return AMDF_WKMI_BRIDGE_RESULT_INVALID_ARGUMENT;
   }
   *out_queue = nullptr;
   *out_info = {};
   *out_native_status = 0;
   try {
-    return CreateNativeQueue(adapter, create_info->device_handle, out_queue,
-                             out_info, out_native_status);
+    return CreateNativeQueue(adapter, create_info->device_handle,
+                             create_info->command_type, out_queue, out_info,
+                             out_native_status);
   } catch (const std::bad_alloc&) {
     return AMDF_WKMI_BRIDGE_RESULT_RESOURCE_EXHAUSTED;
   } catch (...) {

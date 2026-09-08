@@ -89,7 +89,8 @@ amdf_queue_publication_modes_t
 amdf_platform_endpoint_query_queue_publication_modes(
     const amdf_platform_endpoint_t* endpoint,
     amdf_queue_command_type_t command_type) {
-  if (command_type == AMDF_QUEUE_COMMAND_TYPE_GPU_PM4 &&
+  if ((command_type == AMDF_QUEUE_COMMAND_TYPE_GPU_PM4 ||
+       command_type == AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA) &&
       amdf_kmt_api_supports_gpu_kernel_execution(&endpoint->instance->kmt)) {
     return AMDF_QUEUE_PUBLICATION_MODE_KERNEL;
   }

@@ -51,6 +51,8 @@ typedef struct amdf_gpu_endpoint_properties_t {
   } topology;
   // Whether the native provider can construct a kernel-published PM4 queue.
   bool supports_pm4_kernel_queue;
+  // Whether the native provider can construct a kernel-published SDMA queue.
+  bool supports_sdma_kernel_queue;
 } amdf_gpu_endpoint_properties_t;
 
 // Immutable qualified GPU profile owned by one core endpoint.
@@ -59,6 +61,8 @@ typedef struct amdf_gpu_endpoint_profile_t {
   amdf_gpu_endpoint_info_t info;
   // Whether the native provider can construct a kernel-published PM4 queue.
   bool supports_pm4_kernel_queue;
+  // Whether the native provider can construct a kernel-published SDMA queue.
+  bool supports_sdma_kernel_queue;
 } amdf_gpu_endpoint_profile_t;
 
 // Validates and normalizes |properties| into |out_profile|.

@@ -116,7 +116,7 @@ typedef struct amdf_gpu_device_info_t {
   uint64_t reset_epoch;
 } amdf_gpu_device_info_t;
 
-/// One already-materialized PM4 command stream.
+/// One already-materialized native GPU command stream.
 ///
 /// The command bytes reside in executable memory with a stable device address
 /// and may be device-local or non-host-visible. Submission resolves only that
@@ -139,7 +139,7 @@ typedef struct amdf_gpu_kernel_queue_create_info_t {
   uint32_t structure_size;
   /// Optional input extension chain. No extensions are currently defined.
   const void* next;
-  /// Endpoint-local PM4 family supporting kernel publication.
+  /// Endpoint-local PM4 or SDMA family supporting kernel publication.
   uint32_t queue_family_ordinal;
   /// Reserved for compatible growth and must be zero.
   uint32_t reserved;
@@ -204,18 +204,19 @@ typedef struct amdf_gpu_api_t {
   amdf_status_t(AMDF_CALL* device_query_info)(amdf_device_t* device,
                                               amdf_gpu_device_info_t* out_info);
 
-  /// Acquires one kernel-mediated PM4 queue from a GPU device.
+  /// Acquires one kernel-mediated native command queue from a GPU device.
   ///
   /// The returned queue borrows `device`, which must outlive it. Creation
-  /// selects an advertised `GPU_PM4 + KERNEL` family and allocates every
-  /// bounded submission resource before publication. On failure, `out_queue`
-  /// is set to `NULL`.
+  /// selects an advertised `GPU_PM4 + KERNEL` or `GPU_SDMA + KERNEL` family
+  /// and allocates every bounded submission resource before publication. On
+  /// failure, `out_queue` is set to `NULL`.
   amdf_status_t(AMDF_CALL* kernel_queue_create)(
       amdf_device_t* device,
       const amdf_gpu_kernel_queue_create_info_t* create_info,
       amdf_kernel_queue_t** out_queue);
 
-  /// Publishes one bounded array of already-materialized PM4 command streams.
+  /// Publishes one bounded array of already-materialized native command
+  /// streams in the representation selected when the queue was created.
   ///
   /// Every command range must belong to the queue's device and reset epoch and
   /// have `EXECUTABLE` and `DEVICE_ADDRESS` memory flags. The call registers

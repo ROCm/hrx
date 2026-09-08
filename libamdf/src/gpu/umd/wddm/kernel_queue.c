@@ -56,8 +56,20 @@ static uint64_t amdf_gpu_wddm_counter_elapsed_nanoseconds(uint64_t begin,
 }
 
 amdf_status_t amdf_gpu_umd_kernel_queue_create(
-    amdf_gpu_umd_device_t* device, amdf_gpu_umd_kernel_queue_t** out_queue) {
+    amdf_gpu_umd_device_t* device, amdf_queue_command_type_t command_type,
+    amdf_gpu_umd_kernel_queue_t** out_queue) {
   *out_queue = NULL;
+  amdf_wkmi_bridge_gpu_queue_command_type_t native_command_type;
+  switch (command_type) {
+    case AMDF_QUEUE_COMMAND_TYPE_GPU_PM4:
+      native_command_type = AMDF_WKMI_BRIDGE_GPU_QUEUE_COMMAND_TYPE_PM4;
+      break;
+    case AMDF_QUEUE_COMMAND_TYPE_GPU_SDMA:
+      native_command_type = AMDF_WKMI_BRIDGE_GPU_QUEUE_COMMAND_TYPE_SDMA;
+      break;
+    default:
+      return amdf_make_api_status(AMDF_STATUS_CODE_UNSUPPORTED);
+  }
   amdf_gpu_umd_kernel_queue_t* queue =
       (amdf_gpu_umd_kernel_queue_t*)calloc(1, sizeof(*queue));
   if (queue == NULL) {
@@ -86,6 +98,7 @@ amdf_status_t amdf_gpu_umd_kernel_queue_create(
   amdf_wkmi_bridge_gpu_kernel_queue_create_info_t create_info = {
       .structure_size = sizeof(create_info),
       .device_handle = device->device,
+      .command_type = native_command_type,
   };
   if (amdf_status_is_ok(status)) {
     status = amdf_gpu_wddm_wkmi_adapter_create_kernel_queue(

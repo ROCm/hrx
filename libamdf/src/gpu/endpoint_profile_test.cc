@@ -35,6 +35,7 @@ amdf_gpu_endpoint_properties_t MakeProperties(
   properties.topology.xcc_count = xcc_count;
   properties.topology.shader_engine_count_per_xcc = shader_engine_count_per_xcc;
   properties.supports_pm4_kernel_queue = true;
+  properties.supports_sdma_kernel_queue = true;
   return properties;
 }
 
@@ -87,6 +88,8 @@ TEST(GpuEndpointProfileTest, QualifiesRdnaCdnaAndMultiXccProfiles) {
               properties.topology.shader_engine_count_per_xcc);
     EXPECT_EQ(profile.supports_pm4_kernel_queue,
               properties.supports_pm4_kernel_queue);
+    EXPECT_EQ(profile.supports_sdma_kernel_queue,
+              properties.supports_sdma_kernel_queue);
   }
 }
 
