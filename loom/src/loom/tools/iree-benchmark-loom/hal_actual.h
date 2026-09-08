@@ -11,7 +11,6 @@
 
 #include "iree/base/api.h"
 #include "loom/ir/module.h"
-#include "loom/sanitizer/options.h"
 #include "loom/tooling/compile/report_capture.h"
 #include "loom/tooling/execution/hal/testbench_actual.h"
 #include "loom/tooling/execution/session.h"
@@ -22,11 +21,13 @@
 extern "C" {
 #endif
 
+typedef struct iree_benchmark_loom_options_t iree_benchmark_loom_options_t;
+
 // Initializes a benchmark-owned HAL actual provider for one candidate.
 iree_status_t iree_benchmark_loom_hal_actual_provider_initialize(
     iree_benchmark_loom_hal_context_t* context, loom_run_session_t* session,
-    const loom_run_module_t* run_module, iree_string_view_t pipeline,
-    loom_sanitizer_options_t sanitizer,
+    const loom_run_module_t* run_module,
+    const iree_benchmark_loom_options_t* benchmark_options,
     const loom_testbench_invocation_plan_t* kernel_launch,
     iree_string_view_t artifact_path_suffix,
     const loom_compile_report_capture_options_t* compile_report_options,
@@ -40,8 +41,8 @@ void iree_benchmark_loom_hal_actual_provider_deinitialize(
 // Initializes benchmark-owned HAL actual providers for a multi-actual case.
 iree_status_t iree_benchmark_loom_hal_actual_sequence_initialize(
     iree_benchmark_loom_hal_context_t* context, loom_run_session_t* session,
-    const loom_run_module_t* run_module, iree_string_view_t pipeline,
-    loom_sanitizer_options_t sanitizer,
+    const loom_run_module_t* run_module,
+    const iree_benchmark_loom_options_t* benchmark_options,
     const loom_testbench_case_plan_t* case_plan,
     const loom_compile_report_capture_options_t* compile_report_options,
     const loom_compile_artifact_manifest_options_t* artifact_manifest_options,

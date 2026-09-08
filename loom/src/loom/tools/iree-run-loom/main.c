@@ -15,11 +15,9 @@
 #include "iree/base/tooling/flags.h"
 #include "iree/tooling/device_util.h"
 #include "iree/tooling/value_io.h"
-#include "loom/error/diagnostic.h"
 #include "loom/ir/module.h"
 #include "loom/sanitizer/options.h"
 #include "loom/tooling/cli/help.h"
-#include "loom/tooling/compile/pipeline.h"
 #include "loom/tooling/compile/report_capture.h"
 #include "loom/tooling/context/context.h"
 #include "loom/tooling/execution/execution_backend.h"
@@ -33,6 +31,10 @@ IREE_FLAG(string, pipeline, "default",
           "compiler transformations and passes the input directly to the "
           "selected backend. Use '@symbol' to run a module-local pass.pipeline "
           "or a comma-separated pass list such as 'canonicalize,cse'.");
+IREE_FLAG(string, target, "",
+          "Optional compiler target as `family:selector`. The selected HAL "
+          "device must be able to load the target. Empty selects the best "
+          "compatible target from the device.");
 IREE_FLAG(string, sanitizer, "none",
           "Sanitizer checks to insert in the default target pipeline: none, "
           "all, or a '|'-separated set of access, value, operation, and race.");
@@ -317,30 +319,6 @@ static iree_status_t iree_run_loom_sanitizer_options_initialize(
       out_options);
 }
 
-static iree_status_t iree_run_loom_run_pass_pipeline(
-    const iree_run_loom_configuration_t* configuration,
-    loom_run_session_t* session, loom_run_module_t* run_module,
-    const loom_compile_options_t* compile_options,
-    loom_compile_pipeline_result_t* out_result) {
-  loom_compile_pipeline_options_t pipeline_options = {0};
-  loom_compile_pipeline_options_initialize(&pipeline_options);
-  pipeline_options.pipeline = iree_make_cstring_view(FLAG_pipeline);
-  pipeline_options.target_pipeline_options =
-      compile_options->target_pipeline_options;
-  pipeline_options.target_environment = configuration->target_environment;
-  pipeline_options.low_descriptor_registry =
-      loom_run_session_low_descriptor_registry(session);
-  pipeline_options.source_resolver =
-      loom_run_module_source_resolver(run_module);
-  pipeline_options.report = compile_options->report;
-  pipeline_options.diagnostic_sink = (loom_diagnostic_sink_t){
-      .fn = loom_diagnostic_stderr_sink,
-  };
-  return loom_compile_run_pipeline(run_module->module, &pipeline_options,
-                                   loom_run_session_block_pool(session),
-                                   out_result);
-}
-
 static iree_status_t iree_run_loom_select_execution_backend(
     const loom_run_execution_backend_registry_t* backend_registry,
     const loom_run_execution_backend_t** out_backend) {
@@ -356,8 +334,8 @@ static iree_status_t iree_run_loom_select_execution_backend(
   if (backend == NULL) {
     return iree_make_status(
         IREE_STATUS_INVALID_ARGUMENT,
-        "--device=%.*s selects HAL driver '%.*s', which has no linked Loom "
-        "execution provider",
+        "--device=%.*s selects HAL driver '%.*s', which is not available in "
+        "this Loom installation (no linked execution provider)",
         (int)device_uri.size, device_uri.data, (int)device_driver_name.size,
         device_driver_name.data);
   }
@@ -387,6 +365,8 @@ static void iree_run_loom_print_agents_markdown(FILE* stream) {
       "\\\n"
       "  --workgroup-count=64,8,1 --kernel-input-value=i32=512 \\\n"
       "  --kernel-input-buffer=4096xf32=0\n"
+      "iree-run-loom kernel.loom --device=amdgpu \\\n"
+      "  --target=amdgpu:gfx11-generic --function=q8_kernel\n"
       "iree-run-loom kernel.loom --device=amdgpu --emit-only \\\n"
       "  --emit-target-artifact=kernel.hsaco "
       "--emit-hal-executable=kernel.bin\n"
@@ -398,6 +378,8 @@ static void iree_run_loom_print_agents_markdown(FILE* stream) {
       "`--workgroup-count` overrides a static\n"
       "`kernel.launch.config` dispatch count when the test needs a different\n"
       "grid. `--emit-only` is HAL-only and stops after producing artifacts.\n"
+      "`--target=family:selector` forces a compatible compiler target without "
+      "changing the device selected by `--device`.\n"
       "\n"
       "### Debugging\n"
       "\n"
@@ -528,7 +510,6 @@ int iree_run_loom_main(int argc, char** argv,
   }
   loom_compile_options_t compile_options = {0};
   loom_compile_options_initialize(&compile_options);
-  loom_compile_pipeline_result_t pipeline_result = {0};
   if (iree_status_is_ok(status)) {
     status = iree_run_loom_sanitizer_options_initialize(
         &compile_options.target_pipeline_options.sanitizer);
@@ -571,15 +552,11 @@ int iree_run_loom_main(int argc, char** argv,
         loom_run_module_source_resolver(&run_module);
   }
   if (iree_status_is_ok(status)) {
-    status =
-        iree_run_loom_run_pass_pipeline(configuration, &session, &run_module,
-                                        &compile_options, &pipeline_result);
-    if (iree_status_is_ok(status) && pipeline_result.pass.error_count != 0) {
-      exit_code = 1;
-    }
-  }
-  if (iree_status_is_ok(status) && exit_code == 0) {
     const loom_run_one_shot_request_t run_request = {
+        .session = &session,
+        .target_environment = configuration->target_environment,
+        .pipeline = iree_make_cstring_view(FLAG_pipeline),
+        .target = iree_make_cstring_view(FLAG_target),
         .run_module = &run_module,
         .compile_options = &compile_options,
         .options = &one_shot_options,
@@ -606,7 +583,6 @@ int iree_run_loom_main(int argc, char** argv,
 
   loom_compile_report_capture_deinitialize(&compile_report_capture);
   loom_run_one_shot_result_deinitialize(&run_result);
-  loom_compile_pipeline_result_deinitialize(&pipeline_result);
   loom_run_module_deinitialize(&run_module);
   iree_io_file_contents_free(contents);
   loom_run_session_deinitialize(&session);

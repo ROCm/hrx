@@ -28,6 +28,7 @@ loom_cc_library(
   SRCS
     "device_provider.c"
   DEPS
+    ::runtime
     iree::base
     iree::hal
     loom::target::profile
@@ -63,7 +64,6 @@ loom_cc_library(
   DEPS
     ::artifact
     ::device_provider
-    ::runtime
     iree::base
     loom::tooling::compile::options
     loom::tooling::execution::session
@@ -169,11 +169,51 @@ loom_cc_library(
     iree::base::core_headers
     iree::base::internal::arena
     loom::target::entry_selection
+    loom::tooling::compile::pipeline
     loom::tooling::compile::report_capture
     loom::tooling::execution::execution_backend
     loom::tooling::execution::one_shot
     loom::tooling::io::file
   PUBLIC
+)
+
+if(IREE_HAL_DRIVER_TASK)
+loom_cc_test(
+  NAME
+    execution_backend_test
+  SRCS
+    "execution_backend_test.cc"
+  DEPS
+    ::execution_backend
+    ::runtime
+    iree::base
+    iree::hal
+    iree::testing::gtest
+    iree::testing::gtest_main
+    loom::ops::op_registry
+    loom::ops::test
+    loom::target::low_descriptor_registry_core_test
+    loom::target::provider
+    loom::target::test::target_record_table
+    loom::tooling::compile::options
+    loom::tooling::execution::session
+)
+endif()
+
+loom_cc_test(
+  NAME
+    device_provider_test
+  SRCS
+    "device_provider_test.cc"
+  DEPS
+    ::device_provider
+    ::runtime
+    iree::base
+    iree::hal
+    iree::testing::gtest
+    iree::testing::gtest_main
+    loom::target::profile
+    loom::tooling::compile::artifact
 )
 
 loom_cc_test(
@@ -230,6 +270,7 @@ loom_cc_test(
     ::testbench_actual
     iree::base
     iree::base::internal::arena
+    iree::hal::testing::mock_device
     iree::testing::gtest
     iree::testing::gtest_main
     loom::format::text::parser
@@ -239,10 +280,12 @@ loom_cc_test(
     loom::ops::func
     loom::ops::index
     loom::ops::kernel
+    loom::ops::pass
     loom::ops::test
     loom::target::facts
     loom::target::low_descriptor_registry_core_test
     loom::target::profile
+    loom::target::provider
     loom::testing::module_ptr
     loom::tooling::execution::session
     loom::tooling::testbench

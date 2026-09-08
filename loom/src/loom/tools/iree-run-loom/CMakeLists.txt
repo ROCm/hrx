@@ -22,12 +22,10 @@ loom_cc_library(
     iree::io::file_handle
     iree::tooling::device_util
     iree::tooling::value_io
-    loom::error::diagnostic
     loom::ir
     loom::sanitizer::options
     loom::tooling::cli::help
     loom::tooling::compile::options
-    loom::tooling::compile::pipeline
     loom::tooling::compile::report_capture
     loom::tooling::context
     loom::tooling::execution::execution_backend

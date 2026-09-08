@@ -13,6 +13,7 @@ load(
 load("//loom/build_tools/bazel:defs.bzl", "loom_test")
 load(
     ":execution_profiles.bzl",
+    "SPIRV_VULKAN_EXPLICIT_TARGET_HARDWARE_PROFILE",
     "SPIRV_VULKAN_HARDWARE_PROFILE",
 )
 
@@ -65,6 +66,7 @@ loom_cc_library(
         ":artifact_provider",
         ":vulkan_profile",
         "//loom/src/loom/target/arch/spirv:facts",
+        "//loom/src/loom/target/arch/spirv:profile",
         "//loom/src/loom/tooling/execution/hal:device_provider",
         "//loom/src/loom/tooling/execution/hal:runtime",
         "//runtime/src/iree/base",
@@ -206,6 +208,12 @@ loom_cc_test(
         "//runtime/src/iree/testing:gtest",
         "//runtime/src/iree/testing:gtest_main",
     ],
+)
+
+loom_test(
+    name = "vulkan_explicit_target_tests",
+    srcs = ["test/spirv_vulkan_hal_actual.loom"],
+    execution_profile = SPIRV_VULKAN_EXPLICIT_TARGET_HARDWARE_PROFILE,
 )
 
 loom_test(

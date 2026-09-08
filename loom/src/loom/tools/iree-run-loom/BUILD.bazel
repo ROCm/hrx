@@ -63,12 +63,10 @@ loom_cc_library(
         "main.h",
     ],
     deps = [
-        "//loom/src/loom/error:diagnostic",
         "//loom/src/loom/ir",
         "//loom/src/loom/sanitizer:options",
         "//loom/src/loom/tooling/cli:help",
         "//loom/src/loom/tooling/compile:options",
-        "//loom/src/loom/tooling/compile:pipeline",
         "//loom/src/loom/tooling/compile:report_capture",
         "//loom/src/loom/tooling/context",
         "//loom/src/loom/tooling/execution:execution_backend",

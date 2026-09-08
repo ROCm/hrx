@@ -39,6 +39,10 @@ IREE_FLAG(string, pipeline, "default",
           "the normal compiler pipeline. 'none' disables all compiler "
           "transformations and requires emission-ready input. Use '@symbol' "
           "or a comma-separated pass list for an explicit pipeline.");
+IREE_FLAG(string, target, "",
+          "Optional compiler target as `family:selector` for every HAL kernel "
+          "launch. The selected device must be able to load the target. Empty "
+          "selects a compatible target from the device and authored kernel.");
 IREE_FLAG_LIST(
     string, config,
     "Compile-time config binding for HAL kernel launches. Repeat as "
@@ -241,6 +245,7 @@ iree_status_t iree_benchmark_loom_options_from_flags(
           iree_make_cstring_view(FLAG_benchmark));
   out_options->sample_ordinal = FLAG_sample;
   out_options->pipeline = iree_make_cstring_view(FLAG_pipeline);
+  out_options->target = iree_make_cstring_view(FLAG_target);
   const iree_flag_string_list_t config_assignments = FLAG_config_list();
   out_options->config_assignments = (iree_string_view_list_t){
       .count = config_assignments.count,

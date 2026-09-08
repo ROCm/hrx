@@ -51,6 +51,12 @@ typedef iree_status_t (*loom_device_provider_select_compatible_target_fn_t)(
     const loom_target_facts_t* target_requirement, iree_allocator_t allocator,
     loom_device_target_t* out_target);
 
+typedef iree_status_t (*loom_device_provider_select_profile_target_fn_t)(
+    const loom_device_provider_t* provider,
+    const struct loom_run_hal_runtime_t* runtime,
+    const loom_target_profile_t* target_profile,
+    loom_device_target_t* out_target);
+
 typedef void (*loom_device_provider_deinitialize_target_fn_t)(
     const loom_device_provider_t* provider, loom_device_target_t* target,
     iree_allocator_t allocator);
@@ -67,6 +73,11 @@ struct loom_device_provider_t {
   // target requirement. NULL represents target-independent code. Facts are
   // borrowed only for the duration of the call and must not be retained.
   loom_device_provider_select_compatible_target_fn_t select_compatible_target;
+  // Selects the device target matching an exact borrowed static profile.
+  // Implementations preserve the profile identity and target kind, borrow the
+  // returned executable target from the active device spec, and allocate no
+  // storage requiring target deinitialization.
+  loom_device_provider_select_profile_target_fn_t select_profile_target;
   // Releases storage owned by a target returned from a selection hook.
   loom_device_provider_deinitialize_target_fn_t deinitialize_target;
 };
@@ -78,6 +89,15 @@ iree_status_t loom_device_provider_select_compatible_target(
     const loom_device_provider_t* provider,
     const struct loom_run_hal_runtime_t* runtime,
     const loom_target_facts_t* target_requirement, iree_allocator_t allocator,
+    loom_device_target_t* out_target);
+
+// Asks |provider| to match an exact static |target_profile| against the active
+// device. The returned target borrows |target_profile| and an executable target
+// row from the active device spec and requires no teardown.
+iree_status_t loom_device_provider_select_profile_target(
+    const loom_device_provider_t* provider,
+    const struct loom_run_hal_runtime_t* runtime,
+    const loom_target_profile_t* target_profile,
     loom_device_target_t* out_target);
 
 // A registry of device providers linked into a runner binary.

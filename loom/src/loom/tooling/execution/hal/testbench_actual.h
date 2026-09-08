@@ -112,6 +112,8 @@ typedef struct loom_run_hal_testbench_actual_provider_options_t {
   const loom_run_module_t* run_module;
   // User-selected pass pipeline.
   iree_string_view_t pipeline;
+  // Optional explicit `family:selector` compiler target.
+  iree_string_view_t target;
   // Sanitizer checks inserted by the target pipeline.
   loom_sanitizer_options_t sanitizer;
   // Config bindings materialized into the private compile copy.
@@ -142,6 +144,8 @@ typedef struct loom_run_hal_testbench_actual_provider_t {
   const loom_run_module_t* run_module;
   // User-selected pass pipeline.
   iree_string_view_t pipeline;
+  // Optional explicit `family:selector` compiler target.
+  iree_string_view_t target;
   // Sanitizer checks inserted by the target pipeline.
   loom_sanitizer_options_t sanitizer;
   // Config bindings materialized into the private compile copy.
@@ -207,7 +211,7 @@ typedef struct loom_run_hal_testbench_actual_provider_t {
   // True when |candidate| has been initialized.
   bool candidate_initialized;
   // True when |compile_device_target| owns provider-selected target storage.
-  bool compile_device_target_initialized;
+  bool owns_compile_device_target;
   // True when |prepared_candidate| has been initialized.
   bool prepared_candidate_initialized;
   // True when HAL candidate emission populated the caller's compile report.
@@ -229,6 +233,8 @@ typedef struct loom_run_hal_testbench_actual_sequence_options_t {
   const loom_run_module_t* run_module;
   // User-selected pass pipeline.
   iree_string_view_t pipeline;
+  // Optional explicit `family:selector` compiler target.
+  iree_string_view_t target;
   // Sanitizer checks inserted by the target pipeline.
   loom_sanitizer_options_t sanitizer;
   // Config bindings materialized into each private compile copy.

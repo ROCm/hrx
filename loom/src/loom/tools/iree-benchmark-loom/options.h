@@ -79,6 +79,8 @@ typedef struct iree_benchmark_loom_options_t {
   iree_host_size_t max_samples_per_case;
   // Pass pipeline used before target artifact emission.
   iree_string_view_t pipeline;
+  // Optional explicit `family:selector` compiler target.
+  iree_string_view_t target;
   // Sanitizer checks inserted by the target pipeline.
   loom_sanitizer_options_t sanitizer;
   // Direct config bindings parsed from repeated --config=key=value flags.

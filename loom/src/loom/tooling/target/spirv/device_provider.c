@@ -7,20 +7,18 @@
 #include "loom/tooling/target/spirv/device_provider.h"
 
 #include "loom/target/arch/spirv/facts.h"
+#include "loom/target/arch/spirv/profile.h"
 #include "loom/tooling/execution/hal/runtime.h"
 #include "loom/tooling/target/spirv/artifact_provider.h"
 #include "loom/tooling/target/spirv/vulkan_profile.h"
 
-static iree_status_t loom_spirv_device_provider_select_target(
-    const loom_device_provider_t* provider,
-    const loom_run_hal_runtime_t* runtime, iree_allocator_t allocator,
-    loom_device_target_t* out_target) {
-  IREE_ASSERT_ARGUMENT(provider);
+static iree_status_t loom_spirv_device_provider_select_executable_target(
+    const loom_run_hal_runtime_t* runtime,
+    const iree_hal_executable_target_t** out_executable_target) {
   IREE_ASSERT_ARGUMENT(runtime);
   IREE_ASSERT_ARGUMENT(runtime->dispatch_queue);
-  IREE_ASSERT_ARGUMENT(out_target);
-
-  *out_target = (loom_device_target_t){0};
+  IREE_ASSERT_ARGUMENT(out_executable_target);
+  *out_executable_target = NULL;
 
   const iree_hal_device_spec_t* device_spec =
       iree_hal_device_spec(runtime->device);
@@ -55,6 +53,22 @@ static iree_status_t loom_spirv_device_provider_select_target(
         IREE_STATUS_FAILED_PRECONDITION,
         "Vulkan HAL device reports ambiguous vulkan1.3+bda SPIR-V targets");
   }
+  *out_executable_target = target_result.target;
+  return iree_ok_status();
+}
+
+static iree_status_t loom_spirv_device_provider_select_target(
+    const loom_device_provider_t* provider,
+    const loom_run_hal_runtime_t* runtime, iree_allocator_t allocator,
+    loom_device_target_t* out_target) {
+  IREE_ASSERT_ARGUMENT(provider);
+  IREE_ASSERT_ARGUMENT(runtime);
+  IREE_ASSERT_ARGUMENT(out_target);
+  *out_target = (loom_device_target_t){0};
+
+  const iree_hal_executable_target_t* executable_target = NULL;
+  IREE_RETURN_IF_ERROR(loom_spirv_device_provider_select_executable_target(
+      runtime, &executable_target));
 
   loom_spirv_vulkan_hal_profile_facts_t facts = {0};
   IREE_RETURN_IF_ERROR(
@@ -84,9 +98,52 @@ static iree_status_t loom_spirv_device_provider_select_target(
     return status;
   }
 
-  out_target->executable_target = target_result.target;
+  out_target->executable_target = executable_target;
   out_target->artifact_target.target_profile = &profile_storage->profile.base;
-  out_target->artifact_target.target_key = target_result.target->target_key;
+  out_target->artifact_target.target_key = executable_target->target_key;
+  return iree_ok_status();
+}
+
+static iree_status_t loom_spirv_device_provider_select_profile_target(
+    const loom_device_provider_t* provider,
+    const loom_run_hal_runtime_t* runtime,
+    const loom_target_profile_t* base_profile,
+    loom_device_target_t* out_target) {
+  IREE_ASSERT_ARGUMENT(provider);
+  IREE_ASSERT_ARGUMENT(runtime);
+  IREE_ASSERT_ARGUMENT(out_target);
+  *out_target = (loom_device_target_t){0};
+
+  const loom_spirv_target_profile_t* profile =
+      loom_spirv_target_profile_cast(base_profile);
+  const loom_spirv_target_profile_t* named_profile = NULL;
+  IREE_RETURN_IF_ERROR(loom_spirv_target_profile_select(
+      IREE_SV("vulkan1.3+bda"), &named_profile));
+  if (profile == NULL ||
+      profile->base.target_bundle != named_profile->base.target_bundle ||
+      profile->cooperative_properties !=
+          named_profile->cooperative_properties) {
+    return iree_make_status(
+        IREE_STATUS_UNAVAILABLE,
+        "Vulkan HAL device provider cannot load the forced SPIR-V profile");
+  }
+
+  loom_spirv_vulkan_hal_profile_facts_t device_facts = {0};
+  IREE_RETURN_IF_ERROR(
+      loom_spirv_vulkan_hal_profile_query(runtime->device, &device_facts));
+  IREE_RETURN_IF_ERROR(loom_spirv_vulkan_hal_profile_validate(&device_facts));
+
+  const iree_hal_executable_target_t* executable_target = NULL;
+  IREE_RETURN_IF_ERROR(loom_spirv_device_provider_select_executable_target(
+      runtime, &executable_target));
+  *out_target = (loom_device_target_t){
+      .executable_target = executable_target,
+      .artifact_target =
+          {
+              .target_profile = base_profile,
+              .target_key = executable_target->target_key,
+          },
+  };
   return iree_ok_status();
 }
 
@@ -132,5 +189,6 @@ const loom_device_provider_t loom_spirv_vulkan_device_provider = {
     .select_target = loom_spirv_device_provider_select_target,
     .select_compatible_target =
         loom_spirv_device_provider_select_compatible_target_from_facts,
+    .select_profile_target = loom_spirv_device_provider_select_profile_target,
     .deinitialize_target = loom_spirv_device_provider_deinitialize_target,
 };

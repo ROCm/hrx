@@ -44,10 +44,8 @@ static iree_status_t iree_benchmark_loom_initialize_sequence_compile_context(
         loom_run_hal_testbench_host_visible_buffer_params();
     status = iree_benchmark_loom_hal_actual_sequence_initialize(
         options->hal_context, options->session, options->run_module,
-        options->benchmark_options->pipeline,
-        options->benchmark_options->sanitizer, case_plan,
-        options->compile_report_options, options->artifact_manifest_options,
-        &context->hal_sequence);
+        options->benchmark_options, case_plan, options->compile_report_options,
+        options->artifact_manifest_options, &context->hal_sequence);
   }
   if (iree_status_is_ok(status)) {
     context->hal_sequence_initialized = true;
@@ -132,10 +130,9 @@ static iree_status_t iree_benchmark_loom_initialize_single_compile_context(
   if (iree_status_is_ok(status)) {
     status = iree_benchmark_loom_hal_actual_provider_initialize(
         options->hal_context, options->session, options->run_module,
-        options->benchmark_options->pipeline,
-        options->benchmark_options->sanitizer, kernel_launch,
-        iree_string_view_empty(), options->compile_report_options,
-        options->artifact_manifest_options, &context->hal_provider);
+        options->benchmark_options, kernel_launch, iree_string_view_empty(),
+        options->compile_report_options, options->artifact_manifest_options,
+        &context->hal_provider);
   }
   if (iree_status_is_ok(status)) {
     context->hal_provider_initialized = true;

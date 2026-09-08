@@ -7,6 +7,7 @@
 #include "loom/tooling/execution/hal/testbench_actual.h"
 
 #include "iree/base/internal/arena.h"
+#include "iree/hal/testing/mock_device.h"
 #include "iree/testing/gtest.h"
 #include "iree/testing/status_matchers.h"
 #include "loom/link/linker.h"
@@ -14,9 +15,11 @@
 #include "loom/ops/func/ops.h"
 #include "loom/ops/index/ops.h"
 #include "loom/ops/kernel/ops.h"
+#include "loom/ops/pass/ops.h"
 #include "loom/target/facts.h"
 #include "loom/target/low_descriptor_registry_core_test.h"
 #include "loom/target/profile.h"
+#include "loom/target/provider.h"
 #include "loom/tooling/execution/session.h"
 #include "loom/tooling/testbench/testbench.h"
 
@@ -41,8 +44,9 @@ iree_status_t RegisterContext(void* user_data, loom_context_t* context) {
       RegisterDialect(context, LOOM_DIALECT_FUNC, loom_func_dialect_vtables));
   IREE_RETURN_IF_ERROR(
       RegisterDialect(context, LOOM_DIALECT_INDEX, loom_index_dialect_vtables));
-  return RegisterDialect(context, LOOM_DIALECT_KERNEL,
-                         loom_kernel_dialect_vtables);
+  IREE_RETURN_IF_ERROR(RegisterDialect(context, LOOM_DIALECT_KERNEL,
+                                       loom_kernel_dialect_vtables));
+  return RegisterDialect(context, LOOM_DIALECT_PASS, loom_pass_dialect_vtables);
 }
 
 iree_status_t InitializeLowDescriptorRegistry(
@@ -90,6 +94,9 @@ class HalTestbenchActualTest : public ::testing::Test {
     ASSERT_EQ(out_plan->issue_count, 0u);
   }
 
+  void ExpectTargetSelection(iree_string_view_t target,
+                             bool expects_explicit_selection);
+
   iree_arena_block_pool_t block_pool_;
   iree_arena_allocator_t plan_arena_;
   loom_run_session_t session_ = {};
@@ -127,27 +134,97 @@ static loom_testbench_value_t F64Value(double value) {
   return result;
 }
 
+static const loom_target_snapshot_t kFakeTargetSnapshot = {
+    /*.name=*/IREE_SVL("fake-snapshot"),
+};
+static const loom_target_export_plan_t kFakeTargetExportPlan = {
+    /*.name=*/IREE_SVL("fake-export"),
+    /*.export_symbol=*/{},
+    /*.abi_kind=*/LOOM_TARGET_ABI_HAL_KERNEL,
+};
+static const loom_target_config_t kFakeTargetConfig = {
+    /*.name=*/IREE_SVL("fake-config"),
+};
+static const loom_target_bundle_t kFakeTargetBundle = {
+    /*.name=*/IREE_SVL("fake-bundle"),
+    /*.snapshot=*/&kFakeTargetSnapshot,
+    /*.export_plan=*/&kFakeTargetExportPlan,
+    /*.config=*/&kFakeTargetConfig,
+};
+static const loom_target_fact_type_t kFakeTargetFactType = {
+    /*.name=*/IREE_SVL("fake"),
+    /*.storage_size=*/sizeof(loom_target_facts_t),
+};
+
+static const loom_target_profile_t* g_projected_target_profile = nullptr;
+static iree_host_size_t g_compatible_target_selection_count = 0;
+static iree_host_size_t g_profile_target_selection_count = 0;
+
+static iree_status_t ProjectFakeTargetFacts(
+    const loom_target_profile_t* profile, iree_arena_allocator_t* arena,
+    loom_target_facts_t* out_facts) {
+  (void)arena;
+  (void)out_facts;
+  g_projected_target_profile = profile;
+  return iree_ok_status();
+}
+
 static const loom_target_profile_type_t kFakeTargetProfileType = {
     /*.name=*/IREE_SVL("fake"),
+    /*.fact_type=*/&kFakeTargetFactType,
+    /*.project_facts=*/ProjectFakeTargetFacts,
 };
 static const loom_target_profile_t kFakeTargetProfile = {
     /*.type=*/&kFakeTargetProfileType,
-    /*.target_bundle=*/nullptr,
+    /*.target_bundle=*/&kFakeTargetBundle,
 };
+
+static iree_status_t SelectFakeTargetProfile(
+    iree_string_view_t selector, const loom_target_profile_t** out_profile) {
+  *out_profile = nullptr;
+  if (!iree_string_view_equal(selector, IREE_SV("forced"))) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "unknown fake target selector");
+  }
+  *out_profile = &kFakeTargetProfile;
+  return iree_ok_status();
+}
+
+static loom_target_provider_t MakeFakeTargetProvider() {
+  loom_target_provider_t provider = {};
+  provider.profile_type = &kFakeTargetProfileType;
+  provider.select_profile = SelectFakeTargetProfile;
+  return provider;
+}
+
+static const loom_target_provider_t kFakeTargetProvider =
+    MakeFakeTargetProvider();
 
 static iree_status_t FakeHalSelectDeviceTarget(
     const loom_device_provider_t* provider,
     const loom_run_hal_runtime_t* runtime, iree_allocator_t allocator,
     loom_device_target_t* out_target) {
   (void)provider;
-  (void)runtime;
   (void)allocator;
+  const iree_hal_device_spec_t* device_spec =
+      runtime != nullptr && runtime->device != nullptr
+          ? iree_hal_device_spec(runtime->device)
+          : nullptr;
+  const iree_hal_device_executable_spec_t* executable_spec =
+      device_spec != nullptr ? iree_hal_device_spec_executables(device_spec)
+                             : nullptr;
+  const iree_hal_executable_target_t* executable_target =
+      executable_spec != nullptr && executable_spec->target_count != 0
+          ? &executable_spec->targets[0]
+          : nullptr;
   *out_target = (loom_device_target_t){
-      /*.executable_target=*/nullptr,
+      /*.executable_target=*/executable_target,
       /*.artifact_target=*/
       {
           /*.target_profile=*/&kFakeTargetProfile,
-          /*.target_key=*/IREE_SVL("fake"),
+          /*.target_key=*/executable_target != nullptr
+              ? executable_target->target_key
+              : IREE_SV("fake"),
       },
   };
   return iree_ok_status();
@@ -162,7 +239,22 @@ static iree_status_t FakeHalSelectCompatibleDeviceTarget(
     return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                             "fake HAL provider requires targetless input");
   }
+  ++g_compatible_target_selection_count;
   return FakeHalSelectDeviceTarget(provider, runtime, allocator, out_target);
+}
+
+static iree_status_t FakeHalSelectProfileDeviceTarget(
+    const loom_device_provider_t* provider,
+    const loom_run_hal_runtime_t* runtime,
+    const loom_target_profile_t* target_profile,
+    loom_device_target_t* out_target) {
+  ++g_profile_target_selection_count;
+  if (target_profile != &kFakeTargetProfile) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "unexpected fake target profile");
+  }
+  return FakeHalSelectDeviceTarget(provider, runtime, iree_allocator_null(),
+                                   out_target);
 }
 
 static const loom_artifact_provider_t kFakeArtifactProvider = {
@@ -179,7 +271,148 @@ static const loom_device_provider_t kFakeDeviceProvider = {
     /*.driver_name=*/IREE_SVL("fake"),
     /*.select_target=*/FakeHalSelectDeviceTarget,
     /*.select_compatible_target=*/FakeHalSelectCompatibleDeviceTarget,
+    /*.select_profile_target=*/FakeHalSelectProfileDeviceTarget,
 };
+
+static iree_status_t InitializeFakeHalContext(
+    loom_run_hal_testbench_context_t* context,
+    iree_hal_queue_family_t* out_dispatch_queue_family,
+    iree_hal_queue_t* out_dispatch_queue) {
+  const iree_hal_executable_target_t executable_target = {
+      /*.family=*/IREE_SV("fake"),
+      /*.target_key=*/IREE_SV("fake-target"),
+      /*.kind=*/IREE_HAL_EXECUTABLE_TARGET_KIND_GENERIC,
+      /*.priority=*/50,
+      /*.physical_device_affinity=*/1,
+  };
+  const iree_hal_device_executable_spec_t executables = {
+      /*.target_count=*/1,
+      /*.targets=*/&executable_target,
+  };
+  const iree_hal_queue_family_spec_t queue_family = {
+      /*.name=*/IREE_SV("dispatch"),
+      /*.provisioned_queue_count=*/0,
+      /*.priority_count=*/1,
+      /*.timestamp_valid_bits=*/0,
+      /*.timestamp_frequency_hz=*/0,
+      /*.physical_device_affinity=*/1,
+      /*.role_flags=*/IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH,
+  };
+  const iree_hal_device_queue_spec_t queues = {
+      /*.family_count=*/1,
+      /*.families=*/&queue_family,
+  };
+  iree_hal_device_spec_params_t params = {};
+  params.queues = &queues;
+  params.executables = &executables;
+  iree_hal_device_spec_t* device_spec = nullptr;
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_create(
+      &params, iree_allocator_system(), &device_spec));
+
+  iree_hal_mock_device_options_t mock_options;
+  iree_hal_mock_device_options_initialize(&mock_options);
+  mock_options.identifier = IREE_SV("fake");
+  mock_options.device_spec = device_spec;
+  iree_hal_device_t* device = nullptr;
+  iree_status_t status = iree_hal_mock_device_create(
+      &mock_options, iree_allocator_system(), &device);
+  iree_hal_device_spec_release(device_spec);
+  if (!iree_status_is_ok(status)) {
+    return status;
+  }
+
+  iree_hal_queue_family_initialize(/*ordinal=*/0, out_dispatch_queue_family);
+  *out_dispatch_queue = (iree_hal_queue_t){};
+  out_dispatch_queue->queue_family = out_dispatch_queue_family;
+  context->device_provider = &kFakeDeviceProvider;
+  context->runtime = (loom_run_hal_runtime_t){
+      /*.device=*/device,
+      /*.dispatch_queue=*/out_dispatch_queue,
+  };
+  context->runtime_initialized = true;
+  return iree_ok_status();
+}
+
+void HalTestbenchActualTest::ExpectTargetSelection(
+    iree_string_view_t target, bool expects_explicit_selection) {
+  static constexpr char kSource[] = R"(
+kernel.def @entry() {
+  %unit = index.constant 1 : index
+  kernel.launch.config workgroups(%unit, %unit, %unit) workgroup_size(%unit, %unit, %unit) : index
+} launch() {
+  kernel.return
+}
+
+check.case @entry_case {
+  kernel.launch @entry() : ()
+  check.return
+}
+)";
+  loom_run_module_t run_module = {};
+  loom_testbench_module_plan_t module_plan = {};
+  ParseAndPlan(IREE_SV(kSource), &run_module, &module_plan);
+  ASSERT_EQ(module_plan.case_count, 1u);
+  const loom_testbench_invocation_plan_t* kernel_launch = nullptr;
+  IREE_ASSERT_OK(loom_run_hal_testbench_select_kernel_launch(
+      &module_plan.cases[0], &kernel_launch));
+
+  const loom_target_provider_t* target_providers[] = {&kFakeTargetProvider};
+  const loom_target_provider_set_t target_provider_set =
+      loom_target_provider_set_make(target_providers,
+                                    IREE_ARRAYSIZE(target_providers));
+  loom_target_environment_t target_environment = {};
+  IREE_ASSERT_OK(loom_target_environment_initialize(&target_provider_set,
+                                                    &target_environment));
+
+  loom_run_hal_testbench_context_t context = {};
+  loom_run_hal_testbench_context_initialize(
+      /*device_provider_registry=*/nullptr, iree_allocator_system(), &context);
+  iree_hal_queue_family_t dispatch_queue_family = {};
+  iree_hal_queue_t dispatch_queue = {};
+  IREE_ASSERT_OK(InitializeFakeHalContext(&context, &dispatch_queue_family,
+                                          &dispatch_queue));
+
+  g_projected_target_profile = nullptr;
+  g_compatible_target_selection_count = 0;
+  g_profile_target_selection_count = 0;
+  loom_run_hal_testbench_actual_provider_options_t options = {};
+  options.context = &context;
+  options.session = &session_;
+  options.target_environment = &target_environment;
+  options.run_module = &run_module;
+  options.pipeline = IREE_SV("none");
+  options.target = target;
+  options.kernel_launch = kernel_launch;
+  loom_run_hal_testbench_actual_provider_t provider = {};
+  loom_run_hal_testbench_actual_provider_initialize(&options, &provider);
+  IREE_EXPECT_STATUS_IS(
+      IREE_STATUS_INVALID_ARGUMENT,
+      loom_run_hal_testbench_actual_provider_compile(&provider));
+
+  EXPECT_EQ(g_profile_target_selection_count,
+            expects_explicit_selection ? 1u : 0u);
+  EXPECT_EQ(g_compatible_target_selection_count,
+            expects_explicit_selection ? 0u : 1u);
+  EXPECT_EQ(provider.compile_device_target.artifact_target.target_profile,
+            &kFakeTargetProfile);
+  EXPECT_EQ(provider.owns_compile_device_target, !expects_explicit_selection);
+  EXPECT_EQ(g_projected_target_profile, &kFakeTargetProfile);
+
+  loom_run_hal_testbench_actual_provider_deinitialize(&provider);
+  loom_run_hal_testbench_context_deinitialize(&context);
+  loom_target_environment_deinitialize(&target_environment);
+  loom_run_module_deinitialize(&run_module);
+}
+
+TEST_F(HalTestbenchActualTest, UsesAutomaticTargetWhenOverrideIsEmpty) {
+  ExpectTargetSelection(iree_string_view_empty(),
+                        /*expects_explicit_selection=*/false);
+}
+
+TEST_F(HalTestbenchActualTest, UsesExplicitTargetOverride) {
+  ExpectTargetSelection(IREE_SV("fake:forced"),
+                        /*expects_explicit_selection=*/true);
+}
 
 static bool ModuleHasSymbol(const loom_module_t* module,
                             iree_string_view_t name) {

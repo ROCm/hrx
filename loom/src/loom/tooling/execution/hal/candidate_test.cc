@@ -46,9 +46,7 @@ constexpr char kHalSource[] =
     "  func.return\n"
     "}\n";
 
-int kFakeHalRuntime = 0;
 bool g_fake_hal_emit_was_called = false;
-const loom_target_facts_t* g_fake_hal_selected_target_requirement = nullptr;
 loom_target_compile_report_t* g_fake_hal_emit_report = nullptr;
 const loom_function_version_list_t* g_fake_hal_emit_function_versions = nullptr;
 uint32_t g_fake_hal_emit_source_to_low_max_errors = 0;
@@ -74,7 +72,14 @@ static const loom_target_profile_t kFakeTargetProfile = {
     /*.type=*/&kFakeTargetProfileType,
     /*.target_bundle=*/&kFakeTargetBundle,
 };
-static const loom_target_facts_t kFakeTargetRequirement = {};
+static const loom_device_target_t kFakeDeviceTarget = {
+    /*.executable_target=*/nullptr,
+    /*.artifact_target=*/
+    {
+        /*.target_profile=*/&kFakeTargetProfile,
+        /*.target_key=*/IREE_SVL("fake-hal"),
+    },
+};
 
 typedef struct fake_hal_artifact_storage_t {
   // Immutable target-native artifact contents.
@@ -94,37 +99,6 @@ iree_status_t CreateFakeHalArtifactSequence(
       &contents, allocator, out_sequence);
   iree_allocator_free(allocator, contents.data);
   return status;
-}
-
-const loom_run_hal_runtime_t* FakeHalRuntime() {
-  return reinterpret_cast<const loom_run_hal_runtime_t*>(&kFakeHalRuntime);
-}
-
-iree_status_t FakeHalSelectDeviceTarget(const loom_device_provider_t* provider,
-                                        const loom_run_hal_runtime_t* runtime,
-                                        iree_allocator_t allocator,
-                                        loom_device_target_t* out_target) {
-  (void)provider;
-  (void)runtime;
-  (void)allocator;
-  *out_target = (loom_device_target_t){
-      /*.executable_target=*/nullptr,
-      /*.artifact_target=*/
-      {
-          /*.target_profile=*/&kFakeTargetProfile,
-          /*.target_key=*/IREE_SVL("fake-hal"),
-      },
-  };
-  return iree_ok_status();
-}
-
-iree_status_t FakeHalSelectCompatibleDeviceTarget(
-    const loom_device_provider_t* provider,
-    const loom_run_hal_runtime_t* runtime,
-    const loom_target_facts_t* target_requirement, iree_allocator_t allocator,
-    loom_device_target_t* out_target) {
-  g_fake_hal_selected_target_requirement = target_requirement;
-  return FakeHalSelectDeviceTarget(provider, runtime, allocator, out_target);
 }
 
 iree_status_t FakeHalEmitArtifact(const loom_artifact_provider_t* provider,
@@ -208,16 +182,12 @@ const loom_artifact_provider_t kFakeArtifactProvider = {
 const loom_device_provider_t kFakeDeviceProvider = {
     /*.artifact_provider=*/&kFakeArtifactProvider,
     /*.driver_name=*/IREE_SVL("fake"),
-    /*.select_target=*/FakeHalSelectDeviceTarget,
-    /*.select_compatible_target=*/FakeHalSelectCompatibleDeviceTarget,
-    /*.deinitialize_target=*/{},
 };
 
 class HalCandidateTest : public ::testing::Test {
  protected:
   void SetUp() override {
     g_fake_hal_emit_was_called = false;
-    g_fake_hal_selected_target_requirement = nullptr;
     g_fake_hal_emit_report = nullptr;
     g_fake_hal_emit_function_versions = nullptr;
     g_fake_hal_emit_source_to_low_max_errors = 0;
@@ -253,7 +223,7 @@ class HalCandidateTest : public ::testing::Test {
   loom_run_session_t session_ = {};
 };
 
-TEST_F(HalCandidateTest, CompileHalExecutableCandidate) {
+TEST_F(HalCandidateTest, EmitHalExecutableCandidate) {
   loom_run_module_t run_module = {};
   IREE_ASSERT_OK(Parse(IREE_SV(kHalSource), &run_module));
 
@@ -268,10 +238,9 @@ TEST_F(HalCandidateTest, CompileHalExecutableCandidate) {
   loom_run_hal_candidate_t candidate = {};
   g_fake_hal_emit_was_called = false;
   g_fake_hal_emit_report = nullptr;
-  IREE_ASSERT_OK(loom_run_hal_candidate_compile(
-      &kFakeDeviceProvider, FakeHalRuntime(), &run_module,
-      &kFakeTargetRequirement, &options, iree_allocator_system(), &candidate));
-  EXPECT_EQ(g_fake_hal_selected_target_requirement, &kFakeTargetRequirement);
+  IREE_ASSERT_OK(loom_run_hal_candidate_emit_target(
+      &kFakeDeviceProvider, &kFakeDeviceTarget, &run_module, &options,
+      iree_allocator_system(), &candidate));
   EXPECT_TRUE(g_fake_hal_emit_was_called);
   EXPECT_EQ(g_fake_hal_emit_report,
             &candidate.artifact_candidate.compile_report);
@@ -328,7 +297,7 @@ TEST_F(HalCandidateTest, CompileHalExecutableCandidate) {
   loom_run_module_deinitialize(&run_module);
 }
 
-TEST_F(HalCandidateTest, CompileHalExecutableCandidateWithoutReport) {
+TEST_F(HalCandidateTest, EmitHalExecutableCandidateWithoutReport) {
   loom_run_module_t run_module = {};
   IREE_ASSERT_OK(Parse(IREE_SV(kHalSource), &run_module));
 
@@ -338,11 +307,9 @@ TEST_F(HalCandidateTest, CompileHalExecutableCandidateWithoutReport) {
   loom_run_hal_candidate_t candidate = {};
   g_fake_hal_emit_was_called = false;
   g_fake_hal_emit_report = nullptr;
-  IREE_ASSERT_OK(loom_run_hal_candidate_compile(
-      &kFakeDeviceProvider, FakeHalRuntime(), &run_module,
-      /*target_requirement=*/nullptr, &options, iree_allocator_system(),
-      &candidate));
-  EXPECT_EQ(g_fake_hal_selected_target_requirement, nullptr);
+  IREE_ASSERT_OK(loom_run_hal_candidate_emit_target(
+      &kFakeDeviceProvider, &kFakeDeviceTarget, &run_module, &options,
+      iree_allocator_system(), &candidate));
   EXPECT_TRUE(g_fake_hal_emit_was_called);
   EXPECT_EQ(g_fake_hal_emit_report, nullptr);
   EXPECT_EQ(candidate.artifact_candidate.compile_report.detail_flags,
@@ -353,22 +320,19 @@ TEST_F(HalCandidateTest, CompileHalExecutableCandidateWithoutReport) {
   loom_run_module_deinitialize(&run_module);
 }
 
-TEST_F(HalCandidateTest, CompileHalRequiresHooks) {
+TEST_F(HalCandidateTest, EmitHalRequiresTarget) {
   loom_run_module_t run_module = {};
   IREE_ASSERT_OK(Parse(IREE_SV(kHalSource), &run_module));
 
   loom_compile_options_t options = {};
   InitializeCompileOptions(&run_module, &options);
 
-  const loom_device_provider_t provider = {
-      /*.artifact_provider=*/&kFakeArtifactProvider,
-  };
   loom_run_hal_candidate_t candidate = {};
-  IREE_EXPECT_STATUS_IS(
-      IREE_STATUS_INVALID_ARGUMENT,
-      loom_run_hal_candidate_compile(&provider, FakeHalRuntime(), &run_module,
-                                     /*target_requirement=*/nullptr, &options,
-                                     iree_allocator_system(), &candidate));
+  IREE_EXPECT_STATUS_IS(IREE_STATUS_INVALID_ARGUMENT,
+                        loom_run_hal_candidate_emit_target(
+                            &kFakeDeviceProvider,
+                            /*target=*/nullptr, &run_module, &options,
+                            iree_allocator_system(), &candidate));
   EXPECT_EQ(candidate.provider, nullptr);
 
   loom_run_module_deinitialize(&run_module);

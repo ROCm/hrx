@@ -154,8 +154,8 @@ static iree_status_t loom_run_hal_testbench_context_select_device_provider(
   }
   return iree_make_status(
       IREE_STATUS_INVALID_ARGUMENT,
-      "--device=%.*s selects HAL driver '%.*s', which has no linked Loom "
-      "device provider",
+      "--device=%.*s selects HAL driver '%.*s', which is not available in "
+      "this Loom installation (no linked device provider)",
       (int)device_uri.size, device_uri.data, (int)device_driver_name.size,
       device_driver_name.data);
 }
@@ -265,6 +265,7 @@ void loom_run_hal_testbench_actual_provider_initialize(
       .target_environment = options->target_environment,
       .run_module = options->run_module,
       .pipeline = options->pipeline,
+      .target = options->target,
       .sanitizer = options->sanitizer,
       .config_set = options->config_set,
       .kernel_launch = options->kernel_launch,
@@ -288,8 +289,8 @@ void loom_run_hal_testbench_actual_provider_deinitialize(
   if (provider->candidate_initialized) {
     loom_run_hal_candidate_deinitialize(&provider->candidate);
   }
-  if (provider->compile_device_target_initialized &&
-      provider->context != NULL && provider->context->device_provider != NULL &&
+  if (provider->owns_compile_device_target && provider->context != NULL &&
+      provider->context->device_provider != NULL &&
       provider->context->device_provider->deinitialize_target != NULL) {
     provider->context->device_provider->deinitialize_target(
         provider->context->device_provider, &provider->compile_device_target,
@@ -647,16 +648,28 @@ iree_status_t loom_run_hal_testbench_actual_provider_compile(
                             "HAL kernel launches require a target environment");
   }
 
-  if (!provider->compile_device_target_initialized) {
+  if (provider->compile_device_target.artifact_target.target_profile == NULL) {
     const loom_device_provider_t* device_provider =
         provider->context->device_provider;
-    const loom_target_facts_t* target_requirement = NULL;
-    IREE_RETURN_IF_ERROR(loom_run_hal_testbench_resolve_target_requirement(
-        provider->compile_module.module, entry_func, &target_requirement));
-    IREE_RETURN_IF_ERROR(loom_device_provider_select_compatible_target(
-        device_provider, &provider->context->runtime, target_requirement,
-        provider->context->host_allocator, &provider->compile_device_target));
-    provider->compile_device_target_initialized = true;
+    const iree_string_view_t target_specification =
+        iree_string_view_trim(provider->target);
+    if (iree_string_view_is_empty(target_specification)) {
+      const loom_target_facts_t* target_requirement = NULL;
+      IREE_RETURN_IF_ERROR(loom_run_hal_testbench_resolve_target_requirement(
+          provider->compile_module.module, entry_func, &target_requirement));
+      IREE_RETURN_IF_ERROR(loom_device_provider_select_compatible_target(
+          device_provider, &provider->context->runtime, target_requirement,
+          provider->context->host_allocator, &provider->compile_device_target));
+      provider->owns_compile_device_target = true;
+    } else {
+      loom_artifact_target_t artifact_target = {0};
+      IREE_RETURN_IF_ERROR(loom_artifact_target_select(
+          device_provider->artifact_provider, provider->target_environment,
+          target_specification, &artifact_target));
+      IREE_RETURN_IF_ERROR(loom_device_provider_select_profile_target(
+          device_provider, &provider->context->runtime,
+          artifact_target.target_profile, &provider->compile_device_target));
+    }
   }
 
   const loom_diagnostic_sink_t diagnostic_sink =
@@ -1619,6 +1632,7 @@ iree_status_t loom_run_hal_testbench_actual_sequence_initialize(
         .target_environment = options->target_environment,
         .run_module = options->run_module,
         .pipeline = options->pipeline,
+        .target = options->target,
         .sanitizer = options->sanitizer,
         .config_set = options->config_set,
         .kernel_launch = invocation,

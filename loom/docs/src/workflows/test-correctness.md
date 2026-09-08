@@ -22,6 +22,21 @@ device selected for the run:
 iree-test-loom program.loom --device=amdgpu
 ```
 
+The device normally selects the most specific compatible compiler target. An
+explicit target keeps cross-device comparisons on a stable compilation
+baseline:
+
+```shell
+iree-test-loom program.loom \
+  --device=amdgpu \
+  --target=amdgpu:gfx11-generic
+```
+
+`--target=family:selector` does not select or create a device. It constrains
+compilation, and the selected device must advertise a matching loadable target.
+A forced generic target remains generic even when the device also advertises a
+higher-priority exact target.
+
 The report is a `loom.test.v0` JSON document on standard output. Its top-level
 counts summarize cases, concrete samples, failures, skipped cases, and planning
 issues. The `samples` array carries the result of each concrete case sample.
