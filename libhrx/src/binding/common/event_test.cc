@@ -346,8 +346,8 @@ TEST_F(CpuContextTimestampDomainTest, LeavesTheDomainZeroedOnTheCpuDevice) {
 TEST_F(CpuContextTimestampDomainTest, DirectRecordsOnAnUntimedDeviceGoUntimed) {
   iree_hal_streaming_stream_t* stream = nullptr;
   IREE_ASSERT_OK(iree_hal_streaming_stream_create(
-      context_, IREE_HAL_STREAMING_STREAM_FLAG_NONE, /*priority=*/0,
-      iree_allocator_system(), &stream));
+      context_, context_->queue, IREE_HAL_STREAMING_STREAM_FLAG_NONE,
+      /*priority=*/0, iree_allocator_system(), &stream));
   iree_hal_streaming_event_t* start = nullptr;
   IREE_ASSERT_OK(iree_hal_streaming_event_create(
       context_, IREE_HAL_STREAMING_EVENT_FLAG_NONE, iree_allocator_system(),
@@ -386,8 +386,8 @@ TEST_F(CpuContextTimestampDomainTest,
 
   iree_hal_streaming_stream_t* stream = nullptr;
   IREE_ASSERT_OK(iree_hal_streaming_stream_create(
-      context_, IREE_HAL_STREAMING_STREAM_FLAG_NONE, /*priority=*/0,
-      iree_allocator_system(), &stream));
+      context_, context_->queue, IREE_HAL_STREAMING_STREAM_FLAG_NONE,
+      /*priority=*/0, iree_allocator_system(), &stream));
   iree_hal_streaming_graph_t* graph = nullptr;
   IREE_ASSERT_OK(iree_hal_streaming_graph_create(
       context_, IREE_HAL_STREAMING_GRAPH_FLAG_NONE, iree_allocator_system(),

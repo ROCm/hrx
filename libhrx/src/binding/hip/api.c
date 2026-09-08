@@ -1571,7 +1571,7 @@ static hipError_t iree_hip_resolve_per_thread_stream(
 
   iree_hal_streaming_stream_t* stream = NULL;
   iree_status_t status = iree_hal_streaming_stream_create(
-      context, IREE_HAL_STREAMING_STREAM_FLAG_NONE,
+      context, context->queue, IREE_HAL_STREAMING_STREAM_FLAG_NONE,
       context->default_stream->priority, context->host_allocator, &stream);
   if (!iree_status_is_ok(status)) {
     iree_status_free(status);
@@ -10423,8 +10423,8 @@ HIPAPI hipError_t hipStreamCreate(hipStream_t* stream) {
 
   iree_hal_streaming_stream_t* stream_obj = NULL;
   iree_status_t status = iree_hal_streaming_stream_create(
-      context, IREE_HAL_STREAMING_STREAM_FLAG_NONE, 0, context->host_allocator,
-      &stream_obj);
+      context, context->queue, IREE_HAL_STREAMING_STREAM_FLAG_NONE, 0,
+      context->host_allocator, &stream_obj);
 
   if (iree_status_is_ok(status)) {
     status = iree_hip_stream_register(stream_obj);
@@ -10501,7 +10501,7 @@ HIPAPI hipError_t hipStreamCreateWithFlags(hipStream_t* stream,
 
   iree_hal_streaming_stream_t* stream_obj = NULL;
   iree_status_t status = iree_hal_streaming_stream_create(
-      context, iree_hip_stream_flags_to_internal(flags), 0,
+      context, context->queue, iree_hip_stream_flags_to_internal(flags), 0,
       context->host_allocator, &stream_obj);
 
   if (iree_status_is_ok(status)) {
@@ -10584,7 +10584,7 @@ HIPAPI hipError_t hipStreamCreateWithPriority(hipStream_t* stream,
 
   iree_hal_streaming_stream_t* stream_obj = NULL;
   iree_status_t status = iree_hal_streaming_stream_create(
-      context, iree_hip_stream_flags_to_internal(flags),
+      context, context->queue, iree_hip_stream_flags_to_internal(flags),
       iree_hip_clamp_stream_priority(priority), context->host_allocator,
       &stream_obj);
 

@@ -225,9 +225,9 @@ iree_status_t iree_hal_streaming_context_create(
 
   // Create default stream.
   if (iree_status_is_ok(status)) {
-    status = iree_hal_streaming_stream_create(context, /*flags=*/0,
-                                              /*priority=*/0, host_allocator,
-                                              &context->default_stream);
+    status = iree_hal_streaming_stream_create(
+        context, context->queue, /*flags=*/0, /*priority=*/0, host_allocator,
+        &context->default_stream);
   }
 
   if (iree_status_is_ok(status)) {
@@ -313,15 +313,20 @@ static void iree_hal_streaming_context_destroy(
   // and taking these in the other order deadlocks against it. The list still
   // holds its reference to every stream, so none can be destroyed while the
   // loop runs; those references are released afterwards, outside both locks,
-  // because the last one destroys the stream.
+  // because the last one destroys the stream. Queue references are released
+  // during detachment so a dynamically acquired queue cannot outlive the HAL
+  // device retained by this context.
   for (iree_host_size_t i = 0; i < detached_stream_count; ++i) {
     iree_hal_streaming_stream_t* stream = context->streams[i];
+    iree_hal_queue_t* queue = NULL;
     iree_slim_mutex_lock(&stream->mutex);
     if (stream->context == context) {
+      queue = stream->queue;
       stream->queue = NULL;
       stream->context = NULL;
     }
     iree_slim_mutex_unlock(&stream->mutex);
+    iree_hal_queue_release(queue);
   }
   for (iree_host_size_t i = 0; i < detached_stream_count; ++i) {
     iree_hal_streaming_stream_release(context->streams[i]);

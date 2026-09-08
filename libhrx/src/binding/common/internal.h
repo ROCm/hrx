@@ -517,8 +517,8 @@ typedef struct iree_hal_streaming_stream_t {
   uint64_t pending_value;    // Last value a submission has been accepted for.
   uint64_t completed_value;  // Last value we've verified as completed
 
-  // Provisioned hardware queue used by this stream. Borrowed from the device
-  // retained by |context| and valid while the context remains attached.
+  // Exact hardware queue retained while the stream remains attached to its
+  // context.
   iree_hal_queue_t* queue;
 
   // Event dependencies that establish safe cross-stream allocation reuse.
@@ -1735,9 +1735,11 @@ iree_status_t iree_hal_streaming_module_global(
 // Stream management
 //===----------------------------------------------------------------------===//
 
+// Creates a stream that submits through the exact hardware |queue|. The stream
+// retains the queue until it is detached from |context|.
 // Synchronization: none (creates new stream).
 iree_status_t iree_hal_streaming_stream_create(
-    iree_hal_streaming_context_t* context,
+    iree_hal_streaming_context_t* context, iree_hal_queue_t* queue,
     iree_hal_streaming_stream_flags_t flags, int priority,
     iree_allocator_t host_allocator, iree_hal_streaming_stream_t** out_stream);
 

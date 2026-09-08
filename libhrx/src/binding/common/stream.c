@@ -287,12 +287,12 @@ bool iree_hal_streaming_stream_has_memory_reuse_dependency(
 }
 
 iree_status_t iree_hal_streaming_stream_create(
-    iree_hal_streaming_context_t* context,
+    iree_hal_streaming_context_t* context, iree_hal_queue_t* queue,
     iree_hal_streaming_stream_flags_t flags, int priority,
     iree_allocator_t host_allocator, iree_hal_streaming_stream_t** out_stream) {
   IREE_ASSERT_ARGUMENT(context);
+  IREE_ASSERT_ARGUMENT(queue);
   IREE_ASSERT_ARGUMENT(out_stream);
-  *out_stream = NULL;
   IREE_TRACE_ZONE_BEGIN(z0);
 
   iree_hal_streaming_stream_t* stream = NULL;
@@ -309,7 +309,8 @@ iree_status_t iree_hal_streaming_stream_create(
   stream->timeline_semaphore = NULL;
   stream->pending_value = 0;
   stream->completed_value = 0;
-  stream->queue = context->queue;
+  stream->queue = queue;
+  iree_hal_queue_retain(stream->queue);
   stream->memory_reuse_dependencies = NULL;
   stream->memory_reuse_dependency_count = 0;
   stream->memory_reuse_dependency_capacity = 0;
@@ -329,18 +330,10 @@ iree_status_t iree_hal_streaming_stream_create(
   stream->host_allocator = host_allocator;
   iree_slim_mutex_initialize(&stream->mutex);
 
-  iree_status_t status = iree_ok_status();
-  if (!stream->queue) {
-    status = iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
-                              "device has no provisioned queue");
-  }
-
   // Create timeline semaphore for synchronization.
-  if (iree_status_is_ok(status)) {
-    status = iree_hal_semaphore_create(
-        context->device, IREE_HAL_QUEUE_FAMILY_AFFINITY_ANY, 0ULL,
-        IREE_HAL_SEMAPHORE_FLAG_NONE, &stream->timeline_semaphore);
-  }
+  iree_status_t status = iree_hal_semaphore_create(
+      context->device, IREE_HAL_QUEUE_FAMILY_AFFINITY_ANY, 0ULL,
+      IREE_HAL_SEMAPHORE_FLAG_NONE, &stream->timeline_semaphore);
 
   // Register stream with context.
   if (iree_status_is_ok(status)) {
@@ -371,10 +364,14 @@ static void iree_hal_streaming_stream_destroy(
     }
     iree_slim_mutex_lock(&stream->mutex);
     if (stream->context == context) {
+      iree_hal_queue_t* queue = stream->queue;
       stream->queue = NULL;
       stream->context = NULL;
+      iree_slim_mutex_unlock(&stream->mutex);
+      iree_hal_queue_release(queue);
+    } else {
+      iree_slim_mutex_unlock(&stream->mutex);
     }
-    iree_slim_mutex_unlock(&stream->mutex);
     iree_hal_streaming_context_unregister_stream(context, stream);
   }
 
