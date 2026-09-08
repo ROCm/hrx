@@ -110,11 +110,10 @@ func.def target(@test_target) @scalarizes_reduce_axes_for_target(%v: vector<4xi3
 
 func.def target(@test_target) @scalarizes_dynamic_rank2_mma_store(%m: index, %n: index, %k: index, %lhs_buffer: buffer, %rhs_buffer: buffer, %init_buffer: buffer, %out_buffer: buffer) {
   %base = index.constant 0 : offset
-  %layout = encoding.layout.dense : encoding<layout>
-  %lhs_view = buffer.view %lhs_buffer[%base] : buffer -> view<[%m]x[%k]xf32, %layout>
-  %rhs_view = buffer.view %rhs_buffer[%base] : buffer -> view<[%k]x[%n]xf32, %layout>
-  %init_view = buffer.view %init_buffer[%base] : buffer -> view<[%m]x[%n]xf32, %layout>
-  %out_view = buffer.view %out_buffer[%base] : buffer -> view<[%m]x[%n]xf32, %layout>
+  %lhs_view = buffer.view %lhs_buffer[%base] : buffer -> view<[%m]x[%k]xf32>
+  %rhs_view = buffer.view %rhs_buffer[%base] : buffer -> view<[%k]x[%n]xf32>
+  %init_view = buffer.view %init_buffer[%base] : buffer -> view<[%m]x[%n]xf32>
+  %out_view = buffer.view %out_buffer[%base] : buffer -> view<[%m]x[%n]xf32>
   %94 = index.constant 0 : index
   %95 = index.constant 1 : index
   cfg.br ^_bb1(%94: index)
@@ -131,7 +130,7 @@ func.def target(@test_target) @scalarizes_dynamic_rank2_mma_store(%m: index, %n:
   cfg.cond_br %176, ^_bb4, ^_bb9
 ^_bb4:
   %175 = index.assume %174 [lt(%174, %n)] : index
-  %100 = view.load %init_view[%171, %175] : view<[%m]x[%n]xf32, %layout> -> f32
+  %100 = view.load %init_view[%171, %175] : view<[%m]x[%n]xf32> -> f32
   %101 = index.constant 0 : index
   %102 = index.constant 1 : index
   cfg.br ^_bb5(%101: index, %100: f32)
@@ -140,15 +139,15 @@ func.def target(@test_target) @scalarizes_dynamic_rank2_mma_store(%m: index, %n:
   cfg.cond_br %182, ^_bb6, ^_bb7
 ^_bb6:
   %181 = index.assume %179 [lt(%179, %k)] : index
-  %106 = view.load %lhs_view[%171, %181] : view<[%m]x[%k]xf32, %layout> -> f32
-  %107 = view.load %rhs_view[%181, %175] : view<[%k]x[%n]xf32, %layout> -> f32
+  %106 = view.load %lhs_view[%171, %181] : view<[%m]x[%k]xf32> -> f32
+  %107 = view.load %rhs_view[%181, %175] : view<[%k]x[%n]xf32> -> f32
   %108 = scalar.fmaf %106, %107, %180 : f32
   %183 = index.add %181, %102 : index
   cfg.br ^_bb5(%183: index, %108: f32)
 ^_bb7:
   cfg.br ^_bb8(%180: f32)
 ^_bb8(%178: f32):
-  view.store %178, %out_view[%171, %175] : f32, view<[%m]x[%n]xf32, %layout>
+  view.store %178, %out_view[%171, %175] : f32, view<[%m]x[%n]xf32>
   %177 = index.add %175, %98 : index
   cfg.br ^_bb3(%177: index)
 ^_bb9:
@@ -160,9 +159,8 @@ func.def target(@test_target) @scalarizes_dynamic_rank2_mma_store(%m: index, %n:
 
 func.def target(@test_target) @scalarizes_dynamic_flat_mma_store(%m: index, %n: index, %k: index, %lhs0: f32, %rhs0: f32, %init0: f32, %out_buffer: buffer) {
   %base = index.constant 0 : offset
-  %layout = encoding.layout.dense : encoding<layout>
   %mn = index.mul %m, %n : index
-  %out_view = buffer.view %out_buffer[%base] : buffer -> view<[%mn]xf32, %layout>
+  %out_view = buffer.view %out_buffer[%base] : buffer -> view<[%mn]xf32>
   %109 = index.constant 0 : index
   %110 = index.constant 1 : index
   cfg.br ^_bb1(%109: index)
@@ -185,7 +183,7 @@ func.def target(@test_target) @scalarizes_dynamic_flat_mma_store(%m: index, %n: 
 ^_bb5:
   cfg.br ^_bb6(%190: f32)
 ^_bb6(%188: f32):
-  view.store %188, %out_view[%185] : f32, view<[%mn]xf32, %layout>
+  view.store %188, %out_view[%185] : f32, view<[%mn]xf32>
   %187 = index.add %185, %110 : index
   cfg.br ^_bb1(%187: index)
 ^_bb7:
@@ -194,8 +192,7 @@ func.def target(@test_target) @scalarizes_dynamic_flat_mma_store(%m: index, %n: 
 
 func.def target(@test_target) @scalarizes_dense_flat_mma_fragment_store(%lhs0: f32, %rhs0: f32, %init0: f32, %out_buffer: buffer) {
   %base = index.constant 0 : offset
-  %layout = encoding.layout.dense : encoding<layout>
-  %out_view = buffer.view %out_buffer[%base] : buffer -> view<2x2xf32, %layout>
+  %out_view = buffer.view %out_buffer[%base] : buffer -> view<2x2xf32>
   %126 = index.constant 0 : index
   %127 = index.constant 2 : index
   %128 = index.constant 1 : index
@@ -229,7 +226,7 @@ func.def target(@test_target) @scalarizes_dense_flat_mma_fragment_store(%lhs0: f
 ^_bb7:
   cfg.br ^_bb8(%204: f32)
 ^_bb8(%202: f32):
-  view.store %202, %out_view[%195, %199] : f32, view<2x2xf32, %layout>
+  view.store %202, %out_view[%195, %199] : f32, view<2x2xf32>
   %201 = index.add %199, %132 : index
   cfg.br ^_bb3(%201: index)
 ^_bb9:
@@ -241,11 +238,10 @@ func.def target(@test_target) @scalarizes_dense_flat_mma_fragment_store(%lhs0: f
 
 func.def target(@test_target) @scalarizes_target_shaped_fragment_mma_store(%lhs_buffer: buffer, %rhs_buffer: buffer, %init_buffer: buffer, %out_buffer: buffer) {
   %base = index.constant 0 : offset
-  %layout = encoding.layout.dense : encoding<layout>
-  %lhs_view = buffer.view %lhs_buffer[%base] : buffer -> view<16x16xf16, %layout>
-  %rhs_view = buffer.view %rhs_buffer[%base] : buffer -> view<16x16xf16, %layout>
-  %init_view = buffer.view %init_buffer[%base] : buffer -> view<16x16xf32, %layout>
-  %out_view = buffer.view %out_buffer[%base] : buffer -> view<16x16xf32, %layout>
+  %lhs_view = buffer.view %lhs_buffer[%base] : buffer -> view<16x16xf16>
+  %rhs_view = buffer.view %rhs_buffer[%base] : buffer -> view<16x16xf16>
+  %init_view = buffer.view %init_buffer[%base] : buffer -> view<16x16xf32>
+  %out_view = buffer.view %out_buffer[%base] : buffer -> view<16x16xf32>
   %150 = index.constant 0 : index
   %151 = index.constant 16 : index
   %152 = index.constant 1 : index
@@ -264,7 +260,7 @@ func.def target(@test_target) @scalarizes_target_shaped_fragment_mma_store(%lhs_
   cfg.cond_br %214, ^_bb4, ^_bb9
 ^_bb4:
   %213 = index.assume %212 [range(%212, 0, 15)] : index
-  %158 = view.load %init_view[%209, %213] : view<16x16xf32, %layout> -> f32
+  %158 = view.load %init_view[%209, %213] : view<16x16xf32> -> f32
   %159 = index.constant 0 : index
   %160 = index.constant 16 : index
   %161 = index.constant 1 : index
@@ -274,8 +270,8 @@ func.def target(@test_target) @scalarizes_target_shaped_fragment_mma_store(%lhs_
   cfg.cond_br %220, ^_bb6, ^_bb7
 ^_bb6:
   %219 = index.assume %217 [range(%217, 0, 15)] : index
-  %165 = view.load %lhs_view[%209, %219] : view<16x16xf16, %layout> -> f16
-  %166 = view.load %rhs_view[%219, %213] : view<16x16xf16, %layout> -> f16
+  %165 = view.load %lhs_view[%209, %219] : view<16x16xf16> -> f16
+  %166 = view.load %rhs_view[%219, %213] : view<16x16xf16> -> f16
   %167 = scalar.extf %165 : f16 to f32
   %168 = scalar.extf %166 : f16 to f32
   %169 = scalar.fmaf %167, %168, %218 : f32
@@ -284,7 +280,7 @@ func.def target(@test_target) @scalarizes_target_shaped_fragment_mma_store(%lhs_
 ^_bb7:
   cfg.br ^_bb8(%218: f32)
 ^_bb8(%216: f32):
-  view.store %216, %out_view[%209, %213] : f32, view<16x16xf32, %layout>
+  view.store %216, %out_view[%209, %213] : f32, view<16x16xf32>
   %215 = index.add %213, %156 : index
   cfg.br ^_bb3(%215: index)
 ^_bb9:
