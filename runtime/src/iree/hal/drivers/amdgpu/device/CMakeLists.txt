@@ -15,6 +15,7 @@ add_custom_command(OUTPUT bitcode_srcs.stamp
     "atomic.c"
     "blit.c"
     "dispatch.c"
+    "grid_sync.c"
     "timestamp.c"
     "tsan.c"
 )
@@ -33,6 +34,7 @@ add_custom_command(OUTPUT bitcode_hdrs.stamp
     "atomic.h"
     "blit.h"
     "dispatch.h"
+    "grid_sync.h"
     "kernel_tables.h"
     "kernels.h"
     "support/asan.h"
@@ -78,6 +80,7 @@ iree_cc_library(
     "atomic.h"
     "blit.h"
     "dispatch.h"
+    "grid_sync.h"
     "kernel_tables.h"
     "kernels.h"
     "support/asan.h"
@@ -163,6 +166,19 @@ iree_cc_library(
   SRCS
     "dispatch.c"
   DEPS
+    ::headers
+  PUBLIC
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_library(
+  NAME
+    grid_sync
+  SRCS
+    "grid_sync.c"
+  DEPS
+    ::dispatch
     ::headers
   PUBLIC
 )
@@ -287,6 +303,26 @@ iree_cc_test(
     "dispatch_test.cc"
   DEPS
     ::dispatch
+    ::headers
+    iree::testing::gtest
+    iree::testing::gtest_main
+  LABELS
+    "iree-build-requirement=runtime.hal.amdgpu"
+    "iree-run-requirement=runtime.resource.amd_gpu"
+    "runtime-resource=amd-gpu"
+  RESOURCE_GROUP
+    iree-hal-drivers-amdgpu-tests
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_test(
+  NAME
+    grid_sync_test
+  SRCS
+    "grid_sync_test.cc"
+  DEPS
+    ::grid_sync
     ::headers
     iree::testing::gtest
     iree::testing::gtest_main

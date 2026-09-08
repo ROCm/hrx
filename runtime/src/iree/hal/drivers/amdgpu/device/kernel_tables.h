@@ -83,6 +83,13 @@ IREE_HAL_AMDGPU_DEVICE_KERNEL(
     iree_hal_amdgpu_device_dispatch_patch_pm4_bindings, 32, 1, 1)
 
 //===----------------------------------------------------------------------===//
+// Grid synchronization helpers (grid_sync.h)
+//===----------------------------------------------------------------------===//
+
+IREE_HAL_AMDGPU_DEVICE_KERNEL(iree_hal_amdgpu_device_grid_sync_gws_initialize,
+                              1, 1, 1)
+
+//===----------------------------------------------------------------------===//
 // TSAN helpers (tsan.h)
 //===----------------------------------------------------------------------===//
 

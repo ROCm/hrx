@@ -19,6 +19,7 @@ DEVICE_HDRS = [
     "atomic.h",
     "blit.h",
     "dispatch.h",
+    "grid_sync.h",
     "kernel_tables.h",
     "kernels.h",
     "support/asan.h",
@@ -135,6 +136,17 @@ iree_runtime_cc_library(
 )
 
 iree_runtime_cc_library(
+    name = "grid_sync",
+    srcs = [
+        "grid_sync.c",
+    ],
+    deps = [
+        ":dispatch",
+        ":headers",
+    ],
+)
+
+iree_runtime_cc_library(
     name = "kernel_pm4",
     srcs = [
         "kernel_pm4.c",
@@ -218,6 +230,17 @@ iree_runtime_cc_test(
     srcs = ["dispatch_test.cc"],
     deps = [
         ":dispatch",
+        ":headers",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "grid_sync_test",
+    srcs = ["grid_sync_test.cc"],
+    deps = [
+        ":grid_sync",
         ":headers",
         "//runtime/src/iree/testing:gtest",
         "//runtime/src/iree/testing:gtest_main",
