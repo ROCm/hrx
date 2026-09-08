@@ -28,6 +28,19 @@ iree_status_t iree_hal_amdgpu_hsa_queue_create(
                             "queue byte-length limit",
                             params->packet_count);
   }
+  if (IREE_UNLIKELY(params->type != HSA_QUEUE_TYPE_MULTI &&
+                    params->type != HSA_QUEUE_TYPE_COOPERATIVE)) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "unsupported native HSA queue type %u",
+                            params->type);
+  }
+  const bool is_cooperative = params->type == HSA_QUEUE_TYPE_COOPERATIVE;
+  if (IREE_UNLIKELY(is_cooperative &&
+                    params->priority != HSA_AMD_QUEUE_PRIORITY_NORMAL)) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "native cooperative queues require normal scheduling priority");
+  }
 
   hsa_amd_queue_create_desc_t descriptor = {
       .version = HSA_AMD_QUEUE_CREATE_DESC_VERSION,
@@ -40,10 +53,14 @@ iree_status_t iree_hal_amdgpu_hsa_queue_create(
       .callback_data = params->error_callback_data,
       .engine.compute =
           {
-              .cu_mask = params->compute_unit_mask,
+              // ROCr exposes one shared cooperative queue per agent. Applying
+              // a mask through the descriptor would mutate that shared queue;
+              // verify its achieved full-resource mask below instead.
+              .cu_mask = is_cooperative ? NULL : params->compute_unit_mask,
               .type = params->type,
               .private_segment_size = HSA_AMD_PRIVATE_SEGMENT_SIZE_DEFAULT,
-              .cu_mask_count = params->compute_unit_mask_bit_count,
+              .cu_mask_count =
+                  is_cooperative ? 0 : params->compute_unit_mask_bit_count,
           },
   };
   iree_status_t status = iree_hsa_amd_queue_create(IREE_LIBHSA(params->libhsa),

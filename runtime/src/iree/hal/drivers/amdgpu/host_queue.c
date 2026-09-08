@@ -852,6 +852,29 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
         params->capacity.kernarg_block_count,
         params->capacity.aql_packet_count);
   }
+  const bool is_cooperative =
+      iree_any_bit_set(params->identity.params.features,
+                       IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH);
+  if (IREE_UNLIKELY(is_cooperative &&
+                    params->identity.params.features !=
+                        IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH)) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "AMDGPU cooperative queue request has unsupported feature bits");
+  }
+  if (IREE_UNLIKELY(is_cooperative && params->identity.params.priority !=
+                                          IREE_HAL_QUEUE_PRIORITY_NORMAL)) {
+    return iree_make_status(IREE_STATUS_UNIMPLEMENTED,
+                            "AMDGPU cooperative queues require normal "
+                            "scheduling priority");
+  }
+  if (IREE_UNLIKELY(is_cooperative &&
+                    params->identity.params.execution_resources.count != 0)) {
+    return iree_make_status(
+        IREE_STATUS_UNIMPLEMENTED,
+        "AMDGPU cooperative queues require the complete execution-resource "
+        "set");
+  }
 
   IREE_TRACE_ZONE_BEGIN(z0);
 
@@ -949,7 +972,8 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
         .libhsa = params->hardware.libhsa,
         .agent = params->hardware.gpu_agent,
         .packet_count = params->capacity.aql_packet_count,
-        .type = HSA_QUEUE_TYPE_MULTI,
+        .type =
+            is_cooperative ? HSA_QUEUE_TYPE_COOPERATIVE : HSA_QUEUE_TYPE_MULTI,
         .priority = native_priority,
         .compute_unit_mask_bit_count = native_mask_bit_count,
         .compute_unit_mask = native_mask,

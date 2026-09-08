@@ -351,6 +351,7 @@ static iree_status_t iree_hal_amdgpu_physical_device_initialize_identity(
   // Zeroing allows deinitialization to run after any partial initialization
   // failure below.
   memset(out_physical_device, 0, sizeof(*out_physical_device));
+  iree_slim_mutex_initialize(&out_physical_device->cooperative_queue.mutex);
   out_physical_device->device_agent = device_agent;
   out_physical_device->device_ordinal = device_ordinal;
   const iree_hal_amdgpu_agent_target_t* agent_target =
@@ -937,6 +938,21 @@ iree_hal_amdgpu_physical_device_initialize_queue_execution_strategy(
   out_physical_device->vendor_packet_capabilities = vendor_packet_capabilities;
   out_physical_device->wait_barrier_strategy = wait_barrier_strategy;
   out_physical_device->pm4_timestamp_strategy = pm4_timestamp_strategy;
+
+  bool hsa_supports_cooperative_queues = false;
+  const hsa_status_t cooperative_queue_status = iree_hsa_agent_get_info_raw(
+      &system->libhsa, device_agent,
+      (hsa_agent_info_t)HSA_AMD_AGENT_INFO_COOPERATIVE_QUEUES,
+      &hsa_supports_cooperative_queues);
+  if (cooperative_queue_status == HSA_STATUS_ERROR_INVALID_ARGUMENT) {
+    hsa_supports_cooperative_queues = false;
+  } else if (IREE_UNLIKELY(cooperative_queue_status != HSA_STATUS_SUCCESS)) {
+    return iree_status_from_hsa_status(
+        __FILE__, __LINE__, cooperative_queue_status, "hsa_agent_get_info",
+        "querying cooperative queue support");
+  }
+  out_physical_device->supports_cooperative_dispatch =
+      hsa_supports_cooperative_queues;
   return iree_ok_status();
 }
 
@@ -1400,9 +1416,21 @@ iree_status_t iree_hal_amdgpu_physical_device_allocate_host_queue(
       out_queue);
 }
 
+void iree_hal_amdgpu_physical_device_release_cooperative_queue(
+    iree_hal_amdgpu_physical_device_t* physical_device) {
+  iree_slim_mutex_lock(&physical_device->cooperative_queue.mutex);
+  iree_hal_amdgpu_host_queue_t* queue =
+      physical_device->cooperative_queue.queue;
+  physical_device->cooperative_queue.queue = NULL;
+  iree_slim_mutex_unlock(&physical_device->cooperative_queue.mutex);
+  if (queue) iree_hal_queue_release(&queue->base);
+}
+
 void iree_hal_amdgpu_physical_device_deassign_frontier(
     iree_hal_amdgpu_physical_device_t* physical_device) {
   IREE_TRACE_ZONE_BEGIN(z0);
+
+  iree_hal_amdgpu_physical_device_release_cooperative_queue(physical_device);
 
   // The physical device owns the initial queue references and must outlive all
   // references retained by HAL users. Prove that lifetime invariant across all
@@ -1557,6 +1585,7 @@ void iree_hal_amdgpu_physical_device_deinitialize(
   iree_hal_amdgpu_block_pool_deinitialize(
       &physical_device->fine_block_pools.large);
 
+  iree_slim_mutex_deinitialize(&physical_device->cooperative_queue.mutex);
   memset(physical_device, 0, sizeof(*physical_device));
 
   IREE_TRACE_ZONE_END(z0);
@@ -1569,6 +1598,16 @@ iree_status_t iree_hal_amdgpu_physical_device_trim(
 
   for (iree_host_size_t i = 0; i < physical_device->host_queue_count; ++i) {
     iree_hal_amdgpu_host_queue_trim(&physical_device->host_queues[i]);
+  }
+
+  iree_slim_mutex_lock(&physical_device->cooperative_queue.mutex);
+  iree_hal_amdgpu_host_queue_t* cooperative_queue =
+      physical_device->cooperative_queue.queue;
+  if (cooperative_queue) iree_hal_queue_retain(&cooperative_queue->base);
+  iree_slim_mutex_unlock(&physical_device->cooperative_queue.mutex);
+  if (cooperative_queue) {
+    iree_hal_amdgpu_host_queue_trim(cooperative_queue);
+    iree_hal_queue_release(&cooperative_queue->base);
   }
 
   iree_hal_amdgpu_block_pool_trim(&physical_device->coarse_block_pools.small);

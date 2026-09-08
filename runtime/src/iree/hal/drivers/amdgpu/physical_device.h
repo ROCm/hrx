@@ -339,9 +339,21 @@ typedef struct iree_hal_amdgpu_physical_device_t {
   iree_hal_amdgpu_wait_barrier_strategy_t wait_barrier_strategy;
   // Queue-local PM4 timestamp strategy selected from this GPU agent's ISA.
   iree_hal_amdgpu_pm4_timestamp_strategy_t pm4_timestamp_strategy;
+  // True when HSA exposes an agent cooperative queue.
+  uint32_t supports_cooperative_dispatch : 1;
 
   // Host queue construction policy valid while frontier assignment is live.
   iree_hal_amdgpu_host_queue_construction_t host_queue_construction;
+
+  // Lazily realized cooperative queue shared by acquisitions on this physical
+  // device. ROCr exposes one native cooperative queue per agent, so the HAL
+  // must likewise use one host scheduler and one queue identity for it.
+  struct {
+    // Serializes first realization and owner-reference retirement.
+    iree_slim_mutex_t mutex;
+    // Physical-device-owned queue reference, or NULL before first use.
+    iree_hal_amdgpu_host_queue_t* queue;
+  } cooperative_queue;
 
   // Process-wide HSA system event delivery target for |device_agent|, or NULL
   // when the logical device has no registration. Borrowed from the
@@ -409,6 +421,12 @@ iree_status_t iree_hal_amdgpu_physical_device_allocate_host_queue(
     const iree_hal_queue_params_t* params, iree_async_axis_t axis,
     iree_hal_amdgpu_host_queue_release_slot_callback_t release_slot,
     iree_hal_amdgpu_host_queue_t** out_queue);
+
+// Releases the physical device's lazy cooperative queue owner reference.
+// Caller-owned queue references remain live and continue to own their dynamic
+// queue identity slot until released.
+void iree_hal_amdgpu_physical_device_release_cooperative_queue(
+    iree_hal_amdgpu_physical_device_t* physical_device);
 
 // Deinitializes any host queues initialized by assign_frontier.
 //

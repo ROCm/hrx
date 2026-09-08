@@ -45,7 +45,10 @@ typedef struct iree_hal_amdgpu_hsa_queue_params_t {
 // The queue uses the runtime's default private and group segment sizing. On
 // success |out_queue| receives ownership of one HSA queue reference. On
 // failure |out_queue| is unchanged and any partially created queue is
-// destroyed before returning.
+// destroyed before returning. Cooperative queues accept only normal priority,
+// are created without applying a compute-unit mask to ROCr's agent-shared
+// queue, and are accepted only when its achieved full-resource mask exactly
+// matches |params|.
 iree_status_t iree_hal_amdgpu_hsa_queue_create(
     const iree_hal_amdgpu_hsa_queue_params_t* params, hsa_queue_t** out_queue);
 
