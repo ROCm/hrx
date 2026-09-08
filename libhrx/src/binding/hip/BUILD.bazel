@@ -176,6 +176,7 @@ hrx_cc_library(
     deps = [
         ":execution_resource",
         ":execution_resource_descriptor",
+        ":stream",
         "//libhrx/src/binding/common",
         "//runtime/src/iree/base",
         "//runtime/src/iree/base/threading",

@@ -720,17 +720,6 @@ HIPAPI hipError_t hipExecutionCtxRecordEvent(hipExecutionCtx_t ctx,
   return hipErrorNotSupported;
 }
 
-HIPAPI hipError_t hipExecutionCtxStreamCreate(hipStream_t* stream,
-                                              hipExecutionCtx_t greenctx,
-                                              unsigned int flags,
-                                              int priority) {
-  (void)stream;
-  (void)greenctx;
-  (void)flags;
-  (void)priority;
-  return hipErrorNotSupported;
-}
-
 HIPAPI hipError_t hipExecutionCtxWaitEvent(hipExecutionCtx_t ctx,
                                            hipEvent_t event) {
   (void)ctx;
@@ -1730,15 +1719,6 @@ HIPAPI hipError_t hipStreamAttachMemAsync(hipStream_t stream, void* dev_ptr,
     }
   }
   return hipSuccess;
-}
-
-HIPAPI hipError_t hipStreamGetDevResource(hipStream_t stream,
-                                          hipDevResource* resource,
-                                          hipDevResourceType type) {
-  (void)stream;
-  (void)resource;
-  (void)type;
-  return hipErrorNotSupported;
 }
 
 HIPAPI hipError_t hipTexObjectCreate(

@@ -11,23 +11,6 @@
 #include "common/stream.h"
 #include "iree/base/threading/call_once.h"
 
-// Binding-private ownership and lifetime state behind a public HIP stream
-// handle. The common stream remains the execution engine while this object
-// provides the stable API identity needed to detach it independently.
-struct hipStream_st {
-  // Reference count including the live public-handle ownership.
-  iree_atomic_ref_count_t ref_count;
-
-  // Serializes access to the potentially detached common stream.
-  iree_slim_mutex_t mutex;
-
-  // Common stream owning the exact HAL queue, or NULL after detachment.
-  iree_hal_streaming_stream_t* stream;
-
-  // Host allocator owning this handle allocation.
-  iree_allocator_t host_allocator;
-};
-
 static iree_once_flag iree_hip_stream_registry_once = IREE_ONCE_FLAG_INIT;
 static iree_hip_handle_registry_t iree_hip_stream_registry;
 
@@ -52,6 +35,8 @@ iree_status_t iree_hip_stream_publish(iree_hal_streaming_stream_t* stream,
   iree_atomic_ref_count_init(&handle->ref_count);
   iree_slim_mutex_initialize(&handle->mutex);
   handle->stream = stream;
+  handle->execution_context = NULL;
+  handle->next_execution_context_stream = NULL;
   handle->host_allocator = host_allocator;
 
   iree_call_once(&iree_hip_stream_registry_once,
@@ -127,22 +112,40 @@ bool iree_hip_stream_retain_attached(
   return true;
 }
 
+bool iree_hip_stream_detach(hipStream_t handle,
+                            iree_hal_streaming_stream_t** out_stream,
+                            iree_hal_streaming_context_t** out_context) {
+  IREE_ASSERT_ARGUMENT(handle);
+  IREE_ASSERT_ARGUMENT(out_stream);
+  IREE_ASSERT_ARGUMENT(out_context);
+
+  iree_slim_mutex_lock(&handle->mutex);
+  iree_hal_streaming_stream_t* stream = handle->stream;
+  iree_hal_streaming_context_t* context = NULL;
+  if (stream) {
+    iree_hal_streaming_stream_retain_context(stream, &context);
+    handle->stream = NULL;
+  }
+  iree_slim_mutex_unlock(&handle->mutex);
+
+  if (!stream) return false;
+  *out_stream = stream;
+  *out_context = context;
+  return true;
+}
+
+void iree_hip_stream_retain(hipStream_t handle) {
+  if (handle) iree_atomic_ref_count_inc(&handle->ref_count);
+}
+
 void iree_hip_stream_release(hipStream_t handle) {
   if (!handle || iree_atomic_ref_count_dec(&handle->ref_count) != 1) return;
 
   iree_slim_mutex_lock(&handle->mutex);
-  iree_hal_streaming_stream_t* stream = handle->stream;
-  handle->stream = NULL;
+  IREE_ASSERT(handle->stream == NULL);
+  IREE_ASSERT(handle->execution_context == NULL);
+  IREE_ASSERT(handle->next_execution_context_stream == NULL);
   iree_slim_mutex_unlock(&handle->mutex);
-
-  if (stream) {
-    iree_hal_streaming_context_t* context = NULL;
-    if (iree_hal_streaming_stream_retain_context(stream, &context)) {
-      iree_hal_streaming_context_unregister_stream(context, stream);
-    }
-    iree_hal_streaming_stream_release(stream);
-    iree_hal_streaming_context_release(context);
-  }
 
   iree_slim_mutex_deinitialize(&handle->mutex);
   const iree_allocator_t host_allocator = handle->host_allocator;

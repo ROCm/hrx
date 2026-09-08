@@ -53,6 +53,16 @@ using HipExecutionCtxGetDeviceFn = hipError_t (*)(hipDevice_t* device,
                                                   hipExecutionCtx_t context);
 using HipExecutionCtxGetIdFn = hipError_t (*)(hipExecutionCtx_t context,
                                               unsigned long long* context_id);
+using HipExecutionCtxStreamCreateFn = hipError_t (*)(hipStream_t* stream,
+                                                     hipExecutionCtx_t context,
+                                                     unsigned int flags,
+                                                     int priority);
+using HipStreamGetDevResourceFn = hipError_t (*)(hipStream_t stream,
+                                                 hipDevResource* resource,
+                                                 hipDevResourceType type);
+using HipStreamGetFlagsFn = hipError_t (*)(hipStream_t stream,
+                                           unsigned int* flags);
+using HipStreamDestroyFn = hipError_t (*)(hipStream_t stream);
 
 struct ExecutionContextDeleter {
   // Runtime entry point used to destroy a live execution context.
@@ -65,6 +75,17 @@ struct ExecutionContextDeleter {
 
 using ScopedExecutionContext =
     std::unique_ptr<ihipExecutionCtx_t, ExecutionContextDeleter>;
+
+struct StreamDeleter {
+  // Runtime entry point used to destroy a live stream.
+  HipStreamDestroyFn destroy = nullptr;
+
+  void operator()(hipStream_st* stream) const {
+    if (stream) destroy(stream);
+  }
+};
+
+using ScopedStream = std::unique_ptr<hipStream_st, StreamDeleter>;
 
 // Owns the process-scoped HIP runtime under test and its resource entry points.
 // Calls cross the shared-library ABI instead of linking the implementation.
@@ -104,6 +125,18 @@ struct HipRuntimeApi {
 
   // Queries the process-unique execution-context identifier.
   HipExecutionCtxGetIdFn context_get_id = nullptr;
+
+  // Creates a stream on an exact execution context.
+  HipExecutionCtxStreamCreateFn context_stream_create = nullptr;
+
+  // Queries the exact SM resource assigned to a stream.
+  HipStreamGetDevResourceFn stream_get_resource = nullptr;
+
+  // Queries stream creation flags.
+  HipStreamGetFlagsFn stream_get_flags = nullptr;
+
+  // Destroys a live or execution-context-detached stream.
+  HipStreamDestroyFn stream_destroy = nullptr;
 };
 
 template <typename T>
@@ -145,6 +178,15 @@ class HipExecutionResourceApiTest : public testing::Test {
           api_.library, "hipExecutionCtxGetDevice");
       api_.context_get_id = ResolveHipSymbol<HipExecutionCtxGetIdFn>(
           api_.library, "hipExecutionCtxGetId");
+      api_.context_stream_create =
+          ResolveHipSymbol<HipExecutionCtxStreamCreateFn>(
+              api_.library, "hipExecutionCtxStreamCreate");
+      api_.stream_get_resource = ResolveHipSymbol<HipStreamGetDevResourceFn>(
+          api_.library, "hipStreamGetDevResource");
+      api_.stream_get_flags = ResolveHipSymbol<HipStreamGetFlagsFn>(
+          api_.library, "hipStreamGetFlags");
+      api_.stream_destroy = ResolveHipSymbol<HipStreamDestroyFn>(
+          api_.library, "hipStreamDestroy");
     }
 
     ASSERT_NE(api_.init, nullptr);
@@ -158,6 +200,10 @@ class HipExecutionResourceApiTest : public testing::Test {
     ASSERT_NE(api_.context_get_resource, nullptr);
     ASSERT_NE(api_.context_get_device, nullptr);
     ASSERT_NE(api_.context_get_id, nullptr);
+    ASSERT_NE(api_.context_stream_create, nullptr);
+    ASSERT_NE(api_.stream_get_resource, nullptr);
+    ASSERT_NE(api_.stream_get_flags, nullptr);
+    ASSERT_NE(api_.stream_destroy, nullptr);
 
     ASSERT_EQ(hipSuccess, api_.init(/*flags=*/0));
     ASSERT_EQ(hipSuccess, api_.get_device(&device_));
@@ -380,6 +426,68 @@ TEST_F(HipExecutionResourceApiTest,
   EXPECT_NE(first_id, 0u);
   EXPECT_NE(second_id, 0u);
   EXPECT_NE(first_id, second_id);
+}
+
+TEST_F(HipExecutionResourceApiTest,
+       CreatesExactStreamsAndOrphansThemWithTheirContext) {
+  hipDevResource full_resource;
+  ASSERT_EQ(hipSuccess, api_.device_get_resource(device_, &full_resource,
+                                                 hipDevResourceTypeSm));
+
+  hipDevResource partition;
+  unsigned int partition_count = 1;
+  hipDevResource remainder;
+  ASSERT_EQ(hipSuccess,
+            api_.split_sm_by_count(&partition, &partition_count, &full_resource,
+                                   &remainder, /*flags=*/0,
+                                   full_resource.sm.minSmPartitionSize));
+  ASSERT_EQ(partition_count, 1u);
+
+  hipDevResourceDesc_t descriptor = nullptr;
+  ASSERT_EQ(hipSuccess, api_.generate_descriptor(&descriptor, &partition, 1));
+  hipExecutionCtx_t context = nullptr;
+  ASSERT_EQ(hipSuccess, api_.create_context(&context, descriptor, device_, 0));
+  ScopedExecutionContext context_guard(
+      context, ExecutionContextDeleter{api_.destroy_context});
+
+  hipStream_t untouched_stream =
+      reinterpret_cast<hipStream_t>(uintptr_t{0x1234});
+  EXPECT_EQ(hipErrorInvalidValue,
+            api_.context_stream_create(&untouched_stream, context,
+                                       /*flags=*/2, /*priority=*/0));
+  EXPECT_EQ(untouched_stream, reinterpret_cast<hipStream_t>(uintptr_t{0x1234}));
+
+  hipStream_t stream = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.context_stream_create(&stream, context, hipStreamDefault,
+                                       /*priority=*/0));
+  ScopedStream stream_guard(stream, StreamDeleter{api_.stream_destroy});
+
+  unsigned int stream_flags = 0;
+  ASSERT_EQ(hipSuccess, api_.stream_get_flags(stream, &stream_flags));
+  EXPECT_EQ(stream_flags, hipStreamNonBlocking);
+
+  hipDevResource context_resource;
+  ASSERT_EQ(hipSuccess, api_.context_get_resource(context, &context_resource,
+                                                  hipDevResourceTypeSm));
+  hipDevResource stream_resource;
+  ASSERT_EQ(hipSuccess, api_.stream_get_resource(stream, &stream_resource,
+                                                 hipDevResourceTypeSm));
+  EXPECT_EQ(std::memcmp(&stream_resource, &context_resource,
+                        sizeof(context_resource)),
+            0);
+
+  ASSERT_EQ(hipSuccess, api_.destroy_context(context_guard.release()));
+
+  std::memset(&stream_resource, 0xA5, sizeof(stream_resource));
+  const hipDevResource expected_resource = stream_resource;
+  EXPECT_EQ(
+      hipErrorContextIsDestroyed,
+      api_.stream_get_resource(stream, &stream_resource, hipDevResourceTypeSm));
+  EXPECT_EQ(std::memcmp(&stream_resource, &expected_resource,
+                        sizeof(stream_resource)),
+            0);
+  EXPECT_EQ(hipSuccess, api_.stream_destroy(stream_guard.release()));
 }
 
 TEST_F(HipExecutionResourceApiTest,

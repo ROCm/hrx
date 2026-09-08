@@ -205,6 +205,7 @@ iree_cc_library(
   DEPS
     ::execution_resource
     ::execution_resource_descriptor
+    ::stream
     iree::base
     iree::base::threading
     iree::hal

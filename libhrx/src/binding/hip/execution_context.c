@@ -8,7 +8,9 @@
 
 #include "binding/hip/execution_resource.h"
 #include "binding/hip/execution_resource_descriptor.h"
+#include "binding/hip/stream.h"
 #include "common/internal.h"
+#include "common/stream.h"
 #include "iree/base/threading/call_once.h"
 
 typedef enum iree_hip_execution_context_kind_e {
@@ -25,6 +27,9 @@ struct ihipExecutionCtx_t {
 
   // Reference count including the live registry or public-handle ownership.
   iree_atomic_ref_count_t ref_count;
+
+  // Serializes liveness and execution-context stream membership.
+  iree_slim_mutex_t mutex;
 
   // Host allocator owning this context allocation.
   iree_allocator_t host_allocator;
@@ -46,6 +51,9 @@ struct ihipExecutionCtx_t {
 
   // Stable process-unique context identifier.
   unsigned long long context_id;
+
+  // Intrusive list of retained streams created on this execution context.
+  hipStream_t stream_head;
 
   // Next context in the live-handle registry.
   struct ihipExecutionCtx_t* next_live_context;
@@ -109,11 +117,17 @@ static iree_status_t iree_hip_execution_context_allocate_id(
                           "HIP execution-context ID space is exhausted");
 }
 
+static void iree_hip_execution_context_retain(hipExecutionCtx_t context) {
+  if (context) iree_atomic_ref_count_inc(&context->ref_count);
+}
+
 static void iree_hip_execution_context_release(hipExecutionCtx_t context) {
   if (!context || iree_atomic_ref_count_dec(&context->ref_count) != 1) return;
   IREE_ASSERT(context->device == NULL);
   IREE_ASSERT(context->primary_context == NULL);
+  IREE_ASSERT(context->stream_head == NULL);
   iree_hip_execution_resource_descriptor_release(context->descriptor);
+  iree_slim_mutex_deinitialize(&context->mutex);
   iree_allocator_free(context->host_allocator, context);
 }
 
@@ -130,14 +144,58 @@ static hipError_t iree_hip_execution_context_release_primary(
 
 static hipError_t iree_hip_execution_context_deinitialize(
     hipExecutionCtx_t context) {
+  iree_slim_mutex_lock(&context->mutex);
   iree_hal_streaming_device_t* device = context->device;
   iree_hal_streaming_context_t* primary_context = context->primary_context;
   context->device = NULL;
   context->primary_context = NULL;
-  if (context->kind == IREE_HIP_EXECUTION_CONTEXT_KIND_PRIMARY) {
-    return hipSuccess;
+
+  // Remove all members as one state transition. Each list entry owns a stream
+  // reference and each association owns a context reference, keeping both
+  // objects live while blocking work is drained outside the lock.
+  hipStream_t stream_head = context->stream_head;
+  context->stream_head = NULL;
+  for (hipStream_t stream = stream_head; stream;
+       stream = stream->next_execution_context_stream) {
+    iree_slim_mutex_lock(&stream->mutex);
+    IREE_ASSERT(stream->execution_context == context);
+    stream->execution_context = NULL;
+    iree_slim_mutex_unlock(&stream->mutex);
   }
-  return iree_hip_execution_context_release_primary(device, primary_context);
+  iree_slim_mutex_unlock(&context->mutex);
+
+  hipError_t result = hipSuccess;
+  while (stream_head) {
+    hipStream_t stream = stream_head;
+    stream_head = stream->next_execution_context_stream;
+    stream->next_execution_context_stream = NULL;
+    iree_hal_streaming_stream_t* common_stream = NULL;
+    iree_hal_streaming_context_t* common_context = NULL;
+    if (iree_hip_stream_detach(stream, &common_stream, &common_context)) {
+      if (common_context) {
+        iree_status_t status =
+            iree_hal_streaming_stream_synchronize(common_stream);
+        if (!iree_status_is_ok(status)) {
+          const hipError_t synchronize_result =
+              iree_hip_execution_context_consume_status(status);
+          if (result == hipSuccess) result = synchronize_result;
+        }
+        iree_hal_streaming_context_unregister_stream(common_context,
+                                                     common_stream);
+      }
+      iree_hal_streaming_stream_release(common_stream);
+      iree_hal_streaming_context_release(common_context);
+    }
+    iree_hip_execution_context_release(context);
+    iree_hip_stream_release(stream);
+  }
+
+  if (context->kind == IREE_HIP_EXECUTION_CONTEXT_KIND_RESOURCE_PARTITIONED) {
+    const hipError_t primary_result =
+        iree_hip_execution_context_release_primary(device, primary_context);
+    if (result == hipSuccess) result = primary_result;
+  }
+  return result;
 }
 
 static hipExecutionCtx_t iree_hip_execution_context_lookup_retain(
@@ -259,6 +317,7 @@ hipError_t iree_hip_execution_context_primary(
   }
   if (new_context) {
     iree_atomic_ref_count_init(&new_context->ref_count);
+    iree_slim_mutex_initialize(&new_context->mutex);
     new_context->kind = IREE_HIP_EXECUTION_CONTEXT_KIND_PRIMARY;
     new_context->host_allocator = host_allocator;
     new_context->device = device;
@@ -267,6 +326,7 @@ hipError_t iree_hip_execution_context_primary(
     new_context->descriptor = NULL;
     new_context->sm_resource = sm_resource;
     new_context->context_id = context_id;
+    new_context->stream_head = NULL;
     new_context->next_live_context = iree_hip_execution_context_registry.head;
     iree_hip_execution_context_registry.head = new_context;
     context = new_context;
@@ -360,6 +420,7 @@ hipError_t iree_hip_execution_context_create(
   }
   if (result == hipSuccess) {
     iree_atomic_ref_count_init(&context->ref_count);
+    iree_slim_mutex_initialize(&context->mutex);
     context->kind = IREE_HIP_EXECUTION_CONTEXT_KIND_RESOURCE_PARTITIONED;
     context->host_allocator = host_allocator;
     context->device = device;
@@ -368,6 +429,7 @@ hipError_t iree_hip_execution_context_create(
     context->descriptor = owned_descriptor;
     context->sm_resource = sm_resource;
     context->context_id = context_id;
+    context->stream_head = NULL;
     context->next_live_context = NULL;
     iree_hip_execution_context_publish(context);
     *out_context = context;
@@ -392,6 +454,144 @@ hipError_t iree_hip_execution_context_destroy(hipExecutionCtx_t context) {
       iree_hip_execution_context_deinitialize(owned_context);
   iree_hip_execution_context_release(owned_context);
   return result;
+}
+
+hipError_t iree_hip_execution_context_stream_create(
+    hipExecutionCtx_t context_handle, unsigned int flags, int priority,
+    hipStream_t* out_stream) {
+  IREE_ASSERT_ARGUMENT(out_stream);
+  if (flags & ~hipStreamNonBlocking) return hipErrorInvalidValue;
+
+  hipExecutionCtx_t context =
+      iree_hip_execution_context_lookup_retain(context_handle);
+  if (!context) return hipErrorInvalidValue;
+
+  // HIP uses lower values for higher priority. The advertised binding range is
+  // currently [-1, 0], while HAL priorities increase from low to high.
+  const int hip_priority = iree_min(iree_max(priority, -1), 0);
+  const iree_hal_queue_priority_t queue_priority =
+      (iree_hal_queue_priority_t)-hip_priority;
+
+  hipError_t result = hipSuccess;
+  iree_hal_streaming_context_t* common_context = NULL;
+  iree_hal_queue_t* queue = NULL;
+  iree_hal_streaming_stream_t* common_stream = NULL;
+  hipStream_t stream = NULL;
+
+  iree_slim_mutex_lock(&context->mutex);
+  iree_hal_streaming_device_t* device = context->device;
+  if (!device) {
+    result = hipErrorInvalidValue;
+  } else if (context->kind == IREE_HIP_EXECUTION_CONTEXT_KIND_PRIMARY) {
+    iree_status_t status =
+        iree_hal_streaming_device_get_or_create_primary_context(
+            device, &common_context);
+    if (!iree_status_is_ok(status)) {
+      result = iree_hip_execution_context_consume_status(status);
+    }
+  } else {
+    common_context = context->primary_context;
+    if (!common_context) result = hipErrorInvalidValue;
+  }
+
+  const iree_hal_streaming_execution_resource_set_t* resource_set = NULL;
+  if (result == hipSuccess) {
+    result = iree_hip_execution_resource_resolve_sm_for_device(
+        &context->sm_resource, device, &resource_set);
+  }
+
+  const iree_hal_queue_family_t* queue_family = NULL;
+  if (result == hipSuccess) {
+    queue_family = iree_hal_device_queue_family(
+        device->hal_device, resource_set->queue_family_ordinal);
+    if (!queue_family) result = hipErrorInvalidResourceConfiguration;
+  }
+
+  if (result == hipSuccess) {
+    iree_hal_queue_params_t queue_params;
+    iree_hal_queue_params_initialize(&queue_params);
+    queue_params.priority = queue_priority;
+    queue_params.execution_resources = resource_set->resources;
+    iree_status_t status = iree_hal_device_acquire_queue(
+        device->hal_device, queue_family, &queue_params, &queue);
+    if (!iree_status_is_ok(status)) {
+      result = iree_hip_execution_context_consume_status(status);
+    }
+  }
+
+  if (result == hipSuccess) {
+    iree_status_t status = iree_hal_streaming_stream_create(
+        common_context, queue, IREE_HAL_STREAMING_STREAM_FLAG_NON_BLOCKING,
+        hip_priority, common_context->host_allocator, &common_stream);
+    if (!iree_status_is_ok(status)) {
+      result = iree_hip_execution_context_consume_status(status);
+    }
+  }
+  iree_hal_queue_release(queue);
+
+  if (result == hipSuccess) {
+    iree_status_t status = iree_hip_stream_publish(
+        common_stream, common_context->host_allocator, &stream);
+    if (!iree_status_is_ok(status)) {
+      result = iree_hip_execution_context_consume_status(status);
+    }
+  }
+
+  if (result == hipSuccess) {
+    iree_hip_execution_context_retain(context);
+    iree_hip_stream_retain(stream);
+    iree_slim_mutex_lock(&stream->mutex);
+    IREE_ASSERT(stream->execution_context == NULL);
+    IREE_ASSERT(stream->next_execution_context_stream == NULL);
+    stream->execution_context = context;
+    stream->next_execution_context_stream = context->stream_head;
+    context->stream_head = stream;
+    iree_slim_mutex_unlock(&stream->mutex);
+  } else if (common_stream) {
+    iree_hal_streaming_context_unregister_stream(common_context, common_stream);
+    iree_hal_streaming_stream_release(common_stream);
+  }
+  iree_slim_mutex_unlock(&context->mutex);
+
+  iree_hip_execution_context_release(context);
+  if (result == hipSuccess) *out_stream = stream;
+  return result;
+}
+
+void iree_hip_execution_context_unregister_stream(hipStream_t stream) {
+  if (!stream) return;
+
+  // The association itself owns a context reference. Retain it while holding
+  // the stream mutex so context teardown cannot clear and release the
+  // association between the load and retain.
+  iree_slim_mutex_lock(&stream->mutex);
+  hipExecutionCtx_t context = stream->execution_context;
+  iree_hip_execution_context_retain(context);
+  iree_slim_mutex_unlock(&stream->mutex);
+  if (!context) return;
+
+  bool was_removed = false;
+  iree_slim_mutex_lock(&context->mutex);
+  iree_slim_mutex_lock(&stream->mutex);
+  if (stream->execution_context == context) {
+    hipStream_t* link = &context->stream_head;
+    while (*link && *link != stream) {
+      link = &(*link)->next_execution_context_stream;
+    }
+    IREE_ASSERT(*link == stream);
+    if (*link == stream) {
+      *link = stream->next_execution_context_stream;
+      stream->execution_context = NULL;
+      stream->next_execution_context_stream = NULL;
+      was_removed = true;
+    }
+  }
+  iree_slim_mutex_unlock(&stream->mutex);
+  iree_slim_mutex_unlock(&context->mutex);
+
+  if (was_removed) iree_hip_execution_context_release(context);
+  if (was_removed) iree_hip_stream_release(stream);
+  iree_hip_execution_context_release(context);
 }
 
 hipError_t iree_hip_execution_context_get_resource(

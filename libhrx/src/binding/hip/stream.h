@@ -9,6 +9,8 @@
 
 #include "binding/hip/api.h"
 #include "iree/base/api.h"
+#include "iree/base/internal/atomics.h"
+#include "iree/base/threading/mutex.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,6 +18,29 @@ extern "C" {
 
 typedef struct iree_hal_streaming_context_t iree_hal_streaming_context_t;
 typedef struct iree_hal_streaming_stream_t iree_hal_streaming_stream_t;
+
+// Binding-private ownership and lifetime state behind a public HIP stream
+// handle. The common stream remains the execution engine while this object
+// provides a stable API identity that can outlive execution-context teardown.
+struct hipStream_st {
+  // Reference count including the live public-handle ownership.
+  iree_atomic_ref_count_t ref_count;
+
+  // Serializes access to attachment and execution-context membership.
+  iree_slim_mutex_t mutex;
+
+  // Common stream owning the exact HAL queue, or NULL after detachment.
+  iree_hal_streaming_stream_t* stream;
+
+  // Execution context whose membership owns one reference, or NULL.
+  hipExecutionCtx_t execution_context;
+
+  // Next stream in the execution context membership list.
+  hipStream_t next_execution_context_stream;
+
+  // Host allocator owning this handle allocation.
+  iree_allocator_t host_allocator;
+};
 
 // Publishes |stream| as an opaque HIP stream handle. On success the handle
 // assumes ownership of the caller's stream reference and |out_handle| receives
@@ -39,6 +64,17 @@ bool iree_hip_stream_take(hipStream_t handle, hipStream_t* out_handle);
 bool iree_hip_stream_retain_attached(
     hipStream_t handle, iree_hal_streaming_stream_t** out_stream,
     iree_hal_streaming_context_t** out_context);
+
+// Detaches |handle| and transfers its owning common-stream reference to the
+// caller. When the common context remains live, |out_context| receives a
+// retained reference; otherwise it receives NULL. Both outputs are unchanged
+// when |handle| was already detached.
+bool iree_hip_stream_detach(hipStream_t handle,
+                            iree_hal_streaming_stream_t** out_stream,
+                            iree_hal_streaming_context_t** out_context);
+
+// Retains a HIP stream handle for the caller.
+void iree_hip_stream_retain(hipStream_t handle);
 
 // Releases a retained or transferred HIP stream handle.
 void iree_hip_stream_release(hipStream_t handle);

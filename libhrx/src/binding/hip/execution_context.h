@@ -32,6 +32,19 @@ hipError_t iree_hip_execution_context_create(
 // Invalidates and releases a resource-partitioned execution context handle.
 hipError_t iree_hip_execution_context_destroy(hipExecutionCtx_t context);
 
+// Creates a non-blocking stream that executes on the exact resources owned by
+// |context|. A real HAL queue is acquired on demand with the clamped HIP
+// |priority|. |out_stream| is unchanged on failure.
+hipError_t iree_hip_execution_context_stream_create(hipExecutionCtx_t context,
+                                                    unsigned int flags,
+                                                    int priority,
+                                                    hipStream_t* out_stream);
+
+// Removes |stream| from its execution context, if any, and releases the
+// membership reference. The common stream remains attached until its caller
+// explicitly detaches it.
+void iree_hip_execution_context_unregister_stream(hipStream_t stream);
+
 // Returns the canonical resource of |type| owned by |context|.
 // |out_resource| is unchanged on failure.
 hipError_t iree_hip_execution_context_get_resource(

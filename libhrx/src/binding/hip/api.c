@@ -3171,6 +3171,27 @@ HIPAPI hipError_t hipExecutionCtxDestroy(hipExecutionCtx_t context) {
   HIP_RETURN_ERROR(result);
 }
 
+HIPAPI hipError_t hipExecutionCtxStreamCreate(hipStream_t* stream,
+                                              hipExecutionCtx_t context,
+                                              unsigned int flags,
+                                              int priority) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (!stream) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidValue);
+  }
+  hipError_t init_result = iree_hip_ensure_initialized();
+  if (init_result != hipSuccess) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(init_result);
+  }
+
+  hipError_t result = iree_hip_execution_context_stream_create(
+      context, flags, priority, stream);
+  IREE_TRACE_ZONE_END(z0);
+  HIP_RETURN_ERROR(result);
+}
+
 HIPAPI hipError_t hipExecutionCtxGetDevResource(hipExecutionCtx_t context,
                                                 hipDevResource* resource,
                                                 hipDevResourceType type) {
@@ -10837,17 +10858,18 @@ HIPAPI hipError_t hipStreamDestroy(hipStream_t stream) {
 
   // Remove handle visibility before synchronizing so no new API operation can
   // acquire the stream. Operations that resolved the handle concurrently hold
-  // both the common stream and its context. A detached execution-context stream
-  // has no common objects left to synchronize but retains this public wrapper
-  // until the application destroys it.
+  // both the common stream and its context. Unlink execution-context membership
+  // before detaching the common stream so context teardown cannot retain this
+  // public wrapper or its exact hardware queue.
+  iree_hip_execution_context_unregister_stream(owned_handle);
   iree_hal_streaming_stream_t* stream_obj = NULL;
   iree_hal_streaming_context_t* context = NULL;
   iree_status_t status = iree_ok_status();
-  if (iree_hip_stream_retain_attached(owned_handle, &stream_obj, &context)) {
-    status = iree_hal_streaming_stream_synchronize(stream_obj);
-    iree_hal_streaming_context_unregister_stream(context, stream_obj);
-    iree_hip_stream_release(owned_handle);
-    owned_handle = NULL;
+  if (iree_hip_stream_detach(owned_handle, &stream_obj, &context)) {
+    if (context) {
+      status = iree_hal_streaming_stream_synchronize(stream_obj);
+      iree_hal_streaming_context_unregister_stream(context, stream_obj);
+    }
     iree_hal_streaming_stream_release(stream_obj);
     iree_hal_streaming_context_release(context);
   }
@@ -10995,6 +11017,40 @@ HIPAPI hipError_t hipStreamGetDevice(hipStream_t stream, hipDevice_t* device) {
 
   IREE_TRACE_ZONE_END(z0);
   return hipSuccess;
+}
+
+HIPAPI hipError_t hipStreamGetDevResource(hipStream_t stream,
+                                          hipDevResource* resource,
+                                          hipDevResourceType type) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (!resource) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidValue);
+  }
+  if (type != hipDevResourceTypeSm) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidResourceType);
+  }
+
+  iree_hip_resolved_stream_t resolved_stream = {0};
+  hipError_t result =
+      iree_hip_resolve_registered_stream(stream, &resolved_stream);
+  if (result != hipSuccess) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(result);
+  }
+
+  hipDevResource stream_resource;
+  iree_status_t status = iree_hip_execution_resource_create_sm(
+      resolved_stream.context->device_entry,
+      iree_hal_queue_family(resolved_stream.stream->queue),
+      iree_hal_queue_execution_resources(resolved_stream.stream->queue),
+      hipDevSmResourceGroupDefault, &stream_resource);
+  result = iree_status_to_hip_result(status);
+  iree_hip_resolved_stream_release(&resolved_stream);
+  if (result == hipSuccess) *resource = stream_resource;
+  IREE_TRACE_ZONE_END(z0);
+  HIP_RETURN_ERROR(result);
 }
 
 HIPAPI hipError_t hipStreamGetAttribute(hipStream_t stream,
