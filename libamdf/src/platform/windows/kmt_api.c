@@ -100,6 +100,13 @@ bool amdf_kmt_api_supports_gpu_memory(const amdf_kmt_api_t* api) {
          api->invalidate_cache != NULL;
 }
 
+bool amdf_kmt_api_supports_gpu_kernel_execution(const amdf_kmt_api_t* api) {
+  return amdf_kmt_api_supports_device_contexts(api) &&
+         api->wait_from_cpu != NULL && api->create_hardware_queue != NULL &&
+         api->destroy_hardware_queue != NULL &&
+         api->submit_command_to_hardware_queue != NULL;
+}
+
 bool amdf_kmt_api_supports_xdna_kernel_execution(const amdf_kmt_api_t* api) {
   return amdf_kmt_api_supports_device_contexts(api) &&
          amdf_kmt_api_supports_memory(api) && api->lock != NULL &&

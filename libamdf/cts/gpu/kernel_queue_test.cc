@@ -1,0 +1,235 @@
+// Copyright 2026 The IREE Authors
+//
+// Licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+#include <array>
+#include <cstdint>
+#include <cstring>
+
+#include "amdf/amdf.h"
+#include "amdf/gpu.h"
+#include "gpu_device_fixture.h"
+#include "gtest/gtest.h"
+
+namespace {
+
+constexpr uint64_t kCommandByteOffset = 0;
+constexpr uint64_t kSourceByteOffset = 64;
+constexpr uint64_t kTargetByteOffset = 128;
+constexpr uint64_t kMemoryByteLength = 4096;
+constexpr uint32_t kCopyDataDwordCount = 6;
+
+uint32_t MakePm4Header(uint32_t opcode, uint32_t dword_count) {
+  return (3u << 30) | (opcode << 8) | ((dword_count - 2u) << 16);
+}
+
+std::array<uint32_t, kCopyDataDwordCount> MakeCopyData32(
+    uint64_t source_address, uint64_t target_address) {
+  constexpr uint32_t kCopyDataOpcode = 0x40;
+  constexpr uint32_t kSourceTcL2 = 2u << 0;
+  constexpr uint32_t kTargetTcL2 = 2u << 8;
+  constexpr uint32_t kWaitForWriteConfirmation = 1u << 20;
+  return {
+      MakePm4Header(kCopyDataOpcode, kCopyDataDwordCount),
+      kSourceTcL2 | kTargetTcL2 | kWaitForWriteConfirmation,
+      static_cast<uint32_t>(source_address & UINT64_C(0xFFFFFFFC)),
+      static_cast<uint32_t>(source_address >> 32),
+      static_cast<uint32_t>(target_address & UINT64_C(0xFFFFFFFC)),
+      static_cast<uint32_t>(target_address >> 32),
+  };
+}
+
+class GpuKernelQueueTest : public GpuDeviceFixture {
+ protected:
+  void TearDown() override {
+    if (mapping_ != nullptr) {
+      EXPECT_TRUE(amdf_status_is_ok(api_->host_mapping_destroy(mapping_)));
+    }
+    if (queue_ != nullptr) {
+      EXPECT_TRUE(amdf_status_is_ok(api_->kernel_queue_destroy(queue_)));
+    }
+    if (memory_ != nullptr) {
+      EXPECT_TRUE(amdf_status_is_ok(api_->memory_destroy(memory_)));
+    }
+    GpuDeviceFixture::TearDown();
+  }
+
+  uint32_t FindKernelQueueFamily() {
+    amdf_endpoint_info_t endpoint_info = {};
+    endpoint_info.type = AMDF_STRUCTURE_TYPE_ENDPOINT_INFO;
+    endpoint_info.structure_size = sizeof(endpoint_info);
+    EXPECT_TRUE(amdf_status_is_ok(
+        api_->endpoint_query_info(endpoint_, &endpoint_info)));
+    for (uint32_t ordinal = 0; ordinal < endpoint_info.queue_family_count;
+         ++ordinal) {
+      amdf_queue_family_info_t family_info = {};
+      family_info.type = AMDF_STRUCTURE_TYPE_QUEUE_FAMILY_INFO;
+      family_info.structure_size = sizeof(family_info);
+      EXPECT_TRUE(amdf_status_is_ok(api_->endpoint_query_queue_family_info(
+          endpoint_, ordinal, &family_info)));
+      if (family_info.command_type == AMDF_QUEUE_COMMAND_TYPE_GPU_PM4 &&
+          (family_info.publication_modes &
+           AMDF_QUEUE_PUBLICATION_MODE_KERNEL) != 0) {
+        return ordinal;
+      }
+    }
+    return UINT32_MAX;
+  }
+
+  void CreateQueue(uint32_t family_ordinal) {
+    amdf_gpu_kernel_queue_create_info_t create_info = {};
+    create_info.type = AMDF_STRUCTURE_TYPE_GPU_KERNEL_QUEUE_CREATE_INFO;
+    create_info.structure_size = sizeof(create_info);
+    create_info.queue_family_ordinal = family_ordinal;
+    ASSERT_TRUE(amdf_status_is_ok(
+        gpu_api_->kernel_queue_create(device_, &create_info, &queue_)));
+  }
+
+  amdf_memory_info_t CreateCommandMemory() {
+    amdf_memory_create_info_t create_info = {};
+    create_info.type = AMDF_STRUCTURE_TYPE_MEMORY_CREATE_INFO;
+    create_info.structure_size = sizeof(create_info);
+    create_info.memory_class = AMDF_MEMORY_CLASS_SYSTEM;
+    create_info.required_flags = AMDF_MEMORY_FLAG_HOST_VISIBLE |
+                                 AMDF_MEMORY_FLAG_EXECUTABLE |
+                                 AMDF_MEMORY_FLAG_DEVICE_ADDRESS;
+    create_info.byte_length = kMemoryByteLength;
+    EXPECT_TRUE(amdf_status_is_ok(
+        api_->memory_create(device_, &create_info, &memory_)));
+
+    amdf_memory_info_t memory_info = {};
+    memory_info.type = AMDF_STRUCTURE_TYPE_MEMORY_INFO;
+    memory_info.structure_size = sizeof(memory_info);
+    EXPECT_TRUE(
+        amdf_status_is_ok(api_->memory_query_info(memory_, &memory_info)));
+    return memory_info;
+  }
+
+  amdf_host_mapping_info_t MapCommandMemory() {
+    amdf_memory_map_info_t map_info = {};
+    map_info.type = AMDF_STRUCTURE_TYPE_MEMORY_MAP_INFO;
+    map_info.structure_size = sizeof(map_info);
+    map_info.byte_length = kMemoryByteLength;
+    map_info.flags = AMDF_MEMORY_MAP_FLAG_READ | AMDF_MEMORY_MAP_FLAG_WRITE;
+    EXPECT_TRUE(
+        amdf_status_is_ok(api_->memory_map(memory_, &map_info, &mapping_)));
+
+    amdf_host_mapping_info_t mapping_info = {};
+    mapping_info.type = AMDF_STRUCTURE_TYPE_HOST_MAPPING_INFO;
+    mapping_info.structure_size = sizeof(mapping_info);
+    EXPECT_TRUE(amdf_status_is_ok(
+        api_->host_mapping_query_info(mapping_, &mapping_info)));
+    return mapping_info;
+  }
+
+  amdf_memory_t* memory_ = nullptr;
+  amdf_host_mapping_t* mapping_ = nullptr;
+  amdf_kernel_queue_t* queue_ = nullptr;
+};
+
+TEST_F(GpuKernelQueueTest, ExecutesMaterializedCopyData) {
+  const uint32_t family_ordinal = FindKernelQueueFamily();
+  if (family_ordinal == UINT32_MAX) {
+    GTEST_SKIP() << "GPU endpoint exposes no kernel-mediated PM4 queue";
+  }
+  CreateQueue(family_ordinal);
+  EXPECT_EQ(amdf_status_code(api_->device_destroy(device_)),
+            AMDF_STATUS_CODE_BUSY);
+
+  amdf_kernel_queue_info_t queue_info = {};
+  queue_info.type = AMDF_STRUCTURE_TYPE_KERNEL_QUEUE_INFO;
+  queue_info.structure_size = sizeof(queue_info);
+  ASSERT_TRUE(
+      amdf_status_is_ok(api_->kernel_queue_query_info(queue_, &queue_info)));
+  EXPECT_EQ(queue_info.queue_family_ordinal, family_ordinal);
+  EXPECT_EQ(queue_info.command_type, AMDF_QUEUE_COMMAND_TYPE_GPU_PM4);
+  EXPECT_EQ(queue_info.maximum_pending_submission_count, 1u);
+  EXPECT_EQ(queue_info.maximum_command_count, 1u);
+
+  const amdf_memory_info_t memory_info = CreateCommandMemory();
+  ASSERT_NE(memory_, nullptr);
+  const amdf_host_mapping_info_t mapping_info = MapCommandMemory();
+  ASSERT_NE(mapping_, nullptr);
+  ASSERT_NE(mapping_info.pointer, nullptr);
+  ASSERT_GE(mapping_info.byte_length, kMemoryByteLength);
+
+  constexpr uint32_t kSourceValue = 0x13579BDFu;
+  constexpr uint32_t kTargetSentinel = 0xA5A5A5A5u;
+  uint8_t* const bytes = static_cast<uint8_t*>(mapping_info.pointer);
+  std::memcpy(bytes + kSourceByteOffset, &kSourceValue, sizeof(kSourceValue));
+  std::memcpy(bytes + kTargetByteOffset, &kTargetSentinel,
+              sizeof(kTargetSentinel));
+  const std::array<uint32_t, kCopyDataDwordCount> command =
+      MakeCopyData32(memory_info.device_address + kSourceByteOffset,
+                     memory_info.device_address + kTargetByteOffset);
+  std::memcpy(bytes + kCommandByteOffset, command.data(), sizeof(command));
+  ASSERT_TRUE(amdf_status_is_ok(api_->host_mapping_cache_control(
+      mapping_, AMDF_HOST_CACHE_OPERATION_FLUSH, 0, kMemoryByteLength)));
+
+  amdf_gpu_kernel_command_t command_descriptor = {};
+  command_descriptor.memory = memory_;
+  command_descriptor.byte_offset = kCommandByteOffset;
+  command_descriptor.byte_length = sizeof(command);
+  amdf_gpu_kernel_queue_submission_info_t submission_info = {};
+  submission_info.type = AMDF_STRUCTURE_TYPE_GPU_KERNEL_QUEUE_SUBMISSION_INFO;
+  submission_info.structure_size = sizeof(submission_info);
+  submission_info.command_count = 1;
+  submission_info.commands = &command_descriptor;
+
+  command_descriptor.byte_length = 0;
+  uint64_t invalid_submission = 42;
+  EXPECT_EQ(amdf_status_code(gpu_api_->kernel_queue_submit(
+                queue_, &submission_info, &invalid_submission)),
+            AMDF_STATUS_CODE_INVALID_ARGUMENT);
+  EXPECT_EQ(invalid_submission, 42u);
+  command_descriptor.byte_length = sizeof(command);
+
+  uint64_t submission = 42;
+  ASSERT_TRUE(amdf_status_is_ok(
+      gpu_api_->kernel_queue_submit(queue_, &submission_info, &submission)));
+  EXPECT_EQ(submission, 1u);
+
+  uint64_t rejected_submission = 42;
+  EXPECT_EQ(amdf_status_code(gpu_api_->kernel_queue_submit(
+                queue_, &submission_info, &rejected_submission)),
+            AMDF_STATUS_CODE_BUSY);
+  EXPECT_EQ(rejected_submission, 42u);
+
+  ASSERT_TRUE(amdf_status_is_ok(api_->host_mapping_destroy(mapping_)));
+  mapping_ = nullptr;
+  EXPECT_EQ(amdf_status_code(api_->memory_destroy(memory_)),
+            AMDF_STATUS_CODE_BUSY);
+
+  ASSERT_TRUE(amdf_status_is_ok(api_->kernel_queue_wait(
+      queue_, submission, UINT64_C(5000000000), UINT64_C(50000))));
+  amdf_kernel_queue_status_t queue_status = {};
+  queue_status.type = AMDF_STRUCTURE_TYPE_KERNEL_QUEUE_STATUS;
+  queue_status.structure_size = sizeof(queue_status);
+  ASSERT_TRUE(amdf_status_is_ok(
+      api_->kernel_queue_query_status(queue_, &queue_status)));
+  EXPECT_EQ(queue_status.retired_submission, submission);
+  EXPECT_EQ(queue_status.state, AMDF_KERNEL_QUEUE_STATE_ACTIVE);
+
+  const amdf_host_mapping_info_t result_mapping_info = MapCommandMemory();
+  ASSERT_NE(mapping_, nullptr);
+  ASSERT_TRUE(amdf_status_is_ok(api_->host_mapping_cache_control(
+      mapping_, AMDF_HOST_CACHE_OPERATION_INVALIDATE, kTargetByteOffset,
+      sizeof(uint32_t))));
+  uint32_t target_value = 0;
+  std::memcpy(
+      &target_value,
+      static_cast<uint8_t*>(result_mapping_info.pointer) + kTargetByteOffset,
+      sizeof(target_value));
+  EXPECT_EQ(target_value, kSourceValue);
+
+  ASSERT_TRUE(amdf_status_is_ok(api_->host_mapping_destroy(mapping_)));
+  mapping_ = nullptr;
+  ASSERT_TRUE(amdf_status_is_ok(api_->memory_destroy(memory_)));
+  memory_ = nullptr;
+  ASSERT_TRUE(amdf_status_is_ok(api_->kernel_queue_destroy(queue_)));
+  queue_ = nullptr;
+}
+
+}  // namespace

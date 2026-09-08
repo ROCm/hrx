@@ -8,7 +8,6 @@
 #define AMDF_SRC_PROVIDER_EXTENSION_H_
 
 #include "amdf/amdf.h"
-#include "libamdf/src/platform/endpoint.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,8 +29,7 @@ void amdf_extension_initialize_endpoint(amdf_endpoint_t* endpoint);
 
 // Writes the queue families fully constructible for one opened endpoint.
 uint32_t amdf_extension_query_endpoint_queue_families(
-    const amdf_endpoint_info_t* endpoint_info,
-    const amdf_platform_endpoint_t* platform_endpoint, uint32_t capacity,
+    amdf_endpoint_t* endpoint, uint32_t capacity,
     amdf_queue_family_info_t* out_families);
 #ifdef __cplusplus
 }  // extern "C"

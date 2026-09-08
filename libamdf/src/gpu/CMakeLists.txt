@@ -49,6 +49,28 @@ endif()
 if(AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
 iree_cc_library(
   NAME
+    kernel_queue
+  HDRS
+    "kernel_queue.h"
+  SRCS
+    "kernel_queue.c"
+  DEPS
+    ::device
+    amdf::headers
+    libamdf::src::atomics
+    libamdf::src::device
+    libamdf::src::endpoint
+    libamdf::src::gpu::umd::kernel_queue
+    libamdf::src::kernel_queue
+    libamdf::src::memory
+    libamdf::src::structure
+  PUBLIC
+)
+endif()
+
+if(AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
+iree_cc_library(
+  NAME
     extension
   HDRS
     "extension.h"
@@ -57,6 +79,7 @@ iree_cc_library(
   DEPS
     ::device
     ::endpoint_profile
+    ::kernel_queue
     amdf::headers
     libamdf::src::endpoint
     libamdf::src::gpu::umd

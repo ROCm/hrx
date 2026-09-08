@@ -37,8 +37,11 @@ amdf_cc_library(
 amdf_windows_sidecar_library(
     name = "amdf_wkmi_bridge",
     srcs = [
+        "adapter_state.h",
         "bridge.cc",
         "dxcore_loader_compatibility.cc",
+        "kernel_queue.cc",
+        "kernel_queue.h",
     ],
     linkopts = ["gdi32.lib"],
     deps = [

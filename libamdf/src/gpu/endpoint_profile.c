@@ -48,6 +48,7 @@ bool amdf_gpu_endpoint_profile_initialize(
   profile.info.topology.xcc_count = properties->topology.xcc_count;
   profile.info.topology.shader_engine_count_per_xcc =
       properties->topology.shader_engine_count_per_xcc;
+  profile.supports_pm4_kernel_queue = properties->supports_pm4_kernel_queue;
   *out_profile = profile;
   return true;
 }

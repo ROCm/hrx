@@ -19,6 +19,10 @@ static amdf_status_t amdf_gpu_wddm_device_release_native(
   if (!amdf_status_is_ok(status)) {
     return status;
   }
+  status = amdf_gpu_wddm_wkmi_adapter_deinitialize(&device->wkmi);
+  if (!amdf_status_is_ok(status)) {
+    return status;
+  }
   if (device->paging_queue != 0) {
     D3DDDI_DESTROYPAGINGQUEUE destroy_paging_queue = {0};
     destroy_paging_queue.hPagingQueue = device->paging_queue;
@@ -40,7 +44,7 @@ static amdf_status_t amdf_gpu_wddm_device_release_native(
     }
     device->device = 0;
   }
-  return amdf_gpu_wddm_wkmi_adapter_deinitialize(&device->wkmi);
+  return AMDF_STATUS_OK;
 }
 
 amdf_status_t amdf_gpu_umd_device_create(

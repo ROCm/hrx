@@ -32,6 +32,14 @@ extern "C" {
 /// An `amdf_gpu_device_info_t` output structure.
 #define AMDF_STRUCTURE_TYPE_GPU_DEVICE_INFO ((amdf_structure_type_t)0x00020003u)
 
+/// An `amdf_gpu_kernel_queue_create_info_t` input structure.
+#define AMDF_STRUCTURE_TYPE_GPU_KERNEL_QUEUE_CREATE_INFO \
+  ((amdf_structure_type_t)0x00020004u)
+
+/// An `amdf_gpu_kernel_queue_submission_info_t` input structure.
+#define AMDF_STRUCTURE_TYPE_GPU_KERNEL_QUEUE_SUBMISSION_INFO \
+  ((amdf_structure_type_t)0x00020005u)
+
 /// Immutable target identity and compute topology of one GPU endpoint.
 ///
 /// This record contains live provider-qualified hardware facts. It does not
@@ -108,6 +116,52 @@ typedef struct amdf_gpu_device_info_t {
   uint64_t reset_epoch;
 } amdf_gpu_device_info_t;
 
+/// One already-materialized PM4 command stream.
+///
+/// The command bytes reside in executable memory with a stable device address
+/// and may be device-local or non-host-visible. Submission resolves only that
+/// address; it never reads, validates, copies, hashes, or transcribes the
+/// command bytes.
+typedef struct amdf_gpu_kernel_command_t {
+  /// Memory attachment borrowed until the accepted submission retires.
+  amdf_memory_t* memory;
+  /// Dword-aligned byte offset from the attachment's stable device base.
+  uint64_t byte_offset;
+  /// Nonzero dword-aligned command length.
+  uint64_t byte_length;
+} amdf_gpu_kernel_command_t;
+
+/// Parameters used to acquire one kernel-mediated GPU queue.
+typedef struct amdf_gpu_kernel_queue_create_info_t {
+  /// Must be `AMDF_STRUCTURE_TYPE_GPU_KERNEL_QUEUE_CREATE_INFO`.
+  amdf_structure_type_t type;
+  /// Must be at least `sizeof(amdf_gpu_kernel_queue_create_info_t)`.
+  uint32_t structure_size;
+  /// Optional input extension chain. No extensions are currently defined.
+  const void* next;
+  /// Endpoint-local PM4 family supporting kernel publication.
+  uint32_t queue_family_ordinal;
+  /// Reserved for compatible growth and must be zero.
+  uint32_t reserved;
+} amdf_gpu_kernel_queue_create_info_t;
+
+/// One bounded kernel-mediated GPU submission.
+typedef struct amdf_gpu_kernel_queue_submission_info_t {
+  /// Must be `AMDF_STRUCTURE_TYPE_GPU_KERNEL_QUEUE_SUBMISSION_INFO`.
+  amdf_structure_type_t type;
+  /// Must be at least `sizeof(amdf_gpu_kernel_queue_submission_info_t)`.
+  uint32_t structure_size;
+  /// Optional input extension chain. No extensions are currently defined.
+  const void* next;
+  /// Number of immutable descriptors in `commands`.
+  uint32_t command_count;
+  /// Reserved for compatible growth and must be zero.
+  uint32_t reserved;
+  /// Borrowed descriptor array consumed before return. Each referenced memory
+  /// attachment remains borrowed until the accepted submission retires.
+  const amdf_gpu_kernel_command_t* commands;
+} amdf_gpu_kernel_queue_submission_info_t;
+
 /// Immutable entry-point table for one negotiated GPU extension version.
 ///
 /// Tables grow only by appending fields. The table and every function pointer
@@ -149,6 +203,31 @@ typedef struct amdf_gpu_api_t {
   /// modified when validation or engine compatibility fails.
   amdf_status_t(AMDF_CALL* device_query_info)(amdf_device_t* device,
                                               amdf_gpu_device_info_t* out_info);
+
+  /// Acquires one kernel-mediated PM4 queue from a GPU device.
+  ///
+  /// The returned queue borrows `device`, which must outlive it. Creation
+  /// selects an advertised `GPU_PM4 + KERNEL` family and allocates every
+  /// bounded submission resource before publication. On failure, `out_queue`
+  /// is set to `NULL`.
+  amdf_status_t(AMDF_CALL* kernel_queue_create)(
+      amdf_device_t* device,
+      const amdf_gpu_kernel_queue_create_info_t* create_info,
+      amdf_kernel_queue_t** out_queue);
+
+  /// Publishes one bounded array of already-materialized PM4 command streams.
+  ///
+  /// Every command range must belong to the queue's device and reset epoch and
+  /// have `EXECUTABLE` and `DEVICE_ADDRESS` memory flags. The call registers
+  /// memory borrows before native acceptance and releases them only when queue
+  /// progress later retires the returned submission. It performs no
+  /// allocation, command-byte access, native-format parsing, lowering,
+  /// transcription, retry, sleep, or host wait. Native rejection leaves
+  /// `out_submission` unchanged.
+  amdf_status_t(AMDF_CALL* kernel_queue_submit)(
+      amdf_kernel_queue_t* queue,
+      const amdf_gpu_kernel_queue_submission_info_t* submission_info,
+      uint64_t* out_submission);
 } amdf_gpu_api_t;
 
 #ifdef __cplusplus

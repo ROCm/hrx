@@ -34,6 +34,7 @@ amdf_gpu_endpoint_properties_t MakeProperties(
       local_data_share_byte_length;
   properties.topology.xcc_count = xcc_count;
   properties.topology.shader_engine_count_per_xcc = shader_engine_count_per_xcc;
+  properties.supports_pm4_kernel_queue = true;
   return properties;
 }
 
@@ -84,6 +85,8 @@ TEST(GpuEndpointProfileTest, QualifiesRdnaCdnaAndMultiXccProfiles) {
     EXPECT_EQ(info->topology.xcc_count, properties.topology.xcc_count);
     EXPECT_EQ(info->topology.shader_engine_count_per_xcc,
               properties.topology.shader_engine_count_per_xcc);
+    EXPECT_EQ(profile.supports_pm4_kernel_queue,
+              properties.supports_pm4_kernel_queue);
   }
 }
 

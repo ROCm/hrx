@@ -16,6 +16,7 @@ iree_cc_library(
   SRCS
     "gpu_device_fixture.h"
     "gpu_extension_test.cc"
+    "kernel_queue_test.cc"
     "memory_test.cc"
   DEPS
     amdf::headers

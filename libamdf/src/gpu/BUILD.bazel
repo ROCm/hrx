@@ -42,6 +42,22 @@ amdf_cc_library(
 )
 
 amdf_cc_library(
+    name = "kernel_queue",
+    srcs = ["kernel_queue.c"],
+    hdrs = ["kernel_queue.h"],
+    deps = [
+        ":device",
+        "//libamdf/src:atomics",
+        "//libamdf/src:device",
+        "//libamdf/src:endpoint",
+        "//libamdf/src:kernel_queue",
+        "//libamdf/src:memory",
+        "//libamdf/src:structure",
+        "//libamdf/src/gpu/umd:kernel_queue",
+    ],
+)
+
+amdf_cc_library(
     name = "extension",
     srcs = ["extension.c"],
     hdrs = ["extension.h"],
@@ -49,6 +65,7 @@ amdf_cc_library(
     deps = [
         ":device",
         ":endpoint_profile",
+        ":kernel_queue",
         "//libamdf/src:endpoint",
         "//libamdf/src:structure",
         "//libamdf/src/gpu/umd",

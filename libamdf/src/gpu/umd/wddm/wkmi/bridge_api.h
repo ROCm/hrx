@@ -46,10 +46,15 @@ enum amdf_wkmi_bridge_result_e {
   AMDF_WKMI_BRIDGE_RESULT_BUFFER_TOO_SMALL = 7,
   // A scalar input cannot be represented by the native interface.
   AMDF_WKMI_BRIDGE_RESULT_OUT_OF_RANGE = 8,
+  // Live child state prevents the requested lifecycle transition.
+  AMDF_WKMI_BRIDGE_RESULT_BUSY = 9,
 };
 
 // Opaque parsed adapter state retained entirely inside the bridge.
 typedef struct amdf_wkmi_bridge_gpu_adapter_t amdf_wkmi_bridge_gpu_adapter_t;
+// Opaque native PM4 kernel queue retained entirely inside the bridge.
+typedef struct amdf_wkmi_bridge_gpu_kernel_queue_t
+    amdf_wkmi_bridge_gpu_kernel_queue_t;
 
 // Provider properties returned for one qualified physical GPU adapter.
 typedef struct amdf_wkmi_bridge_gpu_properties_t {
@@ -75,13 +80,17 @@ typedef struct amdf_wkmi_bridge_gpu_properties_t {
   uint32_t xcc_count;
   // Total number of active shader engines across every XCC.
   uint32_t shader_engine_count;
+  // Nonzero when a native PM4 hardware queue can be constructed.
+  uint32_t supports_pm4_kernel_queue;
+  // Reserved for compatible growth and always zero.
+  uint32_t reserved;
 } amdf_wkmi_bridge_gpu_properties_t;
 
 #ifdef __cplusplus
-static_assert(sizeof(amdf_wkmi_bridge_gpu_properties_t) == 48,
+static_assert(sizeof(amdf_wkmi_bridge_gpu_properties_t) == 56,
               "WKMI GPU property ABI must remain stable");
 #else
-_Static_assert(sizeof(amdf_wkmi_bridge_gpu_properties_t) == 48,
+_Static_assert(sizeof(amdf_wkmi_bridge_gpu_properties_t) == 56,
                "WKMI GPU property ABI must remain stable");
 #endif
 
@@ -131,6 +140,50 @@ _Static_assert(sizeof(amdf_wkmi_bridge_gpu_allocation_create_info_t) == 40,
                "WKMI allocation create ABI must remain stable");
 #endif
 
+// Parameters used to construct one native PM4 kernel queue.
+typedef struct amdf_wkmi_bridge_gpu_kernel_queue_create_info_t {
+  // Must be at least the size of this structure.
+  uint32_t structure_size;
+  // Live logical D3DKMT device receiving the execution context.
+  uint32_t device_handle;
+  // Reserved for compatible growth and must be zero.
+  uint64_t reserved;
+} amdf_wkmi_bridge_gpu_kernel_queue_create_info_t;
+
+#ifdef __cplusplus
+static_assert(sizeof(amdf_wkmi_bridge_gpu_kernel_queue_create_info_t) == 16,
+              "WKMI queue create ABI must remain stable");
+#else
+_Static_assert(sizeof(amdf_wkmi_bridge_gpu_kernel_queue_create_info_t) == 16,
+               "WKMI queue create ABI must remain stable");
+#endif
+
+// Native PM4 kernel-queue properties established during creation.
+typedef struct amdf_wkmi_bridge_gpu_kernel_queue_info_t {
+  // Must be at least the size of this structure.
+  uint32_t structure_size;
+  // Required command-buffer base alignment in bytes.
+  uint32_t command_buffer_alignment;
+  // Maximum command-buffer byte length accepted by one submission.
+  uint64_t maximum_command_buffer_byte_length;
+  // Monitored progress-fence object owned by the hardware queue.
+  uint32_t progress_fence_handle;
+  // Reserved for compatible growth and always zero.
+  uint32_t reserved;
+  // Read-only CPU mapping of the monotonic progress fence.
+  const volatile uint64_t* progress_fence_pointer;
+  // GPU address of the monotonic progress fence.
+  uint64_t progress_fence_device_address;
+} amdf_wkmi_bridge_gpu_kernel_queue_info_t;
+
+#ifdef __cplusplus
+static_assert(sizeof(amdf_wkmi_bridge_gpu_kernel_queue_info_t) == 40,
+              "WKMI queue info ABI must remain stable");
+#else
+_Static_assert(sizeof(amdf_wkmi_bridge_gpu_kernel_queue_info_t) == 40,
+               "WKMI queue info ABI must remain stable");
+#endif
+
 // Immutable entry-point table for private bridge ABI version 1.
 typedef struct amdf_wkmi_bridge_api_t {
   // Size in bytes of this table version.
@@ -151,8 +204,8 @@ typedef struct amdf_wkmi_bridge_api_t {
       uint32_t* out_native_status);
 
   // Releases parsed adapter state after every dependent bridge call returns.
-  void(AMDF_WKMI_BRIDGE_CALL* gpu_adapter_close)(
-      amdf_wkmi_bridge_gpu_adapter_t* adapter);
+  amdf_wkmi_bridge_result_t(AMDF_WKMI_BRIDGE_CALL* gpu_adapter_close)(
+      amdf_wkmi_bridge_gpu_adapter_t* adapter, uint32_t* out_native_status);
 
   // Queries the native allocation layout for an aggregate byte length.
   amdf_wkmi_bridge_result_t(AMDF_WKMI_BRIDGE_CALL* gpu_allocation_query_layout)(
@@ -172,13 +225,31 @@ typedef struct amdf_wkmi_bridge_api_t {
       uint32_t* out_resource_handle, uint32_t* out_allocation_count,
       uint32_t* out_native_status);
 
+  // Creates one kernel-mediated native PM4 queue through pinned WKMI.
+  amdf_wkmi_bridge_result_t(AMDF_WKMI_BRIDGE_CALL* gpu_kernel_queue_create)(
+      amdf_wkmi_bridge_gpu_adapter_t* adapter,
+      const amdf_wkmi_bridge_gpu_kernel_queue_create_info_t* create_info,
+      amdf_wkmi_bridge_gpu_kernel_queue_t** out_queue,
+      amdf_wkmi_bridge_gpu_kernel_queue_info_t* out_info,
+      uint32_t* out_native_status);
+
+  // Publishes one already-materialized PM4 command without reading its bytes.
+  amdf_wkmi_bridge_result_t(AMDF_WKMI_BRIDGE_CALL* gpu_kernel_queue_submit)(
+      amdf_wkmi_bridge_gpu_kernel_queue_t* queue,
+      uint64_t command_buffer_address, uint64_t command_buffer_byte_length,
+      uint64_t progress_value, uint32_t* out_native_status);
+
+  // Releases an idle native PM4 queue and its execution context.
+  amdf_wkmi_bridge_result_t(AMDF_WKMI_BRIDGE_CALL* gpu_kernel_queue_destroy)(
+      amdf_wkmi_bridge_gpu_kernel_queue_t* queue, uint32_t* out_native_status);
+
 } amdf_wkmi_bridge_api_t;
 
 #ifdef __cplusplus
-static_assert(sizeof(amdf_wkmi_bridge_api_t) == 40,
+static_assert(sizeof(amdf_wkmi_bridge_api_t) == 64,
               "WKMI entry-point table ABI must remain stable");
 #else
-_Static_assert(sizeof(amdf_wkmi_bridge_api_t) == 40,
+_Static_assert(sizeof(amdf_wkmi_bridge_api_t) == 64,
                "WKMI entry-point table ABI must remain stable");
 #endif
 

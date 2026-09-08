@@ -55,6 +55,8 @@ bool amdf_gpu_wddm_wkmi_endpoint_properties_translate(
               .xcc_count = xcc_count,
               .shader_engine_count_per_xcc = shader_engine_count / xcc_count,
           },
+      .supports_pm4_kernel_queue =
+          provider_properties->supports_pm4_kernel_queue != 0,
   };
   *out_properties = properties;
   return true;

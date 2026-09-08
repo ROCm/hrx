@@ -43,8 +43,11 @@ amdf_windows_sidecar_library(
   NAME
     amdf_wkmi_bridge
   SRCS
+    "adapter_state.h"
     "bridge.cc"
     "dxcore_loader_compatibility.cc"
+    "kernel_queue.cc"
+    "kernel_queue.h"
   LINKOPTS
     "gdi32.lib"
   DEPS

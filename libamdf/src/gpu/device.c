@@ -120,6 +120,11 @@ amdf_gpu_umd_device_t* amdf_gpu_device_get_umd(amdf_device_t* device) {
   return ((amdf_gpu_device_t*)device)->umd;
 }
 
+const amdf_gpu_device_info_t* amdf_gpu_device_get_info(
+    const amdf_device_t* device) {
+  return &((const amdf_gpu_device_t*)device)->info;
+}
+
 uint64_t amdf_gpu_device_query_reset_epoch(const amdf_device_t* device) {
   return ((const amdf_gpu_device_t*)device)->info.reset_epoch;
 }

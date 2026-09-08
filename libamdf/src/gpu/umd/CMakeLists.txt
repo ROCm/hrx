@@ -51,10 +51,24 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
 iree_cc_library(
   NAME
+    kernel_queue
+  HDRS
+    "kernel_queue.h"
+  DEPS
+    ::device
+    amdf::headers
+  PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
+iree_cc_library(
+  NAME
     umd
   DEPS
     ::device
     ::endpoint_profile
+    ::kernel_queue
     ::memory
     amdf::headers
     libamdf::src::gpu::umd::wddm

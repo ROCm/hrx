@@ -27,13 +27,9 @@
 #include <d3dkmthk.h>
 #include <ntstatus.h>
 
+#include "libamdf/src/gpu/umd/wddm/wkmi/adapter_state.h"
+#include "libamdf/src/gpu/umd/wddm/wkmi/kernel_queue.h"
 #include "wkmi.h"
-
-struct amdf_wkmi_bridge_gpu_adapter_t {
-  Wkmi::DeviceInfo device_info = {};
-
-  ~amdf_wkmi_bridge_gpu_adapter_t() { std::free(device_info.adapter_info); }
-};
 
 namespace {
 
@@ -46,7 +42,7 @@ bool IsUnsupportedAdapterStatus(NTSTATUS status) {
          status == STATUS_REVISION_MISMATCH || status == STATUS_NOT_SUPPORTED;
 }
 
-void PopulateGpuProperties(const Wkmi::DeviceInfo& device_info,
+void PopulateGpuProperties(Wkmi::DeviceInfo& device_info,
                            amdf_wkmi_bridge_gpu_properties_t* out_properties) {
   amdf_wkmi_bridge_gpu_properties_t properties = {};
   properties.gfx_ip_major = device_info.major;
@@ -61,6 +57,15 @@ void PopulateGpuProperties(const Wkmi::DeviceInfo& device_info,
   properties.local_data_share_byte_length = device_info.lds_size;
   properties.xcc_count = device_info.num_xcc;
   properties.shader_engine_count = device_info.num_shader_engine;
+  const uint32_t compute_scheduler = device_info.compute_schedid;
+  properties.supports_pm4_kernel_queue =
+      Wkmi::EngineOrdinal(compute_scheduler, &device_info) >= 0 &&
+              Wkmi::GetHwsEnabled(compute_scheduler, &device_info) &&
+              Wkmi::GetContextPrivDataSize() > 0 &&
+              Wkmi::GetHwQueuePrivDataSize() > 0 &&
+              Wkmi::GetSubmitPrivDataSize() > 0
+          ? 1u
+          : 0u;
   *out_properties = properties;
 }
 
@@ -113,9 +118,16 @@ GpuAdapterOpen(uint32_t adapter_handle, uint32_t physical_adapter_index,
   }
 }
 
-void AMDF_WKMI_BRIDGE_CALL
-GpuAdapterClose(amdf_wkmi_bridge_gpu_adapter_t* adapter) noexcept {
+amdf_wkmi_bridge_result_t AMDF_WKMI_BRIDGE_CALL
+GpuAdapterClose(amdf_wkmi_bridge_gpu_adapter_t* adapter,
+                uint32_t* out_native_status) noexcept {
+  const amdf_wkmi_bridge_result_t result =
+      amdf::wkmi_bridge::PrepareGpuAdapterClose(adapter, out_native_status);
+  if (result != AMDF_WKMI_BRIDGE_RESULT_SUCCESS) {
+    return result;
+  }
   delete adapter;
+  return AMDF_WKMI_BRIDGE_RESULT_SUCCESS;
 }
 
 amdf_wkmi_bridge_result_t QueryAllocationCount(uint64_t byte_length,
@@ -350,6 +362,9 @@ const amdf_wkmi_bridge_api_t kBridgeApiV1 = {
     GpuAdapterClose,
     GpuAllocationQueryLayout,
     GpuAllocationCreate,
+    amdf::wkmi_bridge::GpuKernelQueueCreate,
+    amdf::wkmi_bridge::GpuKernelQueueSubmit,
+    amdf::wkmi_bridge::GpuKernelQueueDestroy,
 };
 
 }  // namespace

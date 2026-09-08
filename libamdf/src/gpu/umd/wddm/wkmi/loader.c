@@ -195,7 +195,10 @@ amdf_status_t amdf_gpu_wddm_wkmi_loader_initialize(
                api->gpu_adapter_open == NULL ||
                api->gpu_adapter_close == NULL ||
                api->gpu_allocation_query_layout == NULL ||
-               api->gpu_allocation_create == NULL) {
+               api->gpu_allocation_create == NULL ||
+               api->gpu_kernel_queue_create == NULL ||
+               api->gpu_kernel_queue_submit == NULL ||
+               api->gpu_kernel_queue_destroy == NULL) {
       status = amdf_make_api_status(AMDF_STATUS_CODE_INTERNAL);
     }
   }

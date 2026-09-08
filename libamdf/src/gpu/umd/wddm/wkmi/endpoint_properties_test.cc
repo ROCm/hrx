@@ -25,6 +25,7 @@ amdf_wkmi_bridge_gpu_properties_t MakeProperties() {
   properties.local_data_share_byte_length = 320u * 1024u;
   properties.xcc_count = 8;
   properties.shader_engine_count = 16;
+  properties.supports_pm4_kernel_queue = 1;
   return properties;
 }
 
@@ -48,6 +49,7 @@ TEST(WkmiEndpointPropertiesTest, NormalizesMultiXccTopology) {
   EXPECT_EQ(properties.compute.local_data_share_byte_length, 320u * 1024u);
   EXPECT_EQ(properties.topology.xcc_count, 8u);
   EXPECT_EQ(properties.topology.shader_engine_count_per_xcc, 2u);
+  EXPECT_TRUE(properties.supports_pm4_kernel_queue);
 }
 
 TEST(WkmiEndpointPropertiesTest, NormalizesMissingScratchSlots) {

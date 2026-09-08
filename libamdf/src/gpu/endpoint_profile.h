@@ -49,12 +49,16 @@ typedef struct amdf_gpu_endpoint_properties_t {
     // Uniform number of shader engines within each XCC.
     uint32_t shader_engine_count_per_xcc;
   } topology;
+  // Whether the native provider can construct a kernel-published PM4 queue.
+  bool supports_pm4_kernel_queue;
 } amdf_gpu_endpoint_properties_t;
 
 // Immutable qualified GPU profile owned by one core endpoint.
 typedef struct amdf_gpu_endpoint_profile_t {
   // Public target and compute properties copied by the GPU extension.
   amdf_gpu_endpoint_info_t info;
+  // Whether the native provider can construct a kernel-published PM4 queue.
+  bool supports_pm4_kernel_queue;
 } amdf_gpu_endpoint_profile_t;
 
 // Validates and normalizes |properties| into |out_profile|.

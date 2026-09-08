@@ -11,6 +11,7 @@
 #include "amdf/gpu.h"
 #include "libamdf/src/gpu/device.h"
 #include "libamdf/src/gpu/endpoint_profile.h"
+#include "libamdf/src/gpu/kernel_queue.h"
 #include "libamdf/src/gpu/umd/endpoint_profile.h"
 #include "libamdf/src/structure.h"
 
@@ -49,6 +50,8 @@ static const amdf_gpu_api_t amdf_gpu_api_v1 = {
     .endpoint_query_info = amdf_gpu_endpoint_query_info,
     .device_create = amdf_gpu_device_create,
     .device_query_info = amdf_gpu_device_query_info,
+    .kernel_queue_create = amdf_gpu_kernel_queue_create,
+    .kernel_queue_submit = amdf_gpu_kernel_queue_submit,
 };
 
 void amdf_gpu_extension_initialize_endpoint(amdf_endpoint_t* endpoint) {
@@ -73,12 +76,24 @@ void amdf_gpu_extension_initialize_endpoint(amdf_endpoint_t* endpoint) {
 }
 
 uint32_t amdf_gpu_extension_query_endpoint_queue_families(
-    const amdf_endpoint_info_t* endpoint_info, uint32_t capacity,
+    const amdf_gpu_endpoint_profile_t* profile,
+    const amdf_platform_endpoint_t* platform_endpoint, uint32_t capacity,
     amdf_queue_family_info_t* out_families) {
-  (void)endpoint_info;
-  (void)capacity;
-  (void)out_families;
-  return 0;
+  if (profile == NULL || !profile->supports_pm4_kernel_queue || capacity == 0) {
+    return 0;
+  }
+  const amdf_queue_publication_modes_t publication_modes =
+      amdf_platform_endpoint_query_queue_publication_modes(
+          platform_endpoint, AMDF_QUEUE_COMMAND_TYPE_GPU_PM4);
+  if (publication_modes == 0) {
+    return 0;
+  }
+  out_families[0].type = AMDF_STRUCTURE_TYPE_QUEUE_FAMILY_INFO;
+  out_families[0].structure_size = sizeof(out_families[0]);
+  out_families[0].ordinal = 0;
+  out_families[0].command_type = AMDF_QUEUE_COMMAND_TYPE_GPU_PM4;
+  out_families[0].publication_modes = publication_modes;
+  return 1;
 }
 
 amdf_status_t amdf_gpu_extension_query(uint32_t minimum_version,

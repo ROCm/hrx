@@ -26,6 +26,10 @@ amdf_status_t AMDF_CALL amdf_gpu_device_query_info(
 // Returns the UMD device borrowed from one GPU device.
 amdf_gpu_umd_device_t* amdf_gpu_device_get_umd(amdf_device_t* device);
 
+// Returns immutable identity and reset state borrowed from one GPU device.
+const amdf_gpu_device_info_t* amdf_gpu_device_get_info(
+    const amdf_device_t* device);
+
 // Queries the reset epoch cached by one GPU device.
 uint64_t amdf_gpu_device_query_reset_epoch(const amdf_device_t* device);
 

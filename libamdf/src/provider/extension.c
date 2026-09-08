@@ -33,9 +33,7 @@ amdf_status_t AMDF_CALL amdf_provider_endpoint_open(
       {0};
   const uint32_t queue_family_count =
       amdf_extension_query_endpoint_queue_families(
-          amdf_endpoint_get_cached_info(*out_endpoint),
-          amdf_endpoint_get_platform(*out_endpoint),
-          AMDF_ENDPOINT_QUEUE_FAMILY_CAPACITY, queue_families);
+          *out_endpoint, AMDF_ENDPOINT_QUEUE_FAMILY_CAPACITY, queue_families);
   amdf_endpoint_set_queue_families(*out_endpoint, queue_family_count,
                                    queue_families);
   return AMDF_STATUS_OK;
@@ -84,14 +82,24 @@ void amdf_extension_initialize_endpoint(amdf_endpoint_t* endpoint) {
 }
 
 uint32_t amdf_extension_query_endpoint_queue_families(
-    const amdf_endpoint_info_t* endpoint_info,
-    const amdf_platform_endpoint_t* platform_endpoint, uint32_t capacity,
+    amdf_endpoint_t* endpoint, uint32_t capacity,
     amdf_queue_family_info_t* out_families) {
+  const amdf_endpoint_info_t* endpoint_info =
+      amdf_endpoint_get_cached_info(endpoint);
+  amdf_platform_endpoint_t* platform_endpoint =
+      amdf_endpoint_get_platform(endpoint);
   switch (endpoint_info->engine_kind) {
 #if defined(AMDF_HAVE_GPU)
-    case AMDF_ENGINE_KIND_GPU:
+    case AMDF_ENGINE_KIND_GPU: {
+      const void* untyped_profile = NULL;
+      if (!amdf_status_is_ok(amdf_endpoint_query_engine_profile(
+              endpoint, AMDF_ENGINE_KIND_GPU, &untyped_profile))) {
+        return 0;
+      }
       return amdf_gpu_extension_query_endpoint_queue_families(
-          endpoint_info, capacity, out_families);
+          (const amdf_gpu_endpoint_profile_t*)untyped_profile,
+          platform_endpoint, capacity, out_families);
+    }
 #endif  // AMDF_HAVE_GPU
 #if defined(AMDF_HAVE_XDNA)
     case AMDF_ENGINE_KIND_XDNA:

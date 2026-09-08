@@ -103,6 +103,9 @@ bool amdf_kmt_api_supports_memory(const amdf_kmt_api_t* api);
 // set exists.
 bool amdf_kmt_api_supports_gpu_memory(const amdf_kmt_api_t* api);
 
+// Returns true when the complete GPU kernel-submission procedure set exists.
+bool amdf_kmt_api_supports_gpu_kernel_execution(const amdf_kmt_api_t* api);
+
 // Returns true when the complete XDNA kernel-submission procedure set exists.
 bool amdf_kmt_api_supports_xdna_kernel_execution(const amdf_kmt_api_t* api);
 
