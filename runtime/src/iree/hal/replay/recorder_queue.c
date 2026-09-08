@@ -1491,8 +1491,9 @@ static iree_status_t iree_hal_replay_recorder_queue_alloca(
       storage.replay_buffers[i] =
           iree_hal_replay_recorder_buffer_initialize_proxy(
               queue->recorder, queue->device_id, buffer_id,
-              queue->placement_device, storage.base_buffers[i],
-              queue->host_allocator, storage.proxy_buffers[i]);
+              IREE_HAL_REPLAY_OBJECT_ID_NONE, queue->placement_device,
+              storage.base_buffers[i], queue->host_allocator,
+              storage.proxy_buffers[i]);
       storage.proxy_buffers[i] = NULL;
       if (can_record) {
         iree_hal_replay_recorder_buffer_make_object_payload(
