@@ -8,10 +8,24 @@
 
 import unittest
 
-from iree.vm.bytecode.spec.generate import generate_outputs
-from iree.vm.bytecode.spec.isa.core import INTEGER_INSTRUCTIONS
-from iree.vm.bytecode.spec.render.c import _instruction_rules
+from iree.vm.bytecode.spec.render.c_assembler import render_assembler_data
+from iree.vm.bytecode.spec.render.c_disassembler import render_disassembler_data
+from iree.vm.bytecode.spec.render.c_runtime import (
+    render_core_header,
+    render_instruction_verifier_cases,
+    render_interpreter_data,
+    render_layout_data,
+    render_module_header,
+    render_module_verifier_cases,
+    render_verifier_data,
+    render_wire_assertions,
+)
+from iree.vm.bytecode.spec.render.markdown import render_specification
 from iree.vm.bytecode.spec.specification import SPECIFICATION
+from iree.vm.bytecode.spec.text.specification import (
+    INSTRUCTION_TEXT_FORMAT,
+    MODULE_TEXT_FORMAT,
+)
 
 
 def _bstring(value: str) -> str:
@@ -20,28 +34,63 @@ def _bstring(value: str) -> str:
 
 class ProjectionTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.outputs = generate_outputs()
+        self.outputs = {
+            "wire_module_header": render_module_header(SPECIFICATION),
+            "wire_core_header": render_core_header(SPECIFICATION),
+            "wire_assertions_source": render_wire_assertions(SPECIFICATION),
+            "instruction_verifier_cases": render_instruction_verifier_cases(
+                SPECIFICATION
+            ),
+            "module_verifier_cases": render_module_verifier_cases(SPECIFICATION),
+            "verifier_source": render_verifier_data(SPECIFICATION),
+            "disassembler_data": render_disassembler_data(
+                SPECIFICATION,
+                INSTRUCTION_TEXT_FORMAT,
+                MODULE_TEXT_FORMAT,
+            ),
+            "assembler_data": render_assembler_data(
+                SPECIFICATION,
+                INSTRUCTION_TEXT_FORMAT,
+                MODULE_TEXT_FORMAT,
+            ),
+            "interpreter_data": render_interpreter_data(SPECIFICATION),
+            "layout_data": render_layout_data(SPECIFICATION),
+            "documentation": render_specification(SPECIFICATION),
+        }
 
     def test_every_declaration_projects_to_each_required_surface(self) -> None:
         module_header = self.outputs["wire_module_header"]
         core_header = self.outputs["wire_core_header"]
         assertions = self.outputs["wire_assertions_source"]
-        tooling = self.outputs["tooling_data"]
+        disassembler = self.outputs["disassembler_data"]
         documentation = self.outputs["documentation"]
+        instruction_verifier = self.outputs["instruction_verifier_cases"]
+        interpreter_data = self.outputs["interpreter_data"]
+        module_verifier = self.outputs["module_verifier_cases"]
         self.assertNotIn("static_assert", module_header + core_header)
-        self.assertNotIn("iree_string_view_t", tooling)
+        self.assertNotIn("iree_string_view_t", disassembler)
         for record in SPECIFICATION.module_format.records:
             self.assertIn(f"typedef struct {record.c_type}", module_header)
             self.assertIn(
                 f"sizeof({record.c_type}) == {record.byte_length}u", assertions
             )
-            self.assertIn(_bstring(record.name), tooling)
+            self.assertIn(_bstring(record.name), disassembler)
+            self.assertIn(
+                f"IREE_VM_BYTECODE_MODULE_RECORD_{record.name.upper()}",
+                module_verifier,
+            )
             self.assertEqual(documentation.count(f"#### `{record.name}`"), 1)
         for instruction in SPECIFICATION.instructions:
             c_type = f"iree_vm_bytecode_{instruction.mnemonic.replace('.', '_')}_t"
             self.assertIn(f"typedef struct {c_type}", core_header)
             self.assertIn(f"sizeof({c_type}) == {instruction.byte_length}u", assertions)
-            self.assertIn(_bstring(instruction.mnemonic), tooling)
+            self.assertIn(_bstring(instruction.mnemonic), disassembler)
+            self.assertIn(instruction.mnemonic, instruction_verifier)
+            self.assertIn(
+                f"OP({instruction.mnemonic.replace('.', '_').upper()}, "
+                f"{instruction.mnemonic.replace('.', '_')}, {c_type})",
+                interpreter_data,
+            )
             self.assertEqual(documentation.count(f"#### `{instruction.mnemonic}`"), 1)
         for table in (
             SPECIFICATION.module_format.numeric_tables + SPECIFICATION.selectors
@@ -54,31 +103,99 @@ class ProjectionTest(unittest.TestCase):
         self.assertIn("#### Structural verification obligations", documentation)
         self.assertIn("#### Reference pseudocode", documentation)
 
-    def test_verification_is_data_not_control_flow(self) -> None:
-        source = self.outputs["verification_source"]
+    def test_assembler_projects_terminal_blob_boundaries(self) -> None:
+        assembler = self.outputs["assembler_data"]
+        self.assertIn("iree_vm_bytecode_assembler_terminal_offsets[]", assembler)
+        self.assertEqual(
+            assembler.count(
+                "static const iree_vm_bytecode_assembler_terminal_offset_t"
+            ),
+            1,
+        )
+
+    def test_verification_projects_direct_runtime_checks(self) -> None:
+        verifier_source = self.outputs["verifier_source"]
+        instruction_cases = self.outputs["instruction_verifier_cases"]
+        layout_data = self.outputs["layout_data"]
+        module_cases = self.outputs["module_verifier_cases"]
+        source = verifier_source + instruction_cases + module_cases + layout_data
         for fragment in (
             "iree_vm_bytecode_instruction_verification[256]",
-            "VERIFICATION_RULE_SELECTOR, 3u, 1u, 1u},  // float.math.unary.f64.selector_u8",
-            "UINT32_C(0x000D0008), IREE_VM_BYTECODE_VERIFICATION_RULE_GLOBAL_ORDINAL",
-            "VERIFICATION_RULE_LOCAL_BYTES_RANGE_MEMORY_FORMAT, 2u, 4u, 0u},  // stack.load.base_u16",
-            "VERIFICATION_RULE_VALUE_REGISTER_FORMAT_RANGE, 1u, 4u, 0u},  // stack.load",
-            "VERIFICATION_RULE_PACKED_SELECTORS, 6u, 64u, 3u},  // buffer.atomic.cmpxchg.selector0_u8",
-            "VERIFICATION_RULE_PACKED_SELECTORS, 7u, 248u, 1u},  // buffer.atomic.cmpxchg.selector1_u8",
-            "VERIFICATION_RULE_ATOMIC_CARRIER_SUPPORTED, 6u, 0u, 0u},  // buffer.atomic.cmpxchg",
-            "VERIFICATION_RULE_PACKED_SELECTOR_PAIRS, 6u, 48u, 51u},  // buffer.atomic.cmpxchg",
-            "UINT32_C(0x0033001F)",
-            "UINT32_C(0x00170003)",
-            "UINT32_C(0x00001A1F)",
+            "iree_vm_bytecode_section_layouts[]",
+            "iree_vm_bytecode_verify_control_target",
+            "iree_vm_bytecode_verify_direct_call",
+            "iree_vm_bytecode_verify_integer_bitstream_shape",
+            "iree_vm_bytecode_verify_signature_descriptor",
         ):
             self.assertIn(fragment, source)
-        self.assertNotIn("switch (", source)
-        self.assertNotIn("iree_status_t", source)
-        parameters = []
-        rule = _instruction_rules(INTEGER_INSTRUCTIONS[-3], parameters, {})[-1]
+        self.assertNotIn("switch (", verifier_source)
+        self.assertNotIn("switch (", layout_data)
+        self.assertNotIn("iree_status_t", verifier_source)
+        self.assertNotIn("iree_status_t", instruction_cases)
+        self.assertNotIn("VERIFICATION_RULE_", source)
         self.assertEqual(
-            (rule.kind, *rule[1:4], *parameters[rule.parameter :]),
-            ("INTEGER_BITSTREAM_SHAPE", 3, 4, 5, 6, 7, 0, 64),
+            instruction_cases.count("case IREE_VM_BYTECODE_OPCODE_"),
+            len(SPECIFICATION.instructions),
         )
+        self.assertLess(
+            instruction_cases.count("return true;"), len(SPECIFICATION.instructions)
+        )
+
+    def test_interpreter_data_covers_core_directly(self) -> None:
+        data = self.outputs["interpreter_data"]
+        opcode_list = data.partition(
+            "#define IREE_VM_BYTECODE_INTERPRETER_INTEGER_TOTAL_LIST_COUNT"
+        )[0]
+        self.assertEqual(opcode_list.count("  OP("), len(SPECIFICATION.instructions))
+        self.assertNotIn("verification", data.lower())
+        for family_name, macro_name in (
+            ("integer", "INTEGER"),
+            ("float", "FLOAT"),
+            ("conversion", "CONVERSION"),
+        ):
+            family_instructions = tuple(
+                instruction
+                for instruction in SPECIFICATION.instructions
+                if instruction.family.name == family_name
+            )
+            if family_name == "float":
+                self.assertIn(
+                    f"#define IREE_VM_BYTECODE_INTERPRETER_{macro_name}_LIST_COUNT "
+                    f"{len(family_instructions)}u",
+                    data,
+                )
+            else:
+                total_count = sum(
+                    not instruction.failures for instruction in family_instructions
+                )
+                fallible_count = len(family_instructions) - total_count
+                self.assertIn(
+                    f"#define IREE_VM_BYTECODE_INTERPRETER_{macro_name}_TOTAL_LIST_COUNT "
+                    f"{total_count}u",
+                    data,
+                )
+                self.assertIn(
+                    f"#define IREE_VM_BYTECODE_INTERPRETER_{macro_name}_FALLIBLE_LIST_COUNT "
+                    f"{fallible_count}u",
+                    data,
+                )
+        for table_name, macro_name in (
+            ("integer.convert", "INTEGER_CONVERSION"),
+            ("float.extend", "FLOAT_EXTEND"),
+            ("float.truncate", "FLOAT_TRUNCATE"),
+            ("float.width", "FLOAT_WIDTH"),
+            ("integer.to.float", "INTEGER_TO_FLOAT"),
+            ("float.to.integer", "FLOAT_TO_INTEGER"),
+        ):
+            table = next(
+                table for table in SPECIFICATION.selectors if table.name == table_name
+            )
+            self.assertIn(
+                f"#define IREE_VM_BYTECODE_{macro_name}_COUNT {len(table.values)}u",
+                data,
+            )
+            for value in table.values:
+                self.assertIn(value.name.replace(".", "_").upper(), data)
 
 
 if __name__ == "__main__":

@@ -260,10 +260,12 @@ CALLABLE_TYPES = _section(
         "count and source-ordered argument types followed by result count and "
         "source-ordered result types. Scalar kinds compare by ID, ref types by "
         "canonical namespace and local-name order, and nested callable types by an "
-        "earlier canonical ordinal. Every FUNCTION descriptor in row N names an "
-        "ordinal below N. A row's nesting depth is zero without FUNCTION descriptors "
-        "and otherwise one plus the maximum referenced depth. Recursive callable "
-        "types are invalid in Core 0.0."
+        "earlier canonical ordinal. All rows with structurally equal signatures name "
+        "one shared signature ordinal so runtime compatibility is an ordinal "
+        "comparison. Every FUNCTION descriptor in row N names an ordinal below N. A "
+        "row's nesting depth is zero without FUNCTION descriptors and otherwise one "
+        "plus the maximum referenced depth. Recursive callable types are invalid in "
+        "Core 0.0."
     ),
     (module_records.CALLABLE_TYPES_HEADER, module_records.CALLABLE_TYPE_ROW),
     (
@@ -297,7 +299,8 @@ CALLABLE_TYPES = _section(
             "order",
             (
                 "Require strictly increasing nesting-depth, structural-signature, and "
-                "flags order with no duplicate callable contracts."
+                "flags order with no duplicate callable contracts. Structurally equal "
+                "signatures must use one shared signature ordinal."
             ),
             _ref(module_records.CALLABLE_TYPE_ROW),
             _ref(module_records.SIGNATURE_ROW),
@@ -397,8 +400,10 @@ FUNCTIONS = _section(
     "Stores bytecode function declarations, switch targets, and record streams.",
     (
         "The section is absent without bytecode functions; otherwise function_count "
-        "is in [1, 65536]. All function-local switch-target ranges occur in function "
-        "ordinal order, followed by all bytecode ranges in function ordinal order. "
+        "and maximum_block_count are in [1, 65536], and maximum_block_count exactly "
+        "equals the largest function-row block_count. All function-local "
+        "switch-target ranges occur in function ordinal order, followed by all "
+        "bytecode ranges in function ordinal order. "
         "switch_target_base and bytecode_offset are exact checked running prefixes "
         "and the final bytecode end consumes the section. bytecode_length is a "
         "nonzero multiple of four. block_count is in [1, 65536] and exactly equals "
@@ -438,6 +443,15 @@ FUNCTIONS = _section(
                 "reserved fields."
             ),
             _ref(module_records.FUNCTION_ROW),
+        ),
+        _constraint(
+            "maximum_block_count",
+            (
+                "Require maximum_block_count to equal the largest block_count in "
+                "the function row array."
+            ),
+            _ref(module_records.FUNCTIONS_HEADER, "maximum_block_count_u32"),
+            _ref(module_records.FUNCTION_ROW, "block_count_u32"),
         ),
         _constraint(
             "signature_prefixes",

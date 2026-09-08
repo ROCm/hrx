@@ -210,8 +210,8 @@ FUNC_ADDRESS = Instruction(
         "lock, or ownership operation.",
     ),
     assembly=(
-        "%f4 = func.address local @function7, type @callable3\n"
-        "%f5 = func.address optional_import @import2, type @callable3"
+        "%f4 = func.address @function7, type @callable3\n"
+        "%f5 = func.address @import2, type @callable3"
     ),
     pseudocode=(
         "target = linked_target(target_kind_u8, target_ordinal_u16);\n"

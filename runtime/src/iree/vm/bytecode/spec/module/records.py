@@ -347,13 +347,14 @@ CALLABLE_TYPE_ROW = _record(
     "Defines one canonical callable contract.",
     (
         "Rows are unique and strictly ordered by nesting depth, structural "
-        "signature, then flags. Nested callable types may name only earlier rows."
+        "signature, then flags. Rows with structurally equal signatures use one "
+        "shared signature ordinal. Nested callable types may name only earlier rows."
     ),
     (
         _field(
             "signature_ordinal_u16",
             U16,
-            "Exact source-ordered signature.",
+            "Shared representative of one structural signature.",
             FieldRuleUse(FieldRule.ORDINAL, data=OrdinalDomain.SIGNATURE),
         ),
         _field(
@@ -483,13 +484,23 @@ EXPORT_ROW = _record(
 
 FUNCTIONS_HEADER = _record(
     "functions_header",
-    "Counts bytecode function declarations.",
-    "The count sizes the immediately following function row array.",
+    "Declares bytecode function and block-count high waters.",
+    (
+        "The function count sizes the immediately following function row array. "
+        "The maximum block count is the exact maximum block_count across those "
+        "rows and bounds one reusable instruction-verifier block-offset array."
+    ),
     (
         _field(
             "function_count_u32",
             U32,
             "Number of bytecode functions.",
+            FieldRuleUse(FieldRule.ALLOWED_RANGE, values=(1, 65536)),
+        ),
+        _field(
+            "maximum_block_count_u32",
+            U32,
+            "Maximum block_count across all bytecode functions.",
             FieldRuleUse(FieldRule.ALLOWED_RANGE, values=(1, 65536)),
         ),
     ),

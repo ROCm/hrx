@@ -22,29 +22,193 @@ iree_cc_library(
   PUBLIC
 )
 
-iree_cc_library(
+iree_c_embed_data(
   NAME
-    verification
-  HDRS
-    "verification.h"
+    execution_testdata
   SRCS
-    "verification/data.c"
-  DEPS
-    ::wire
-    iree::base::core_headers
+    "testdata/core_execution.vmasm"
+  C_FILE_OUTPUT
+    "execution_testdata.c"
+  H_FILE_OUTPUT
+    "execution_testdata.h"
+  IDENTIFIER
+    "iree_vm_bytecode_execution_testdata"
+  TESTONLY
+  FLATTEN
+  PUBLIC
+)
+
+iree_c_embed_data(
+  NAME
+    launch_config_testdata
+  SRCS
+    "testdata/launch_config.vmasm"
+  C_FILE_OUTPUT
+    "launch_config_testdata.c"
+  H_FILE_OUTPUT
+    "launch_config_testdata.h"
+  IDENTIFIER
+    "iree_vm_bytecode_launch_config_testdata"
+  TESTONLY
+  FLATTEN
+  PUBLIC
+)
+
+iree_c_embed_data(
+  NAME
+    verifier_testdata
+  SRCS
+    "testdata/structural.vmasm"
+  C_FILE_OUTPUT
+    "verifier_testdata.c"
+  H_FILE_OUTPUT
+    "verifier_testdata.h"
+  IDENTIFIER
+    "iree_vm_bytecode_verifier_testdata"
+  TESTONLY
+  FLATTEN
   PUBLIC
 )
 
 iree_cc_library(
   NAME
-    tooling
+    layout
   HDRS
-    "tooling.h"
-  TEXTUAL_HDRS
-    "tooling/data.inl"
+    "layout.h"
   SRCS
-    "tooling.c"
+    "layout.c"
+    "layout_tables.inl"
   DEPS
+    ::wire
+    iree::base
+    iree::vm
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    verifier
+  HDRS
+    "verifier.h"
+  SRCS
+    "verifier.c"
+    "verifier_data.c"
+    "verifier_data.h"
+    "verifier_instruction_cases.inl"
+    "verifier_module_cases.inl"
+  DEPS
+    ::layout
+    ::wire
+    iree::base
+    iree::base::internal::unicode
+    iree::vm
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    assembler
+  HDRS
+    "assembler.h"
+  SRCS
+    "assembler.c"
+    "assembler_lexer.c"
+    "assembler_lexer.h"
+    "assembler_module.c"
+    "assembler_module.h"
+    "assembler_symbols.c"
+    "assembler_symbols.h"
+    "assembler_tables.inl"
+  DEPS
+    ::wire
+    iree::base
+    iree::base::internal::unicode
+    iree::io::stream
+    iree::vm
+  PUBLIC
+)
+
+iree_cc_test(
+  NAME
+    assembler_lexer_test
+  SRCS
+    "assembler_lexer.h"
+    "assembler_lexer_test.cc"
+  DEPS
+    ::assembler
+    iree::base
+    iree::testing::gtest
+    iree::testing::gtest_main
+)
+
+iree_cc_test(
+  NAME
+    assembler_symbols_test
+  SRCS
+    "assembler_symbols.h"
+    "assembler_symbols_test.cc"
+  DEPS
+    ::assembler
+    iree::base
+    iree::testing::gtest
+    iree::testing::gtest_main
+)
+
+iree_cc_library(
+  NAME
+    module_fixture
+  HDRS
+    "module_fixture.h"
+  SRCS
+    "module_fixture.c"
+  DEPS
+    ::assembler
+    iree::base
+  TESTONLY
+  PUBLIC
+)
+
+iree_cc_test(
+  NAME
+    assembler_test
+  SRCS
+    "assembler_test.cc"
+  DEPS
+    ::assembler
+    ::disassembler
+    ::execution_testdata
+    ::launch_config_testdata
+    ::verifier_testdata
+    ::wire
+    iree::base
+    iree::testing::gtest
+    iree::testing::gtest_main
+)
+
+iree_cc_fuzz(
+  NAME
+    assembler_fuzz
+  SRCS
+    "assembler_fuzz.cc"
+  DEPS
+    ::assembler
+    ::disassembler
+    ::execution_testdata
+    ::launch_config_testdata
+    ::verifier
+    iree::base
+)
+
+iree_cc_library(
+  NAME
+    disassembler
+  HDRS
+    "disassembler.h"
+  SRCS
+    "disassembler.c"
+    "disassembler_tables.inl"
+  DEPS
+    ::verifier
     ::wire
     iree::base
   PUBLIC
@@ -52,24 +216,58 @@ iree_cc_library(
 
 iree_cc_test(
   NAME
-    verification_test
+    verifier_test
   SRCS
-    "verification_test.cc"
+    "verifier_data.h"
+    "verifier_test.cc"
   DEPS
-    ::verification
+    ::execution_testdata
+    ::module_fixture
+    ::verifier
+    ::verifier_testdata
     ::wire
-    iree::base::core_headers
+    iree::base
     iree::testing::gtest
     iree::testing::gtest_main
 )
 
+iree_cc_binary_benchmark(
+  NAME
+    verifier_benchmark
+  SRCS
+    "verifier_benchmark.cc"
+  DEPS
+    ::module_fixture
+    ::verifier
+    ::verifier_testdata
+    iree::base
+    iree::testing::benchmark
+    iree::testing::benchmark_main
+    iree::third_party::google_benchmark
+  TESTONLY
+)
+
+iree_cc_fuzz(
+  NAME
+    verifier_fuzz
+  SRCS
+    "verifier_fuzz.cc"
+  DEPS
+    ::module_fixture
+    ::verifier
+    ::verifier_testdata
+    iree::base
+)
+
 iree_cc_test(
   NAME
-    tooling_test
+    disassembler_test
   SRCS
-    "tooling_test.cc"
+    "disassembler_test.cc"
   DEPS
-    ::tooling
+    ::disassembler
+    ::execution_testdata
+    ::module_fixture
     ::wire
     iree::base
     iree::testing::gtest
@@ -78,25 +276,70 @@ iree_cc_test(
 
 iree_py_generated_files(
   NAME
-    projections
+    runtime_projections
   GENERATOR
-    iree::vm::bytecode::spec::generate
+    iree::vm::bytecode::spec::generate_runtime
   OUTPUTS
-    "docs/specification.md"
-    "tooling/data.inl"
-    "verification/data.c"
+    "interpreter_tables.inl"
+    "layout_tables.inl"
+    "verifier_data.c"
+    "verifier_instruction_cases.inl"
+    "verifier_module_cases.inl"
     "wire/assertions.c"
     "wire/core.h"
     "wire/module.h"
   OUTPUT_FLAGS
-    "--documentation"
-    "--tooling-data"
-    "--verification-source"
+    "--interpreter-data"
+    "--layout-data"
+    "--verifier-source"
+    "--instruction-verifier-cases"
+    "--module-verifier-cases"
     "--wire-assertions-source"
     "--wire-core-header"
     "--wire-module-header"
   COMMENT
-    "Generating VM bytecode specification projections"
+    "Generating shipping VM runtime projections"
+)
+
+iree_py_generated_files(
+  NAME
+    conversion_test_projection
+  GENERATOR
+    iree::vm::bytecode::spec::generate_conversion_tests
+  OUTPUTS
+    "interpreter_conversion_test_vectors.inl"
+  OUTPUT_FLAGS
+    "--conversion-test-vectors"
+  COMMENT
+    "Generating VM conversion test vectors"
+)
+
+iree_py_generated_files(
+  NAME
+    tooling_projection
+  GENERATOR
+    iree::vm::bytecode::spec::generate_tooling
+  OUTPUTS
+    "assembler_tables.inl"
+    "disassembler_tables.inl"
+  OUTPUT_FLAGS
+    "--assembler-data"
+    "--disassembler-data"
+  COMMENT
+    "Generating VM textual-tool projections"
+)
+
+iree_py_generated_files(
+  NAME
+    documentation_projection
+  GENERATOR
+    iree::vm::bytecode::spec::generate_documentation
+  OUTPUTS
+    "docs/specification.md"
+  OUTPUT_FLAGS
+    "--documentation"
+  COMMENT
+    "Generating VM specification documentation"
 )
 
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###

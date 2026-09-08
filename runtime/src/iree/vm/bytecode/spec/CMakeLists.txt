@@ -11,7 +11,7 @@ iree_add_all_subdirs()
 
 iree_py_library(
   NAME
-    spec
+    model
   SRCS
     "__init__.py"
     "isa/__init__.py"
@@ -37,8 +37,6 @@ iree_py_library(
     "module/rules.py"
     "module/validation.py"
     "render/__init__.py"
-    "render/c.py"
-    "render/markdown.py"
     "schema.py"
     "specification.py"
     "version.py"
@@ -48,22 +46,124 @@ iree_py_library(
 
 iree_py_library(
   NAME
-    generator
+    generation
   SRCS
-    "generate.py"
-  IMPORTS
-    "../../../.."
-  DEPS
-    ::spec
+    "generation.py"
 )
 
 iree_py_library(
   NAME
-    generate
-  MAIN_MODULE
-    "iree.vm.bytecode.spec.generate"
+    runtime_renderer
+  SRCS
+    "render/c_runtime.py"
+  IMPORTS
+    "../../../.."
   DEPS
-    ::generator
+    ::model
+)
+
+iree_py_library(
+  NAME
+    conversion_test_renderer
+  SRCS
+    "conversion_test_vectors.py"
+  IMPORTS
+    "../../../.."
+  DEPS
+    ::model
+)
+
+iree_py_library(
+  NAME
+    documentation_renderer
+  SRCS
+    "render/markdown.py"
+  IMPORTS
+    "../../../.."
+  DEPS
+    ::model
+)
+
+iree_py_library(
+  NAME
+    tooling_renderer
+  SRCS
+    "render/c_assembler.py"
+    "render/c_disassembler.py"
+    "render/c_tooling.py"
+  IMPORTS
+    "../../../.."
+  DEPS
+    ::model
+)
+
+iree_py_library(
+  NAME
+    text_model
+  SRCS
+    "text/__init__.py"
+    "text/instruction.py"
+    "text/module/__init__.py"
+    "text/module/layout.py"
+    "text/module/syntax.py"
+    "text/module/validation.py"
+    "text/specification.py"
+  IMPORTS
+    "../../../.."
+  DEPS
+    ::model
+)
+
+iree_py_library(
+  NAME
+    generate_runtime
+  SRCS
+    "generate_runtime.py"
+  MAIN_MODULE
+    "iree.vm.bytecode.spec.generate_runtime"
+  DEPS
+    ::generation
+    ::model
+    ::runtime_renderer
+)
+
+iree_py_library(
+  NAME
+    generate_conversion_tests
+  SRCS
+    "generate_conversion_tests.py"
+  MAIN_MODULE
+    "iree.vm.bytecode.spec.generate_conversion_tests"
+  DEPS
+    ::conversion_test_renderer
+    ::generation
+    ::model
+)
+
+iree_py_library(
+  NAME
+    generate_documentation
+  SRCS
+    "generate_documentation.py"
+  MAIN_MODULE
+    "iree.vm.bytecode.spec.generate_documentation"
+  DEPS
+    ::documentation_renderer
+    ::generation
+    ::model
+)
+
+iree_py_library(
+  NAME
+    generate_tooling
+  SRCS
+    "generate_tooling.py"
+  MAIN_MODULE
+    "iree.vm.bytecode.spec.generate_tooling"
+  DEPS
+    ::generation
+    ::model
+    ::tooling_renderer
 )
 
 iree_local_py_test(
@@ -80,6 +180,15 @@ iree_local_py_test(
     projection_test
   SRC
     "projection_test.py"
+  PACKAGE_DIRS
+    "${PROJECT_SOURCE_DIR}/runtime/src"
+)
+
+iree_local_py_test(
+  NAME
+    text_test
+  SRC
+    "text_test.py"
   PACKAGE_DIRS
     "${PROJECT_SOURCE_DIR}/runtime/src"
 )
