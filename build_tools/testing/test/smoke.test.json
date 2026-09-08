@@ -25,6 +25,13 @@
           }
         },
         {
+          "name": "write-expected-artifact",
+          "write": {
+            "path": "{tmp}/expected-artifact.txt",
+            "text": "fixture artifact\n"
+          }
+        },
+        {
           "name": "produce",
           "run": {
             "tool": "fixture",
@@ -42,7 +49,8 @@
           "files": [
             {
               "path": "{tmp}/artifact.txt",
-              "non_empty": true
+              "non_empty": true,
+              "equals": "{tmp}/expected-artifact.txt"
             },
             {
               "path": "{tmp}/config.json",

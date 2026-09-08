@@ -21,9 +21,7 @@ def main(argv: list[str]) -> int:
         return 3
     for arg in argv:
         if arg.startswith("--write-file="):
-            Path(arg.split("=", 1)[1]).write_text(
-                "fixture artifact\n", encoding="utf-8"
-            )
+            Path(arg.split("=", 1)[1]).write_bytes(b"fixture artifact\n")
         elif arg.startswith("--cat-file="):
             print(Path(arg.split("=", 1)[1]).read_text(encoding="utf-8"), end="")
         elif arg == "--echo-stdin":

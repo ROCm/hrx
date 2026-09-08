@@ -111,3 +111,14 @@ Expected failures and file checks are explicit:
   ]
 }
 ```
+
+Generated artifacts can be compared byte-for-byte against another file:
+
+```json
+"files": [
+  {
+    "path": "{tmp}/reassembled.bin",
+    "equals": "{tmp}/original.bin"
+  }
+]
+```
