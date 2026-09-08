@@ -1457,17 +1457,17 @@ iree_status_t iree_hal_streaming_device_get_or_create_primary_context(
     iree_hal_streaming_device_t* device,
     iree_hal_streaming_context_t** out_context);
 
-// Retains the primary context, creating it if necessary.
-// Increments device-level reference count.
-// Returns the retained context.
+// Retains the primary context, creating it if necessary, and increments its
+// device-level usage count. The caller must balance the returned owning
+// reference with iree_hal_streaming_device_release_primary_context.
+// |out_context| is unchanged on failure.
 // Synchronization: thread-safe (serializes initialization and retention).
 iree_status_t iree_hal_streaming_device_retain_primary_context(
     iree_hal_streaming_device_t* device,
     iree_hal_streaming_context_t** out_context);
 
-// Releases the primary context.
-// Decrements device-level reference count.
-// Destroys context when count reaches 0.
+// Releases one primary-context reference and decrements its device-level usage
+// count. Destroys the device-owned context when the count reaches zero.
 // Synchronization: context (waits for idle when destroying).
 iree_status_t iree_hal_streaming_device_release_primary_context(
     iree_hal_streaming_device_t* device);

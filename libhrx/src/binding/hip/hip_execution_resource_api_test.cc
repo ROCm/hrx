@@ -8,6 +8,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include "binding/hip/api.h"
@@ -36,6 +37,32 @@ using HipDevSmResourceSplitByCountFn =
     hipError_t (*)(hipDevResource* result, unsigned int* group_count,
                    const hipDevResource* input, hipDevResource* remainder,
                    unsigned int flags, unsigned int minimum_count);
+using HipDevResourceGenerateDescFn =
+    hipError_t (*)(hipDevResourceDesc_t* descriptor, hipDevResource* resources,
+                   unsigned int resource_count);
+using HipGreenCtxCreateFn = hipError_t (*)(hipExecutionCtx_t* context,
+                                           hipDevResourceDesc_t descriptor,
+                                           int device, unsigned int flags);
+using HipExecutionCtxDestroyFn = hipError_t (*)(hipExecutionCtx_t context);
+using HipExecutionCtxGetDevResourceFn =
+    hipError_t (*)(hipExecutionCtx_t context, hipDevResource* resource,
+                   hipDevResourceType type);
+using HipExecutionCtxGetDeviceFn = hipError_t (*)(hipDevice_t* device,
+                                                  hipExecutionCtx_t context);
+using HipExecutionCtxGetIdFn = hipError_t (*)(hipExecutionCtx_t context,
+                                              unsigned long long* context_id);
+
+struct ExecutionContextDeleter {
+  // Runtime entry point used to destroy a live execution context.
+  HipExecutionCtxDestroyFn destroy = nullptr;
+
+  void operator()(ihipExecutionCtx_t* context) const {
+    if (context) destroy(context);
+  }
+};
+
+using ScopedExecutionContext =
+    std::unique_ptr<ihipExecutionCtx_t, ExecutionContextDeleter>;
 
 // Owns the process-scoped HIP runtime under test and its resource entry points.
 // Calls cross the shared-library ABI instead of linking the implementation.
@@ -54,6 +81,24 @@ struct HipRuntimeApi {
 
   // Splits one exact SM resource into equal-size partitions.
   HipDevSmResourceSplitByCountFn split_sm_by_count = nullptr;
+
+  // Generates a one-shot descriptor from exact execution resources.
+  HipDevResourceGenerateDescFn generate_descriptor = nullptr;
+
+  // Creates a resource-partitioned execution context.
+  HipGreenCtxCreateFn create_context = nullptr;
+
+  // Destroys a resource-partitioned execution context.
+  HipExecutionCtxDestroyFn destroy_context = nullptr;
+
+  // Queries the canonical resource owned by an execution context.
+  HipExecutionCtxGetDevResourceFn context_get_resource = nullptr;
+
+  // Queries the device ordinal associated with an execution context.
+  HipExecutionCtxGetDeviceFn context_get_device = nullptr;
+
+  // Queries the process-unique execution-context identifier.
+  HipExecutionCtxGetIdFn context_get_id = nullptr;
 };
 
 template <typename T>
@@ -79,12 +124,31 @@ class HipExecutionResourceApiTest : public testing::Test {
           api_.library, "hipDeviceGetDevResource");
       api_.split_sm_by_count = ResolveHipSymbol<HipDevSmResourceSplitByCountFn>(
           api_.library, "hipDevSmResourceSplitByCount");
+      api_.generate_descriptor = ResolveHipSymbol<HipDevResourceGenerateDescFn>(
+          api_.library, "hipDevResourceGenerateDesc");
+      api_.create_context = ResolveHipSymbol<HipGreenCtxCreateFn>(
+          api_.library, "hipGreenCtxCreate");
+      api_.destroy_context = ResolveHipSymbol<HipExecutionCtxDestroyFn>(
+          api_.library, "hipExecutionCtxDestroy");
+      api_.context_get_resource =
+          ResolveHipSymbol<HipExecutionCtxGetDevResourceFn>(
+              api_.library, "hipExecutionCtxGetDevResource");
+      api_.context_get_device = ResolveHipSymbol<HipExecutionCtxGetDeviceFn>(
+          api_.library, "hipExecutionCtxGetDevice");
+      api_.context_get_id = ResolveHipSymbol<HipExecutionCtxGetIdFn>(
+          api_.library, "hipExecutionCtxGetId");
     }
 
     ASSERT_NE(api_.init, nullptr);
     ASSERT_NE(api_.get_device, nullptr);
     ASSERT_NE(api_.device_get_resource, nullptr);
     ASSERT_NE(api_.split_sm_by_count, nullptr);
+    ASSERT_NE(api_.generate_descriptor, nullptr);
+    ASSERT_NE(api_.create_context, nullptr);
+    ASSERT_NE(api_.destroy_context, nullptr);
+    ASSERT_NE(api_.context_get_resource, nullptr);
+    ASSERT_NE(api_.context_get_device, nullptr);
+    ASSERT_NE(api_.context_get_id, nullptr);
 
     ASSERT_EQ(hipSuccess, api_.init(/*flags=*/0));
     ASSERT_EQ(hipSuccess, api_.get_device(&device_));
@@ -219,6 +283,103 @@ TEST_F(HipExecutionResourceApiTest, RejectsUnsupportedSplitWithoutPublishing) {
       /*flags=*/4, full_resource.sm.minSmPartitionSize, hipErrorInvalidValue);
   expect_failure_without_publication(/*flags=*/0, full_resource.sm.smCount + 1,
                                      hipErrorInvalidValue);
+}
+
+TEST_F(HipExecutionResourceApiTest,
+       CreatesOverlappingContextsWithCanonicalResources) {
+  hipDevResource full_resource;
+  ASSERT_EQ(hipSuccess, api_.device_get_resource(device_, &full_resource,
+                                                 hipDevResourceTypeSm));
+
+  hipDevResourceDesc_t first_descriptor = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.generate_descriptor(&first_descriptor, &full_resource, 1));
+  hipDevResourceDesc_t second_descriptor = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.generate_descriptor(&second_descriptor, &full_resource, 1));
+
+  hipExecutionCtx_t first_context = nullptr;
+  ASSERT_EQ(hipSuccess, api_.create_context(&first_context, first_descriptor,
+                                            device_, /*flags=*/0));
+  ScopedExecutionContext first_context_guard(
+      first_context, ExecutionContextDeleter{api_.destroy_context});
+  hipExecutionCtx_t second_context = nullptr;
+  ASSERT_EQ(hipSuccess, api_.create_context(&second_context, second_descriptor,
+                                            device_, /*flags=*/0));
+  ScopedExecutionContext second_context_guard(
+      second_context, ExecutionContextDeleter{api_.destroy_context});
+
+  hipDevResource first_resource;
+  ASSERT_EQ(hipSuccess,
+            api_.context_get_resource(first_context, &first_resource,
+                                      hipDevResourceTypeSm));
+  EXPECT_EQ(std::memcmp(&first_resource, &full_resource, sizeof(full_resource)),
+            0);
+  hipDevResource second_resource;
+  ASSERT_EQ(hipSuccess,
+            api_.context_get_resource(second_context, &second_resource,
+                                      hipDevResourceTypeSm));
+  EXPECT_EQ(
+      std::memcmp(&second_resource, &full_resource, sizeof(full_resource)), 0);
+
+  hipDevice_t first_device = -1;
+  EXPECT_EQ(hipSuccess, api_.context_get_device(&first_device, first_context));
+  EXPECT_EQ(first_device, device_);
+  unsigned long long first_id = 0;
+  unsigned long long second_id = 0;
+  EXPECT_EQ(hipSuccess, api_.context_get_id(first_context, &first_id));
+  EXPECT_EQ(hipSuccess, api_.context_get_id(second_context, &second_id));
+  EXPECT_NE(first_id, 0u);
+  EXPECT_NE(second_id, 0u);
+  EXPECT_NE(first_id, second_id);
+}
+
+TEST_F(HipExecutionResourceApiTest,
+       ConsumesDescriptorsOnlyForSuccessfulCreation) {
+  hipDevResource full_resource;
+  ASSERT_EQ(hipSuccess, api_.device_get_resource(device_, &full_resource,
+                                                 hipDevResourceTypeSm));
+  hipDevResourceDesc_t descriptor = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.generate_descriptor(&descriptor, &full_resource, 1));
+
+  hipExecutionCtx_t untouched_context =
+      reinterpret_cast<hipExecutionCtx_t>(uintptr_t{1});
+  EXPECT_EQ(hipErrorInvalidValue,
+            api_.create_context(&untouched_context, descriptor, device_,
+                                /*flags=*/1));
+  EXPECT_EQ(untouched_context,
+            reinterpret_cast<hipExecutionCtx_t>(uintptr_t{1}));
+
+  hipExecutionCtx_t context = nullptr;
+  ASSERT_EQ(hipSuccess, api_.create_context(&context, descriptor, device_,
+                                            /*flags=*/0));
+  ScopedExecutionContext context_guard(
+      context, ExecutionContextDeleter{api_.destroy_context});
+
+  untouched_context = reinterpret_cast<hipExecutionCtx_t>(uintptr_t{1});
+  EXPECT_EQ(hipErrorInvalidValue,
+            api_.create_context(&untouched_context, descriptor, device_,
+                                /*flags=*/0));
+  EXPECT_EQ(untouched_context,
+            reinterpret_cast<hipExecutionCtx_t>(uintptr_t{1}));
+
+  hipDevResource untouched_resource;
+  std::memset(&untouched_resource, 0xA5, sizeof(untouched_resource));
+  const hipDevResource expected_resource = untouched_resource;
+  EXPECT_EQ(hipErrorInvalidResourceType,
+            api_.context_get_resource(context, &untouched_resource,
+                                      hipDevResourceTypeWorkqueueConfig));
+  EXPECT_EQ(std::memcmp(&untouched_resource, &expected_resource,
+                        sizeof(untouched_resource)),
+            0);
+
+  ASSERT_EQ(hipSuccess, api_.destroy_context(context_guard.release()));
+  hipDevice_t untouched_device = -7;
+  EXPECT_EQ(hipErrorInvalidValue,
+            api_.context_get_device(&untouched_device, context));
+  EXPECT_EQ(untouched_device, -7);
+  EXPECT_EQ(hipErrorInvalidValue, api_.destroy_context(context));
 }
 
 }  // namespace

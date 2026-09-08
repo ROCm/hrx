@@ -409,10 +409,10 @@ iree_status_t iree_hal_streaming_device_retain_primary_context(
   IREE_ASSERT_ARGUMENT(device);
   IREE_ASSERT_ARGUMENT(out_context);
   IREE_TRACE_ZONE_BEGIN(z0);
-  *out_context = NULL;
 
   iree_slim_mutex_lock(&device->primary_context_mutex);
 
+  iree_hal_streaming_context_t* retained_context = NULL;
   iree_status_t status = iree_ok_status();
   if (device->primary_context_ref_count == INT32_MAX) {
     status = iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
@@ -421,14 +421,17 @@ iree_status_t iree_hal_streaming_device_retain_primary_context(
     ++device->primary_context_ref_count;
     status = iree_hal_streaming_device_create_primary_context_locked(device);
     if (iree_status_is_ok(status)) {
-      iree_hal_streaming_context_retain(device->primary_context);
-      *out_context = device->primary_context;
+      retained_context = device->primary_context;
+      iree_hal_streaming_context_retain(retained_context);
     } else {
       --device->primary_context_ref_count;
     }
   }
 
   iree_slim_mutex_unlock(&device->primary_context_mutex);
+  if (iree_status_is_ok(status)) {
+    *out_context = retained_context;
+  }
   IREE_TRACE_ZONE_END(z0);
   return status;
 }
@@ -440,49 +443,39 @@ iree_status_t iree_hal_streaming_device_release_primary_context(
 
   iree_slim_mutex_lock(&device->primary_context_mutex);
 
-  // Check if context is retained.
+  iree_status_t status = iree_ok_status();
   if (device->primary_context_ref_count == 0) {
-    iree_slim_mutex_unlock(&device->primary_context_mutex);
-    IREE_RETURN_AND_END_ZONE_IF_ERROR(
-        z0, iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-                             "primary context not retained"));
-  }
+    status = iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                              "primary context not retained");
+  } else {
+    iree_hal_streaming_context_t* retained_context = device->primary_context;
+    --device->primary_context_ref_count;
 
-  // Decrement reference count.
-  device->primary_context_ref_count--;
+    if (device->primary_context_ref_count == 0) {
+      status = iree_hal_streaming_context_wait_idle(retained_context,
+                                                    iree_infinite_timeout());
 
-  // If count reached 0, destroy the context.
-  if (device->primary_context_ref_count == 0 && device->primary_context) {
-    iree_hal_streaming_context_t* released_context = device->primary_context;
+      if (iree_hal_streaming_context_current() == retained_context) {
+        iree_hal_streaming_context_set_current(NULL);
+      }
 
-    // Wait for all operations to complete.
-    iree_status_t status = iree_hal_streaming_context_wait_idle(
-        released_context, iree_infinite_timeout());
-    if (!iree_status_is_ok(status)) {
-      iree_status_free(status);
+      // Release the device's primary-context ownership.
+      iree_hal_streaming_context_release(retained_context);
+      device->primary_context = NULL;
+
+      hrx_mem_pool_release(device->current_mem_pool);
+      device->current_mem_pool = NULL;
+      hrx_mem_pool_release(device->default_mem_pool);
+      device->default_mem_pool = NULL;
     }
 
-    // Clear current context if it was the primary context.
-    iree_hal_streaming_context_t* current_context =
-        iree_hal_streaming_context_current();
-    if (current_context == released_context) {
-      iree_hal_streaming_context_set_current(NULL);
-    }
-
-    // Release the context.
-    iree_hal_streaming_context_release(released_context);
-    device->primary_context = NULL;
-
-    // Also clear memory pools.
-    hrx_mem_pool_release(device->current_mem_pool);
-    device->current_mem_pool = NULL;
-    hrx_mem_pool_release(device->default_mem_pool);
-    device->default_mem_pool = NULL;
+    // Release the owning reference returned by the matching retain call.
+    iree_hal_streaming_context_release(retained_context);
   }
 
   iree_slim_mutex_unlock(&device->primary_context_mutex);
   IREE_TRACE_ZONE_END(z0);
-  return iree_ok_status();
+  return status;
 }
 
 //===----------------------------------------------------------------------===//

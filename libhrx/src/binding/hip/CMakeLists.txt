@@ -195,6 +195,31 @@ iree_cc_library(
   PUBLIC
 )
 
+iree_cc_library(
+  NAME
+    execution_context
+  HDRS
+    "execution_context.h"
+  SRCS
+    "execution_context.c"
+  DEPS
+    ::execution_resource
+    ::execution_resource_descriptor
+    iree::base
+    iree::base::threading
+    iree::hal
+    libhrx::src::binding::common
+    libhrx_defs
+  INCLUDES
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../libhrx>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../libhrx>"
+  PUBLIC
+)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 iree_cc_library(
   NAME
@@ -211,6 +236,7 @@ iree_cc_library(
     "api_metadata.c"
   DEPS
     ::blocking_printf_provider
+    ::execution_context
     ::execution_resource
     ::execution_resource_descriptor
     ::handle_registry

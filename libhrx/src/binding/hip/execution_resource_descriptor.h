@@ -18,11 +18,14 @@ typedef struct iree_hal_streaming_device_t iree_hal_streaming_device_t;
 
 // One-shot resource specification consumed by execution-context creation.
 //
-// The public handle is the address of this allocation but is never
-// dereferenced until it has been atomically removed from the live-handle
-// registry. All referenced execution-resource sets remain owned by the device
-// table for its complete incarnation.
+// The public handle is the address of this allocation but is only dereferenced
+// after a live-handle lookup has retained it. All referenced
+// execution-resource sets remain owned by the device table for its complete
+// incarnation.
 typedef struct iree_hip_execution_resource_descriptor_t {
+  // Reference count including the ownership represented by the public handle.
+  iree_atomic_ref_count_t ref_count;
+
   // Host allocator owning this descriptor allocation.
   iree_allocator_t host_allocator;
 
@@ -54,14 +57,20 @@ hipError_t iree_hip_execution_resource_descriptor_create(
     iree_hal_streaming_device_t* device, const hipDevResource* resources,
     iree_host_size_t resource_count, hipDevResourceDesc_t* out_descriptor);
 
+// Looks up and retains |handle| while it is known to be live. The caller must
+// release |*out_descriptor|. |out_descriptor| is unchanged on failure.
+bool iree_hip_execution_resource_descriptor_lookup_retain(
+    hipDevResourceDesc_t handle,
+    iree_hip_execution_resource_descriptor_t** out_descriptor);
+
 // Atomically invalidates |handle| and transfers descriptor ownership to the
 // caller. |out_descriptor| is unchanged if the handle is not live.
 bool iree_hip_execution_resource_descriptor_take(
     hipDevResourceDesc_t handle,
     iree_hip_execution_resource_descriptor_t** out_descriptor);
 
-// Releases a descriptor previously returned by take or not yet published.
-void iree_hip_execution_resource_descriptor_destroy(
+// Releases an owning descriptor reference.
+void iree_hip_execution_resource_descriptor_release(
     iree_hip_execution_resource_descriptor_t* descriptor);
 
 #ifdef __cplusplus

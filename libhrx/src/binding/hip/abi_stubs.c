@@ -720,34 +720,6 @@ HIPAPI hipError_t hipEventRecordWithFlags(hipEvent_t event, hipStream_t stream,
   return hipErrorNotSupported;
 }
 
-HIPAPI hipError_t hipExecutionCtxDestroy(hipExecutionCtx_t ctx) {
-  (void)ctx;
-  return hipErrorNotSupported;
-}
-
-HIPAPI hipError_t hipExecutionCtxGetDevResource(hipExecutionCtx_t ctx,
-                                                hipDevResource* resource,
-                                                hipDevResourceType type) {
-  (void)ctx;
-  (void)resource;
-  (void)type;
-  return hipErrorNotSupported;
-}
-
-HIPAPI hipError_t hipExecutionCtxGetDevice(hipDevice_t* device,
-                                           hipExecutionCtx_t ctx) {
-  (void)device;
-  (void)ctx;
-  return hipErrorNotSupported;
-}
-
-HIPAPI hipError_t hipExecutionCtxGetId(hipExecutionCtx_t ctx,
-                                       unsigned long long* ctxId) {
-  (void)ctx;
-  (void)ctxId;
-  return hipErrorNotSupported;
-}
-
 HIPAPI hipError_t hipExecutionCtxRecordEvent(hipExecutionCtx_t ctx,
                                              hipEvent_t event) {
   (void)ctx;
@@ -941,16 +913,6 @@ HIPAPI hipError_t hipGraphExecExternalSemaphoresWaitNodeSetParams(
   (void)hGraphExec;
   (void)hNode;
   (void)nodeParams;
-  return hipErrorNotSupported;
-}
-
-HIPAPI hipError_t hipGreenCtxCreate(hipExecutionCtx_t* ctx,
-                                    hipDevResourceDesc_t desc, int device,
-                                    unsigned int flags) {
-  (void)ctx;
-  (void)desc;
-  (void)device;
-  (void)flags;
   return hipErrorNotSupported;
 }
 

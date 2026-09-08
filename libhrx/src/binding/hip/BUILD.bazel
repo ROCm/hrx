@@ -164,6 +164,25 @@ hrx_cc_library(
     ],
 )
 
+hrx_cc_library(
+    name = "execution_context",
+    srcs = ["execution_context.c"],
+    hdrs = ["execution_context.h"],
+    includes = [
+        "../..",
+        "../../../include",
+        "../../libhrx",
+    ],
+    deps = [
+        ":execution_resource",
+        ":execution_resource_descriptor",
+        "//libhrx/src/binding/common",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/threading",
+        "//runtime/src/iree/hal",
+    ],
+)
+
 hrx_cc_shared_library(
     name = "amdhip64",
     srcs = [
@@ -192,6 +211,7 @@ hrx_cc_shared_library(
     target_compatible_with = _LINUX_COMPATIBILITY,
     deps = [
         ":blocking_printf_provider",
+        ":execution_context",
         ":execution_resource",
         ":execution_resource_descriptor",
         ":handle_registry",

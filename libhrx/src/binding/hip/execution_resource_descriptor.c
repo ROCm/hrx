@@ -36,6 +36,13 @@ static hipError_t iree_hip_execution_resource_descriptor_consume_status(
   }
 }
 
+static void iree_hip_execution_resource_descriptor_handle_retain(
+    uintptr_t handle) {
+  iree_hip_execution_resource_descriptor_t* descriptor =
+      (iree_hip_execution_resource_descriptor_t*)handle;
+  iree_atomic_ref_count_inc(&descriptor->ref_count);
+}
+
 hipError_t iree_hip_execution_resource_descriptor_create(
     iree_hal_streaming_device_t* device, const hipDevResource* resources,
     iree_host_size_t resource_count, hipDevResourceDesc_t* out_descriptor) {
@@ -139,6 +146,7 @@ hipError_t iree_hip_execution_resource_descriptor_create(
     }
   }
   if (result == hipSuccess) {
+    iree_atomic_ref_count_init(&descriptor->ref_count);
     descriptor->host_allocator = host_allocator;
     descriptor->device_ordinal = device->ordinal;
     descriptor->table_generation =
@@ -166,10 +174,27 @@ hipError_t iree_hip_execution_resource_descriptor_create(
     *out_descriptor = (hipDevResourceDesc_t)descriptor;
     descriptor = NULL;
   }
-  iree_hip_execution_resource_descriptor_destroy(descriptor);
+  iree_hip_execution_resource_descriptor_release(descriptor);
   iree_allocator_free(host_allocator, union_ordinals);
   iree_allocator_free(host_allocator, selected_resources);
   return result;
+}
+
+bool iree_hip_execution_resource_descriptor_lookup_retain(
+    hipDevResourceDesc_t handle,
+    iree_hip_execution_resource_descriptor_t** out_descriptor) {
+  IREE_ASSERT_ARGUMENT(out_descriptor);
+  if (!handle) return false;
+
+  iree_call_once(&iree_hip_execution_resource_descriptor_registry_once,
+                 iree_hip_execution_resource_descriptor_registry_initialize);
+  if (!iree_hip_handle_registry_lookup_retain(
+          &iree_hip_execution_resource_descriptor_registry, (uintptr_t)handle,
+          iree_hip_execution_resource_descriptor_handle_retain)) {
+    return false;
+  }
+  *out_descriptor = (iree_hip_execution_resource_descriptor_t*)handle;
+  return true;
 }
 
 bool iree_hip_execution_resource_descriptor_take(
@@ -189,8 +214,9 @@ bool iree_hip_execution_resource_descriptor_take(
   return true;
 }
 
-void iree_hip_execution_resource_descriptor_destroy(
+void iree_hip_execution_resource_descriptor_release(
     iree_hip_execution_resource_descriptor_t* descriptor) {
   if (!descriptor) return;
+  if (iree_atomic_ref_count_dec(&descriptor->ref_count) != 1) return;
   iree_allocator_free(descriptor->host_allocator, descriptor);
 }

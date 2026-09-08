@@ -28,6 +28,7 @@
 
 #include "binding/hip/binding_internal.h"
 #include "binding/hip/blocking_printf_provider.h"
+#include "binding/hip/execution_context.h"
 #include "binding/hip/execution_resource.h"
 #include "binding/hip/execution_resource_descriptor.h"
 #include "binding/hip/handle_registry.h"
@@ -1834,12 +1835,13 @@ HIPAPI hipError_t hipHALDeinit(void) {
   iree_call_once(&iree_hip_global_init_mutex_once,
                  iree_hip_initialize_global_init_mutex);
   iree_slim_mutex_lock(&iree_hip_global_init_mutex);
+  const hipError_t result = iree_hip_execution_context_reset_all();
   iree_hal_streaming_cleanup_global();
   iree_atomic_store(&iree_hip_runtime_initialized, 0,
                     iree_memory_order_release);
   iree_slim_mutex_unlock(&iree_hip_global_init_mutex);
   IREE_TRACE_ZONE_END(z0);
-  return hipSuccess;
+  HIP_RETURN_ERROR(result);
 }
 
 // Gets the HIP driver version.
@@ -3146,6 +3148,110 @@ HIPAPI hipError_t hipDevResourceGenerateDesc(hipDevResourceDesc_t* descriptor,
   HIP_RETURN_ERROR(result);
 }
 
+HIPAPI hipError_t hipGreenCtxCreate(hipExecutionCtx_t* context,
+                                    hipDevResourceDesc_t descriptor, int device,
+                                    unsigned int flags) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (!context || !descriptor || flags != 0) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidValue);
+  }
+  hipError_t init_result = iree_hip_ensure_initialized();
+  if (init_result != hipSuccess) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(init_result);
+  }
+
+  iree_hal_streaming_device_t* device_entry =
+      iree_hal_streaming_device_entry(device);
+  if (!device_entry) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidDevice);
+  }
+
+  hipError_t result =
+      iree_hip_execution_context_create(device_entry, descriptor, context);
+  IREE_TRACE_ZONE_END(z0);
+  HIP_RETURN_ERROR(result);
+}
+
+HIPAPI hipError_t hipExecutionCtxDestroy(hipExecutionCtx_t context) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (!context) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidValue);
+  }
+  hipError_t init_result = iree_hip_ensure_initialized();
+  if (init_result != hipSuccess) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(init_result);
+  }
+
+  hipError_t result = iree_hip_execution_context_destroy(context);
+  IREE_TRACE_ZONE_END(z0);
+  HIP_RETURN_ERROR(result);
+}
+
+HIPAPI hipError_t hipExecutionCtxGetDevResource(hipExecutionCtx_t context,
+                                                hipDevResource* resource,
+                                                hipDevResourceType type) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (!resource) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidValue);
+  }
+  if (type != hipDevResourceTypeSm) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidResourceType);
+  }
+  hipError_t init_result = iree_hip_ensure_initialized();
+  if (init_result != hipSuccess) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(init_result);
+  }
+
+  hipError_t result =
+      iree_hip_execution_context_get_resource(context, type, resource);
+  IREE_TRACE_ZONE_END(z0);
+  HIP_RETURN_ERROR(result);
+}
+
+HIPAPI hipError_t hipExecutionCtxGetDevice(hipDevice_t* device,
+                                           hipExecutionCtx_t context) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (!device) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidValue);
+  }
+  hipError_t init_result = iree_hip_ensure_initialized();
+  if (init_result != hipSuccess) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(init_result);
+  }
+
+  hipError_t result = iree_hip_execution_context_get_device(context, device);
+  IREE_TRACE_ZONE_END(z0);
+  HIP_RETURN_ERROR(result);
+}
+
+HIPAPI hipError_t hipExecutionCtxGetId(hipExecutionCtx_t context,
+                                       unsigned long long* context_id) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (!context_id) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidValue);
+  }
+  hipError_t init_result = iree_hip_ensure_initialized();
+  if (init_result != hipSuccess) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(init_result);
+  }
+
+  hipError_t result = iree_hip_execution_context_get_id(context, context_id);
+  IREE_TRACE_ZONE_END(z0);
+  HIP_RETURN_ERROR(result);
+}
+
 static hipError_t iree_hip_graph_memory_device(
     int device, iree_hal_streaming_device_t** out_device) {
   if (out_device) *out_device = NULL;
@@ -3789,6 +3895,13 @@ HIPAPI hipError_t hipDevicePrimaryCtxReset(hipDevice_t dev) {
   if (!device) {
     IREE_TRACE_ZONE_END(z0);
     HIP_RETURN_ERROR(hipErrorInvalidDevice);
+  }
+
+  hipError_t execution_context_result =
+      iree_hip_execution_context_reset_device(dev);
+  if (execution_context_result != hipSuccess) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(execution_context_result);
   }
 
   // Reset the primary context by:

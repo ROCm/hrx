@@ -207,7 +207,7 @@ TEST_F(ExecutionResourceDescriptorTest, UnionsDisjointExactSets) {
   EXPECT_FALSE(iree_hip_execution_resource_descriptor_take(
       handle, &unchanged_descriptor));
   EXPECT_EQ(unchanged_descriptor, descriptor);
-  iree_hip_execution_resource_descriptor_destroy(descriptor);
+  iree_hip_execution_resource_descriptor_release(descriptor);
 }
 
 TEST_F(ExecutionResourceDescriptorTest,
