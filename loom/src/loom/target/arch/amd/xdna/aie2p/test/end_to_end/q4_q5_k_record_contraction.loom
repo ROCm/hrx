@@ -41,8 +41,7 @@ pipeline.def<kernel> public retain target(@array_target) @q4_k_gate_up_array() l
   %q4_activation_schema = encoding.define #ggml.q8_1_x4 : encoding<schema>
   %q4_activation_storage = encoding.define #encoding.storage {layout = %q4_activation_layout : encoding<layout>, schema = %q4_activation_schema : encoding<schema>} : encoding<storage>
 
-  %q4_gate_compute = group.create %compute_lanes : index -> group
-  %q4_up_compute = group.create %compute_lanes : index -> group
+  %q4_compute = group.create %compute_lanes : index -> group
   %q4_output_group = group.create %output_lanes : index -> group
 
   %q4_gate_view = buffer.view %gate_weight[%base] : buffer -> view<[%compute_lanes]x[%output_count]x[%q4_records_per_lane]x144xi8, %q4_weight_storage>
@@ -50,17 +49,17 @@ pipeline.def<kernel> public retain target(@array_target) @q4_k_gate_up_array() l
   %q4_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%output_count]x[%q4_records_per_lane]x2x144xi8, %q4_activation_storage>
   %q4_output_view = buffer.view %output[%base] : buffer -> view<[%output_count]x1xf32>
 
-  %q4_gate_tiles = pipeline.scatter %q4_gate_view across %q4_gate_compute : view<[%compute_lanes]x[%output_count]x[%q4_records_per_lane]x144xi8, %q4_weight_storage>, group -> pipeline.flow<tile<144xi8>>
-  %q4_up_tiles = pipeline.scatter %q4_up_view across %q4_up_compute : view<[%compute_lanes]x[%output_count]x[%q4_records_per_lane]x144xi8, %q4_weight_storage>, group -> pipeline.flow<tile<144xi8>>
-  %q4_activation_tiles = pipeline.scatter %q4_activation_view across %q4_gate_compute : view<[%compute_lanes]x[%output_count]x[%q4_records_per_lane]x2x144xi8, %q4_activation_storage>, group -> pipeline.flow<tile<2x144xi8>>
-  %q4_gate_contributions = pipeline.stage @q4_k_projection_branch on %q4_gate_compute(%q4_gate_tiles, %q4_activation_tiles) : (group, pipeline.flow<tile<144xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
-  %q4_up_contributions = pipeline.stage @q4_k_projection_branch on %q4_up_compute(%q4_up_tiles, %q4_activation_tiles) : (group, pipeline.flow<tile<144xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q4_gate_tiles = pipeline.scatter %q4_gate_view across %q4_compute : view<[%compute_lanes]x[%output_count]x[%q4_records_per_lane]x144xi8, %q4_weight_storage>, group -> pipeline.flow<tile<144xi8>>
+  %q4_up_tiles = pipeline.scatter %q4_up_view across %q4_compute : view<[%compute_lanes]x[%output_count]x[%q4_records_per_lane]x144xi8, %q4_weight_storage>, group -> pipeline.flow<tile<144xi8>>
+  %q4_activation_tiles = pipeline.scatter %q4_activation_view across %q4_compute : view<[%compute_lanes]x[%output_count]x[%q4_records_per_lane]x2x144xi8, %q4_activation_storage>, group -> pipeline.flow<tile<2x144xi8>>
+  %q4_gate_contributions = pipeline.stage @q4_k_projection_branch on %q4_compute(%q4_gate_tiles, %q4_activation_tiles) : (group, pipeline.flow<tile<144xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q4_up_contributions = pipeline.stage @q4_k_projection_branch on %q4_compute(%q4_up_tiles, %q4_activation_tiles) : (group, pipeline.flow<tile<144xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
   %q4_gate_partials = pipeline.fold<addf> %q4_gate_contributions : pipeline.flow<tile<1xf32>>
   %q4_up_partials = pipeline.fold<addf> %q4_up_contributions : pipeline.flow<tile<1xf32>>
   %q4_gate_buffered = pipeline.buffer %q4_gate_partials capacity %ring_capacity : (pipeline.flow<tile<1xf32>>, index) -> pipeline.flow<tile<1xf32>>
   %q4_up_buffered = pipeline.buffer %q4_up_partials capacity %ring_capacity : (pipeline.flow<tile<1xf32>>, index) -> pipeline.flow<tile<1xf32>>
-  %q4_gate = pipeline.reduce @sum_split_k from %q4_gate_compute(%q4_gate_buffered) to %q4_output_group() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
-  %q4_up = pipeline.reduce @sum_split_k from %q4_up_compute(%q4_up_buffered) to %q4_output_group() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
+  %q4_gate = pipeline.reduce @sum_split_k from %q4_compute(%q4_gate_buffered) to %q4_output_group() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
+  %q4_up = pipeline.reduce @sum_split_k from %q4_compute(%q4_up_buffered) to %q4_output_group() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
   %q4_result = pipeline.stage @gate_up_swiglu on %q4_output_group(%q4_gate, %q4_up) : (group, pipeline.flow<tile<1xf32>>, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
   pipeline.write %q4_result to %q4_output_view : pipeline.flow<tile<1xf32>>, view<[%output_count]x1xf32>
   pipeline.return
@@ -96,8 +95,7 @@ pipeline.def<kernel> public retain target(@array_target) @q5_k_gate_up_array() l
   %q5_activation_schema = encoding.define #ggml.q8_1_x4 : encoding<schema>
   %q5_activation_storage = encoding.define #encoding.storage {layout = %q5_activation_layout : encoding<layout>, schema = %q5_activation_schema : encoding<schema>} : encoding<storage>
 
-  %q5_gate_compute = group.create %compute_lanes : index -> group
-  %q5_up_compute = group.create %compute_lanes : index -> group
+  %q5_compute = group.create %compute_lanes : index -> group
   %q5_output_group = group.create %output_lanes : index -> group
 
   %q5_gate_view = buffer.view %gate_weight[%base] : buffer -> view<[%compute_lanes]x[%output_count]x[%q5_records_per_lane]x176xi8, %q5_weight_storage>
@@ -105,17 +103,17 @@ pipeline.def<kernel> public retain target(@array_target) @q5_k_gate_up_array() l
   %q5_activation_view = buffer.view %activation[%base] : buffer -> view<[%compute_lanes]x[%output_count]x[%q5_records_per_lane]x2x144xi8, %q5_activation_storage>
   %q5_output_view = buffer.view %output[%base] : buffer -> view<[%output_count]x1xf32>
 
-  %q5_gate_tiles = pipeline.scatter %q5_gate_view across %q5_gate_compute : view<[%compute_lanes]x[%output_count]x[%q5_records_per_lane]x176xi8, %q5_weight_storage>, group -> pipeline.flow<tile<176xi8>>
-  %q5_up_tiles = pipeline.scatter %q5_up_view across %q5_up_compute : view<[%compute_lanes]x[%output_count]x[%q5_records_per_lane]x176xi8, %q5_weight_storage>, group -> pipeline.flow<tile<176xi8>>
-  %q5_activation_tiles = pipeline.scatter %q5_activation_view across %q5_gate_compute : view<[%compute_lanes]x[%output_count]x[%q5_records_per_lane]x2x144xi8, %q5_activation_storage>, group -> pipeline.flow<tile<2x144xi8>>
-  %q5_gate_contributions = pipeline.stage @q5_k_projection_branch on %q5_gate_compute(%q5_gate_tiles, %q5_activation_tiles) : (group, pipeline.flow<tile<176xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
-  %q5_up_contributions = pipeline.stage @q5_k_projection_branch on %q5_up_compute(%q5_up_tiles, %q5_activation_tiles) : (group, pipeline.flow<tile<176xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q5_gate_tiles = pipeline.scatter %q5_gate_view across %q5_compute : view<[%compute_lanes]x[%output_count]x[%q5_records_per_lane]x176xi8, %q5_weight_storage>, group -> pipeline.flow<tile<176xi8>>
+  %q5_up_tiles = pipeline.scatter %q5_up_view across %q5_compute : view<[%compute_lanes]x[%output_count]x[%q5_records_per_lane]x176xi8, %q5_weight_storage>, group -> pipeline.flow<tile<176xi8>>
+  %q5_activation_tiles = pipeline.scatter %q5_activation_view across %q5_compute : view<[%compute_lanes]x[%output_count]x[%q5_records_per_lane]x2x144xi8, %q5_activation_storage>, group -> pipeline.flow<tile<2x144xi8>>
+  %q5_gate_contributions = pipeline.stage @q5_k_projection_branch on %q5_compute(%q5_gate_tiles, %q5_activation_tiles) : (group, pipeline.flow<tile<176xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
+  %q5_up_contributions = pipeline.stage @q5_k_projection_branch on %q5_compute(%q5_up_tiles, %q5_activation_tiles) : (group, pipeline.flow<tile<176xi8>>, pipeline.flow<tile<2x144xi8>>) -> (pipeline.flow<tile<1xf32>>)
   %q5_gate_partials = pipeline.fold<addf> %q5_gate_contributions : pipeline.flow<tile<1xf32>>
   %q5_up_partials = pipeline.fold<addf> %q5_up_contributions : pipeline.flow<tile<1xf32>>
   %q5_gate_buffered = pipeline.buffer %q5_gate_partials capacity %ring_capacity : (pipeline.flow<tile<1xf32>>, index) -> pipeline.flow<tile<1xf32>>
   %q5_up_buffered = pipeline.buffer %q5_up_partials capacity %ring_capacity : (pipeline.flow<tile<1xf32>>, index) -> pipeline.flow<tile<1xf32>>
-  %q5_gate = pipeline.reduce @sum_split_k from %q5_gate_compute(%q5_gate_buffered) to %q5_output_group() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
-  %q5_up = pipeline.reduce @sum_split_k from %q5_up_compute(%q5_up_buffered) to %q5_output_group() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
+  %q5_gate = pipeline.reduce @sum_split_k from %q5_compute(%q5_gate_buffered) to %q5_output_group() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
+  %q5_up = pipeline.reduce @sum_split_k from %q5_compute(%q5_up_buffered) to %q5_output_group() : (group, pipeline.flow<tile<1xf32>>) to (group) -> (pipeline.flow<tile<1xf32>>)
   %q5_result = pipeline.stage @gate_up_swiglu on %q5_output_group(%q5_gate, %q5_up) : (group, pipeline.flow<tile<1xf32>>, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
   pipeline.write %q5_result to %q5_output_view : pipeline.flow<tile<1xf32>>, view<[%output_count]x1xf32>
   pipeline.return

@@ -31,6 +31,27 @@ pipeline.def<kernel> public retain target(@array_target) @folded_composite_array
   pipeline.return
 }
 
+pipeline.def<kernel> public retain target(@array_target) @parallel_folded_composite_array() launch(%left: buffer, %right: buffer, %shared: buffer, %left_output: buffer, %right_output: buffer) {
+  %lane_count = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %lane_count : index -> group
+  %left_view = buffer.view %left[%base] : buffer -> view<2x1xf32>
+  %right_view = buffer.view %right[%base] : buffer -> view<2x1xf32>
+  %shared_view = buffer.view %shared[%base] : buffer -> view<2x1xf32>
+  %left_output_view = buffer.view %left_output[%base] : buffer -> view<1xf32>
+  %right_output_view = buffer.view %right_output[%base] : buffer -> view<1xf32>
+  %left_flow = pipeline.read %left_view on %workers : view<2x1xf32>, group -> pipeline.flow<tile<1xf32>>
+  %right_flow = pipeline.read %right_view on %workers : view<2x1xf32>, group -> pipeline.flow<tile<1xf32>>
+  %shared_flow = pipeline.read %shared_view on %workers : view<2x1xf32>, group -> pipeline.flow<tile<1xf32>>
+  %left_records = pipeline.stage @add_f32_record on %workers(%left_flow, %shared_flow) : (group, pipeline.flow<tile<1xf32>>, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  %right_records = pipeline.stage @add_f32_record on %workers(%right_flow, %shared_flow) : (group, pipeline.flow<tile<1xf32>>, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  %left_sum = pipeline.fold<addf> %left_records : pipeline.flow<tile<1xf32>>
+  %right_sum = pipeline.fold<addf> %right_records : pipeline.flow<tile<1xf32>>
+  pipeline.write %left_sum to %left_output_view : pipeline.flow<tile<1xf32>>, view<1xf32>
+  pipeline.write %right_sum to %right_output_view : pipeline.flow<tile<1xf32>>, view<1xf32>
+  pipeline.return
+}
+
 pipeline.def<kernel> public retain target(@array_target) @rate_changed_composite_array() launch(%short_input: buffer, %long_input: buffer, %short_output: buffer, %long_output: buffer) {
   %lane_count = index.constant 1 : index
   %base = index.constant 0 : offset
@@ -55,5 +76,18 @@ func.def target(@core_target) @copy_i32x16(%input: buffer, %output: buffer) {
   %output_view = buffer.view %output_aligned[%base] : buffer -> view<16xi32>
   %value = vector.load %input_view[0] : view<16xi32> -> vector<16xi32>
   vector.store %value, %output_view[0] : vector<16xi32>, view<16xi32>
+  func.return
+}
+
+func.def target(@core_target) @add_f32_record(%lhs: buffer, %rhs: buffer, %output: buffer) {
+  %lhs_aligned, %rhs_aligned, %output_aligned = buffer.assume.alignment %lhs, %rhs, %output {minimum_alignment = 64} : buffer, buffer, buffer
+  %base = index.constant 0 : offset
+  %lhs_view = buffer.view %lhs_aligned[%base] : buffer -> view<1xf32>
+  %rhs_view = buffer.view %rhs_aligned[%base] : buffer -> view<1xf32>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<1xf32>
+  %lhs_value = view.load %lhs_view[0] : view<1xf32> -> f32
+  %rhs_value = view.load %rhs_view[0] : view<1xf32> -> f32
+  %sum = scalar.addf %lhs_value, %rhs_value : f32
+  view.store %sum, %output_view[0] : f32, view<1xf32>
   func.return
 }
