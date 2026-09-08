@@ -433,6 +433,7 @@ loom_check_test_suite(
     loom_check_file_test
   SRCS
     "test/array_plan/split_k.loom-test"
+    "test/descriptors/fifo_load.loom-test"
     "test/descriptors/fused_vector_memory.loom-test"
     "test/module_contracts.loom-test"
     "test/source_low/function_storage.loom-test"
@@ -736,6 +737,7 @@ loom_cc_test(
     ::bundle_plan
     ::leaf_object
     ::low_registry
+    ::machine
     ::relocation
     iree::base::internal::arena
     iree::testing::gtest
