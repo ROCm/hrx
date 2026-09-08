@@ -201,6 +201,7 @@ hrx_cc_library(
         "//libhrx/src/binding/common",
         "//runtime/src/iree/base",
         "//runtime/src/iree/base/threading",
+        "//runtime/src/iree/hal",
     ],
 )
 

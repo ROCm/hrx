@@ -233,6 +233,7 @@ iree_cc_library(
     ::handle_registry
     iree::base
     iree::base::threading
+    iree::hal
     libhrx::src::binding::common
     libhrx_defs
   INCLUDES

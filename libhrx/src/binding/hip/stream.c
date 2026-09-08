@@ -6,6 +6,8 @@
 
 #include "binding/hip/stream.h"
 
+#include <limits.h>
+
 #include "binding/hip/handle_registry.h"
 #include "common/internal.h"
 #include "common/stream.h"
@@ -21,6 +23,56 @@ static void iree_hip_stream_registry_initialize(void) {
 static void iree_hip_stream_handle_retain(uintptr_t handle) {
   hipStream_t stream = (hipStream_t)handle;
   iree_atomic_ref_count_inc(&stream->ref_count);
+}
+
+static iree_host_size_t iree_hip_queue_family_normal_priority_index(
+    const iree_hal_queue_family_spec_t* family_spec) {
+  iree_host_size_t normal_priority_index = 0;
+  while (family_spec->priorities[normal_priority_index] !=
+         IREE_HAL_QUEUE_PRIORITY_NORMAL) {
+    ++normal_priority_index;
+  }
+  return normal_priority_index;
+}
+
+void iree_hip_queue_family_priority_range(
+    const iree_hal_queue_family_t* queue_family, int* out_least_priority,
+    int* out_greatest_priority) {
+  IREE_ASSERT_ARGUMENT(queue_family);
+  const iree_hal_queue_family_spec_t* family_spec =
+      iree_hal_queue_family_spec(queue_family);
+  const iree_host_size_t normal_priority_index =
+      iree_hip_queue_family_normal_priority_index(family_spec);
+  const int least_priority =
+      (int)iree_min(normal_priority_index, (iree_host_size_t)INT_MAX);
+  const iree_host_size_t higher_priority_count =
+      family_spec->priority_count - normal_priority_index - 1;
+  const int greatest_priority =
+      -(int)iree_min(higher_priority_count, (iree_host_size_t)INT_MAX);
+  if (out_least_priority) *out_least_priority = least_priority;
+  if (out_greatest_priority) *out_greatest_priority = greatest_priority;
+}
+
+iree_hal_queue_priority_t iree_hip_queue_family_select_priority(
+    const iree_hal_queue_family_t* queue_family, int requested_priority,
+    int* out_hip_priority) {
+  IREE_ASSERT_ARGUMENT(queue_family);
+  const iree_hal_queue_family_spec_t* family_spec =
+      iree_hal_queue_family_spec(queue_family);
+  const iree_host_size_t normal_priority_index =
+      iree_hip_queue_family_normal_priority_index(family_spec);
+  int least_priority = 0;
+  int greatest_priority = 0;
+  iree_hip_queue_family_priority_range(queue_family, &least_priority,
+                                       &greatest_priority);
+  const int hip_priority =
+      iree_min(iree_max(requested_priority, greatest_priority), least_priority);
+  if (out_hip_priority) *out_hip_priority = hip_priority;
+  const iree_host_size_t queue_priority_index =
+      hip_priority < 0
+          ? normal_priority_index + (iree_host_size_t) - (int64_t)hip_priority
+          : normal_priority_index - (iree_host_size_t)hip_priority;
+  return family_spec->priorities[queue_priority_index];
 }
 
 iree_status_t iree_hip_stream_create(iree_hal_streaming_context_t* context,

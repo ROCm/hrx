@@ -30,6 +30,11 @@ const char* CandidateLibPath() {
 
 using HipInitFn = hipError_t (*)(unsigned int flags);
 using HipGetDeviceFn = hipError_t (*)(int* device);
+using HipGetDevicePropertiesFn = hipError_t (*)(hipDeviceProp_t* properties,
+                                                int device);
+using HipDeviceGetAttributeFn = hipError_t (*)(int* value,
+                                               hipDeviceAttribute_t attribute,
+                                               int device);
 using HipDeviceGetDevResourceFn = hipError_t (*)(hipDevice_t device,
                                                  hipDevResource* resource,
                                                  hipDevResourceType type);
@@ -112,6 +117,12 @@ struct HipRuntimeApi {
   // Returns the calling thread's current device ordinal.
   HipGetDeviceFn get_device = nullptr;
 
+  // Queries the aggregate properties of one device.
+  HipGetDevicePropertiesFn get_device_properties = nullptr;
+
+  // Queries one property of one device.
+  HipDeviceGetAttributeFn device_get_attribute = nullptr;
+
   // Queries the process-visible execution resource of one device.
   HipDeviceGetDevResourceFn device_get_resource = nullptr;
 
@@ -186,6 +197,10 @@ class HipExecutionResourceApiTest : public testing::Test {
       api_.init = ResolveHipSymbol<HipInitFn>(api_.library, "hipInit");
       api_.get_device =
           ResolveHipSymbol<HipGetDeviceFn>(api_.library, "hipGetDevice");
+      api_.get_device_properties = ResolveHipSymbol<HipGetDevicePropertiesFn>(
+          api_.library, "hipGetDeviceProperties");
+      api_.device_get_attribute = ResolveHipSymbol<HipDeviceGetAttributeFn>(
+          api_.library, "hipDeviceGetAttribute");
       api_.device_get_resource = ResolveHipSymbol<HipDeviceGetDevResourceFn>(
           api_.library, "hipDeviceGetDevResource");
       api_.device_execution_context =
@@ -232,6 +247,8 @@ class HipExecutionResourceApiTest : public testing::Test {
 
     ASSERT_NE(api_.init, nullptr);
     ASSERT_NE(api_.get_device, nullptr);
+    ASSERT_NE(api_.get_device_properties, nullptr);
+    ASSERT_NE(api_.device_get_attribute, nullptr);
     ASSERT_NE(api_.device_get_resource, nullptr);
     ASSERT_NE(api_.device_execution_context, nullptr);
     ASSERT_NE(api_.split_sm_by_count, nullptr);
@@ -562,22 +579,48 @@ TEST_F(HipExecutionResourceApiTest, CreatesStreamsAtClampedHardwarePriorities) {
                             &least_priority, &greatest_priority));
   ASSERT_LT(greatest_priority, least_priority);
 
-  hipStream_t stream = nullptr;
+  hipDeviceProp_t properties;
+  std::memset(&properties, 0, sizeof(properties));
+  ASSERT_EQ(hipSuccess, api_.get_device_properties(&properties, device_));
+  EXPECT_TRUE(properties.streamPrioritiesSupported);
+
+  int priorities_supported = 0;
   ASSERT_EQ(hipSuccess,
-            api_.stream_create_with_priority(&stream, hipStreamNonBlocking,
-                                             greatest_priority - 1));
-  ScopedStream stream_guard(stream, StreamDeleter{api_.stream_destroy});
+            api_.device_get_attribute(
+                &priorities_supported,
+                hipDeviceAttributeStreamPrioritiesSupported, device_));
+  EXPECT_EQ(priorities_supported, 1);
+
+  hipStream_t high_priority_stream = nullptr;
+  ASSERT_EQ(hipSuccess, api_.stream_create_with_priority(
+                            &high_priority_stream, hipStreamNonBlocking,
+                            greatest_priority - 1));
+  ScopedStream high_priority_stream_guard(high_priority_stream,
+                                          StreamDeleter{api_.stream_destroy});
 
   int actual_priority = 7;
-  ASSERT_EQ(hipSuccess, api_.stream_get_priority(stream, &actual_priority));
+  ASSERT_EQ(hipSuccess,
+            api_.stream_get_priority(high_priority_stream, &actual_priority));
   EXPECT_EQ(actual_priority, greatest_priority);
+
+  hipStream_t low_priority_stream = nullptr;
+  ASSERT_EQ(hipSuccess, api_.stream_create_with_priority(&low_priority_stream,
+                                                         hipStreamNonBlocking,
+                                                         least_priority + 1));
+  ScopedStream low_priority_stream_guard(low_priority_stream,
+                                         StreamDeleter{api_.stream_destroy});
+  actual_priority = 7;
+  ASSERT_EQ(hipSuccess,
+            api_.stream_get_priority(low_priority_stream, &actual_priority));
+  EXPECT_EQ(actual_priority, least_priority);
 
   hipDevResource full_resource;
   ASSERT_EQ(hipSuccess, api_.device_get_resource(device_, &full_resource,
                                                  hipDevResourceTypeSm));
   hipDevResource stream_resource;
-  ASSERT_EQ(hipSuccess, api_.stream_get_resource(stream, &stream_resource,
-                                                 hipDevResourceTypeSm));
+  ASSERT_EQ(hipSuccess,
+            api_.stream_get_resource(high_priority_stream, &stream_resource,
+                                     hipDevResourceTypeSm));
   EXPECT_EQ(
       std::memcmp(&stream_resource, &full_resource, sizeof(full_resource)), 0);
 }

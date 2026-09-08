@@ -466,12 +466,6 @@ hipError_t iree_hip_execution_context_stream_create(
       iree_hip_execution_context_lookup_retain(context_handle);
   if (!context) return hipErrorInvalidValue;
 
-  // HIP uses lower values for higher priority. The advertised binding range is
-  // currently [-1, 0], while HAL priorities increase from low to high.
-  const int hip_priority = iree_min(iree_max(priority, -1), 0);
-  const iree_hal_queue_priority_t queue_priority =
-      (iree_hal_queue_priority_t)-hip_priority;
-
   hipError_t result = hipSuccess;
   iree_hal_streaming_context_t* common_context = NULL;
   iree_hal_queue_t* queue = NULL;
@@ -504,6 +498,13 @@ hipError_t iree_hip_execution_context_stream_create(
     queue_family = iree_hal_device_queue_family(
         device->hal_device, resource_set->queue_family_ordinal);
     if (!queue_family) result = hipErrorInvalidResourceConfiguration;
+  }
+
+  int hip_priority = 0;
+  iree_hal_queue_priority_t queue_priority = IREE_HAL_QUEUE_PRIORITY_NORMAL;
+  if (result == hipSuccess) {
+    queue_priority = iree_hip_queue_family_select_priority(
+        queue_family, priority, &hip_priority);
   }
 
   if (result == hipSuccess) {

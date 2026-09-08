@@ -11,6 +11,7 @@
 #include "iree/base/api.h"
 #include "iree/base/internal/atomics.h"
 #include "iree/base/threading/mutex.h"
+#include "iree/hal/queue.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,7 +19,6 @@ extern "C" {
 
 typedef struct iree_hal_streaming_context_t iree_hal_streaming_context_t;
 typedef struct iree_hal_streaming_stream_t iree_hal_streaming_stream_t;
-typedef struct iree_hal_queue_t iree_hal_queue_t;
 
 // Binding-private ownership and lifetime state behind a public HIP stream
 // handle. The common stream remains the execution engine while this object
@@ -42,6 +42,20 @@ struct hipStream_st {
   // Host allocator owning this handle allocation.
   iree_allocator_t host_allocator;
 };
+
+// Maps the sorted HAL scheduling-priority levels accepted by |queue_family|
+// into a dense HIP range centered on normal priority. Either output may be
+// NULL.
+void iree_hip_queue_family_priority_range(
+    const iree_hal_queue_family_t* queue_family, int* out_least_priority,
+    int* out_greatest_priority);
+
+// Selects the exact HAL scheduling-priority level corresponding to the
+// clamped dense HIP |requested_priority|. Returns the canonical HIP priority
+// in |out_hip_priority| when non-NULL.
+iree_hal_queue_priority_t iree_hip_queue_family_select_priority(
+    const iree_hal_queue_family_t* queue_family, int requested_priority,
+    int* out_hip_priority);
 
 // Creates and publishes a HIP stream that submits through the exact hardware
 // |queue|. The common stream retains |queue| and records the clamped HIP

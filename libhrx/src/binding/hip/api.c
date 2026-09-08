@@ -585,17 +585,6 @@ static bool iree_hip_synchronization_policy_is_valid(
   return false;
 }
 
-static int iree_hip_clamp_stream_priority(int priority) {
-  int least_priority = 0;
-  int greatest_priority = 0;
-  hipError_t result =
-      hipDeviceGetStreamPriorityRange(&least_priority, &greatest_priority);
-  if (result != hipSuccess) return priority;
-  if (priority < greatest_priority) return greatest_priority;
-  if (priority > least_priority) return least_priority;
-  return priority;
-}
-
 static iree_hal_streaming_event_flags_t iree_hip_event_flags_to_internal(
     unsigned int hip_flags) {
   iree_hal_streaming_event_flags_t flags = IREE_HAL_STREAMING_EVENT_FLAG_NONE;
@@ -2107,6 +2096,18 @@ HIPAPI hipError_t hipGetDeviceProperties(hipDeviceProp_t* prop, int device) {
     HIP_RETURN_ERROR(hipErrorInvalidDevice);
   }
 
+  iree_hal_queue_t* primary_queue = NULL;
+  HIP_RETURN_STATUS_AND_END_ZONE_IF_ERROR(
+      z0,
+      iree_hal_streaming_device_select_primary_queue(device_obj,
+                                                     &primary_queue),
+      hipErrorNotSupported);
+  int least_stream_priority = 0;
+  int greatest_stream_priority = 0;
+  iree_hip_queue_family_priority_range(iree_hal_queue_family(primary_queue),
+                                       &least_stream_priority,
+                                       &greatest_stream_priority);
+
   // Get total memory information using libhrx.
   uint64_t total_memory = 0;
   HIP_RETURN_STATUS_AND_END_ZONE_IF_ERROR(
@@ -2223,7 +2224,8 @@ HIPAPI hipError_t hipGetDeviceProperties(hipDeviceProp_t* prop, int device) {
       is_gfx942 ? 4194304 : (is_gfx1100 ? 6291456 : 0);
   prop->maxThreadsPerMultiProcessor =
       device_obj->max_threads_per_multiprocessor;
-  prop->streamPrioritiesSupported = 0;
+  prop->streamPrioritiesSupported =
+      least_stream_priority != greatest_stream_priority;
   prop->globalL1CacheSupported = 1;
   prop->localL1CacheSupported = 1;
   prop->sharedMemPerMultiprocessor =
@@ -2462,6 +2464,18 @@ HIPAPI hipError_t hipDeviceGetAttribute(int* value, hipDeviceAttribute_t attr,
     case hipDeviceAttributeCooperativeMultiDeviceLaunch:
       *value = 0;
       break;
+    case hipDeviceAttributeStreamPrioritiesSupported: {
+      iree_hal_queue_t* primary_queue = NULL;
+      iree_status_t status = iree_hal_streaming_device_select_primary_queue(
+          device_obj, &primary_queue);
+      HIP_RETURN_STATUS(status);
+      int least_priority = 0;
+      int greatest_priority = 0;
+      iree_hip_queue_family_priority_range(iree_hal_queue_family(primary_queue),
+                                           &least_priority, &greatest_priority);
+      *value = least_priority != greatest_priority;
+      break;
+    }
     case hipDeviceAttributeImageSupport:
       *value = 1;
       break;
@@ -2974,14 +2988,12 @@ HIPAPI hipError_t hipDeviceGetByPCIBusId(int* device, const char* pciBusId) {
 // Lower values have higher priority (with 0 being the default).
 HIPAPI hipError_t hipDeviceGetStreamPriorityRange(int* leastPriority,
                                                   int* greatestPriority) {
-  // Return a simple priority range (0 = default, -1 = high priority).
-  // On most AMD GPUs, stream priorities don't have significant effect.
-  if (leastPriority) {
-    *leastPriority = 0;  // Lowest priority (default)
-  }
-  if (greatestPriority) {
-    *greatestPriority = -1;  // Highest priority
-  }
+  iree_hal_streaming_context_t* context = NULL;
+  hipError_t result = iree_hip_ensure_context(&context);
+  if (result != hipSuccess) HIP_RETURN_ERROR(result);
+
+  iree_hip_queue_family_priority_range(iree_hal_queue_family(context->queue),
+                                       leastPriority, greatestPriority);
   return hipSuccess;
 }
 
@@ -10767,14 +10779,17 @@ HIPAPI hipError_t hipStreamCreateWithPriority(hipStream_t* stream,
     HIP_RETURN_ERROR(init_result);
   }
 
-  const int hip_priority = iree_hip_clamp_stream_priority(priority);
+  int hip_priority = 0;
+  const iree_hal_queue_priority_t queue_priority =
+      iree_hip_queue_family_select_priority(
+          iree_hal_queue_family(context->queue), priority, &hip_priority);
   iree_hal_queue_t* acquired_queue = NULL;
   iree_hal_queue_t* queue = context->queue;
   iree_status_t status = iree_ok_status();
-  if (hip_priority != 0) {
+  if (queue_priority != IREE_HAL_QUEUE_PRIORITY_NORMAL) {
     iree_hal_queue_params_t queue_params;
     iree_hal_queue_params_initialize(&queue_params);
-    queue_params.priority = (iree_hal_queue_priority_t)-hip_priority;
+    queue_params.priority = queue_priority;
     queue_params.execution_resources =
         iree_hal_queue_execution_resources(context->queue);
     status = iree_hal_device_acquire_queue(
