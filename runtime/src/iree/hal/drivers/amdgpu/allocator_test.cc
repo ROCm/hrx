@@ -470,7 +470,36 @@ TEST_F(AllocatorTest, VirtualMemoryLifecycleUsesNativeState) {
   IREE_ASSERT_NOT_OK(iree_hal_allocator_virtual_memory_protect(
       allocator, virtual_memory.get(), /*virtual_offset=*/0,
       recommended_page_size, kQueueFamilyAffinity0,
+      IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_DEVICE,
       IREE_HAL_MEMORY_PROTECTION_READ_WRITE));
+  IREE_EXPECT_STATUS_IS(
+      IREE_STATUS_INVALID_ARGUMENT,
+      iree_hal_allocator_virtual_memory_protect(
+          allocator, virtual_memory.get(), /*virtual_offset=*/0,
+          recommended_page_size, kQueueFamilyAffinity0,
+          IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_NONE,
+          IREE_HAL_MEMORY_PROTECTION_READ_WRITE));
+  IREE_EXPECT_STATUS_IS(
+      IREE_STATUS_INVALID_ARGUMENT,
+      iree_hal_allocator_virtual_memory_protect(
+          allocator, virtual_memory.get(), /*virtual_offset=*/0,
+          recommended_page_size, kQueueFamilyAffinity0,
+          (iree_hal_virtual_memory_access_scope_t)1u << 31,
+          IREE_HAL_MEMORY_PROTECTION_READ_WRITE));
+  IREE_EXPECT_STATUS_IS(
+      IREE_STATUS_INVALID_ARGUMENT,
+      iree_hal_allocator_virtual_memory_protect(
+          allocator, virtual_memory.get(), /*virtual_offset=*/0,
+          recommended_page_size, /*queue_family_affinity=*/0,
+          IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_DEVICE,
+          IREE_HAL_MEMORY_PROTECTION_READ_WRITE));
+  IREE_EXPECT_STATUS_IS(
+      IREE_STATUS_INVALID_ARGUMENT,
+      iree_hal_allocator_virtual_memory_protect(
+          allocator, virtual_memory.get(), /*virtual_offset=*/0,
+          recommended_page_size, iree_hal_make_queue_family_affinity(1),
+          IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_DEVICE,
+          IREE_HAL_MEMORY_PROTECTION_READ_WRITE));
 
   VirtualMemoryMapping mapping(allocator, virtual_memory.get(),
                                /*virtual_offset=*/0, recommended_page_size);
@@ -490,6 +519,7 @@ TEST_F(AllocatorTest, VirtualMemoryLifecycleUsesNativeState) {
   IREE_ASSERT_OK(iree_hal_allocator_virtual_memory_protect(
       allocator, virtual_memory.get(), /*virtual_offset=*/0,
       recommended_page_size, kQueueFamilyAffinity0,
+      IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_DEVICE,
       IREE_HAL_MEMORY_PROTECTION_READ_WRITE));
 
   constexpr iree_device_size_t kTouchedSize = 256;
@@ -578,7 +608,47 @@ TEST_F(AllocatorTest, VirtualMemoryMapsMinimumGranuleAcrossPools) {
   IREE_ASSERT_OK(iree_hal_allocator_virtual_memory_protect(
       allocator, virtual_memory.get(), /*virtual_offset=*/0,
       host_minimum_page_size, kQueueFamilyAffinity0,
+      IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_HOST,
       IREE_HAL_MEMORY_PROTECTION_READ_WRITE));
+
+  volatile uint32_t* host_ptr = static_cast<volatile uint32_t*>(
+      iree_hal_amdgpu_buffer_device_pointer(virtual_memory.get()));
+  ASSERT_NE(nullptr, host_ptr);
+  constexpr uint32_t kHostPattern = 0x484F5354u;
+  host_ptr[0] = kHostPattern;
+  EXPECT_EQ(kHostPattern, host_ptr[0]);
+
+  IREE_ASSERT_OK(iree_hal_allocator_virtual_memory_protect(
+      allocator, virtual_memory.get(), /*virtual_offset=*/0,
+      host_minimum_page_size, kQueueFamilyAffinity0,
+      IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_ALL,
+      IREE_HAL_MEMORY_PROTECTION_READ_WRITE));
+
+  constexpr iree_device_size_t kTouchedSize = 256;
+  ASSERT_GE(host_minimum_page_size, kTouchedSize);
+  constexpr uint32_t kDevicePattern = 0x414C4C21u;
+  IREE_ASSERT_OK(QueueFillAndWait(test_device.device(), test_device.queue(),
+                                  virtual_memory.get(), kTouchedSize,
+                                  &kDevicePattern, sizeof(kDevicePattern)));
+  for (iree_host_size_t i = 0; i < kTouchedSize / sizeof(uint32_t); ++i) {
+    EXPECT_EQ(kDevicePattern, host_ptr[i]);
+  }
+
+  IREE_ASSERT_OK(iree_hal_allocator_virtual_memory_protect(
+      allocator, virtual_memory.get(), /*virtual_offset=*/0,
+      host_minimum_page_size, kQueueFamilyAffinity0,
+      IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_HOST,
+      IREE_HAL_MEMORY_PROTECTION_NONE));
+  hsa_access_permission_t gpu_permission = HSA_ACCESS_PERMISSION_NONE;
+  IREE_ASSERT_OK(iree_hsa_amd_vmem_get_access(
+      IREE_LIBHSA(&libhsa_), const_cast<uint32_t*>(host_ptr), &gpu_permission,
+      topology_.gpu_agents[0]));
+  EXPECT_EQ(HSA_ACCESS_PERMISSION_RW, gpu_permission);
+  hsa_access_permission_t cpu_permission = HSA_ACCESS_PERMISSION_RW;
+  IREE_ASSERT_OK(iree_hsa_amd_vmem_get_access(
+      IREE_LIBHSA(&libhsa_), const_cast<uint32_t*>(host_ptr), &cpu_permission,
+      topology_.cpu_agents[topology_.gpu_cpu_map[0]]));
+  EXPECT_EQ(HSA_ACCESS_PERMISSION_NONE, cpu_permission);
 
   IREE_ASSERT_OK(mapping.Unmap());
 }
@@ -651,7 +721,8 @@ TEST_F(AllocatorTest,
   IREE_ASSERT_OK(mapping.Map(physical_memory.get()));
   IREE_ASSERT_OK(iree_hal_allocator_virtual_memory_protect(
       allocator, virtual_memory.get(), /*virtual_offset=*/0, mapping_size,
-      kQueueFamilyAffinity0, IREE_HAL_MEMORY_PROTECTION_READ_WRITE));
+      kQueueFamilyAffinity0, IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_DEVICE,
+      IREE_HAL_MEMORY_PROTECTION_READ_WRITE));
 
   constexpr iree_device_size_t kTouchedSize = 256;
   constexpr uint32_t kPattern = 0xC2055DE1u;

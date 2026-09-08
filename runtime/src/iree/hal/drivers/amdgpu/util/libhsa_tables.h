@@ -227,6 +227,10 @@ IREE_HAL_AMDGPU_LIBHSA_PFN(TRACE_ALWAYS, hsa_status_t, hsa_amd_vmem_set_access,
                                 const hsa_amd_memory_access_desc_t* desc,
                                 size_t desc_cnt),
                            ARGS(va, size, desc, desc_cnt))
+IREE_HAL_AMDGPU_LIBHSA_PFN(TRACE_ALWAYS, hsa_status_t, hsa_amd_vmem_get_access,
+                           DECL(void* va, hsa_access_permission_t* perms,
+                                hsa_agent_t agent_handle),
+                           ARGS(va, perms, agent_handle))
 
 IREE_HAL_AMDGPU_LIBHSA_PFN(TRACE_ALWAYS, hsa_status_t,
                            hsa_amd_vmem_handle_create,
