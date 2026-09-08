@@ -651,14 +651,20 @@ iree_status_t iree_hal_streaming_calculate_max_cooperative_blocks(
 
   // For cooperative kernels, all blocks must be resident on the device at once.
   // Calculate the maximum number of active blocks per multiprocessor.
-  uint32_t max_blocks_per_sm = 0;
+  uint32_t max_blocks_per_multiprocessor = 0;
   IREE_RETURN_IF_ERROR(
       iree_hal_streaming_calculate_max_active_blocks_per_multiprocessor(
           device, symbol, block_size, dynamic_shared_mem_size,
-          &max_blocks_per_sm));
+          &max_blocks_per_multiprocessor));
 
-  // Total max blocks is limited by the number of SMs on the device.
-  *out_max_blocks = max_blocks_per_sm * device->multiprocessor_count;
+  if (IREE_UNLIKELY(max_blocks_per_multiprocessor != 0 &&
+                    device->multiprocessor_count >
+                        UINT32_MAX / max_blocks_per_multiprocessor)) {
+    return iree_make_status(IREE_STATUS_OUT_OF_RANGE,
+                            "cooperative grid size overflow");
+  }
+  *out_max_blocks =
+      max_blocks_per_multiprocessor * device->multiprocessor_count;
 
   return iree_ok_status();
 }

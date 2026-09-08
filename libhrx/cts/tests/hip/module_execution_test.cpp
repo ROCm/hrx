@@ -9,12 +9,14 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "binding/hip/api.h"
 #include "iree/testing/gtest.h"
 #include "libhrx/cts/core/amdgpu_executable_test_data.hpp"
+#include "libhrx/cts/core/amdgpu_hip_cooperative_test_data.hpp"
 #include "libhrx/cts/core/amdgpu_hip_printf_test_data.hpp"
 
 namespace {
@@ -50,11 +52,44 @@ using HipModuleLaunchKernelFn = hipError_t (*)(
     unsigned int grid_dim_z, unsigned int block_dim_x, unsigned int block_dim_y,
     unsigned int block_dim_z, unsigned int shared_memory_bytes,
     hipStream_t stream, void** arguments, void** extra);
+using HipModuleLaunchCooperativeKernelFn = hipError_t (*)(
+    hipFunction_t function, unsigned int grid_dim_x, unsigned int grid_dim_y,
+    unsigned int grid_dim_z, unsigned int block_dim_x, unsigned int block_dim_y,
+    unsigned int block_dim_z, unsigned int shared_memory_bytes,
+    hipStream_t stream, void** arguments);
 using HipDeviceSynchronizeFn = hipError_t (*)(void);
 using HipMallocFn = hipError_t (*)(hipDeviceptr_t* pointer, size_t size);
 using HipFreeFn = hipError_t (*)(hipDeviceptr_t pointer);
 using HipMemcpyFn = hipError_t (*)(void* target, const void* source,
                                    size_t size, hipMemcpyKind kind);
+using HipMemcpyAsyncFn = hipError_t (*)(void* target, const void* source,
+                                        size_t size, hipMemcpyKind kind,
+                                        hipStream_t stream);
+using HipMemsetAsyncFn = hipError_t (*)(void* target, int value, size_t size,
+                                        hipStream_t stream);
+using HipStreamCreateFn = hipError_t (*)(hipStream_t* stream);
+using HipStreamDestroyFn = hipError_t (*)(hipStream_t stream);
+using HipStreamSynchronizeFn = hipError_t (*)(hipStream_t stream);
+using HipDeviceGetDevResourceFn = hipError_t (*)(hipDevice_t device,
+                                                 hipDevResource* resource,
+                                                 hipDevResourceType type);
+using HipDeviceGetExecutionCtxFn = hipError_t (*)(hipExecutionCtx_t* context,
+                                                  int device);
+using HipDevResourceGenerateDescFn =
+    hipError_t (*)(hipDevResourceDesc_t* descriptor, hipDevResource* resources,
+                   unsigned int resource_count);
+using HipGreenCtxCreateFn = hipError_t (*)(hipExecutionCtx_t* context,
+                                           hipDevResourceDesc_t descriptor,
+                                           int device, unsigned int flags);
+using HipExecutionCtxDestroyFn = hipError_t (*)(hipExecutionCtx_t context);
+using HipExecutionCtxStreamCreateFn = hipError_t (*)(hipStream_t* stream,
+                                                     hipExecutionCtx_t context,
+                                                     unsigned int flags,
+                                                     int priority);
+using HipStreamBeginCaptureFn = hipError_t (*)(hipStream_t stream,
+                                               hipStreamCaptureMode mode);
+using HipStreamEndCaptureFn = hipError_t (*)(hipStream_t stream,
+                                             hipGraph_t* graph);
 using HipGraphCreateFn = hipError_t (*)(hipGraph_t* graph, unsigned int flags);
 using HipGraphDestroyFn = hipError_t (*)(hipGraph_t graph);
 using HipGraphAddKernelNodeFn = hipError_t (*)(
@@ -69,6 +104,34 @@ using HipGraphLaunchFn = hipError_t (*)(hipGraphExec_t graph_executable,
                                         hipStream_t stream);
 using HipGraphExecDestroyFn = hipError_t (*)(hipGraphExec_t graph_executable);
 
+struct ExecutionContextDeleter {
+  // Runtime entry point used to destroy a live execution context.
+  HipExecutionCtxDestroyFn destroy = nullptr;
+
+  void operator()(ihipExecutionCtx_t* context) const {
+    if (context) {
+      const hipError_t result = destroy(context);
+      EXPECT_EQ(hipSuccess, result);
+    }
+  }
+};
+
+using ScopedExecutionContext =
+    std::unique_ptr<ihipExecutionCtx_t, ExecutionContextDeleter>;
+
+struct StreamDeleter {
+  // Runtime entry point used to destroy a live stream.
+  HipStreamDestroyFn destroy = nullptr;
+
+  void operator()(hipStream_st* stream) const {
+    if (stream) {
+      const hipError_t result = destroy(stream);
+      EXPECT_EQ(hipSuccess, result);
+    }
+  }
+};
+
+using ScopedStream = std::unique_ptr<hipStream_st, StreamDeleter>;
 struct PointerArguments {
   // Device input values read by the kernel.
   uint32_t* input;
@@ -553,6 +616,269 @@ TEST(HipModuleExecutionTest, BlockingPrintfDirectAndGraphReplay) {
                           [](int value) { return value == 1; }));
 
   EXPECT_EQ(hipSuccess, hip_free(output));
+  EXPECT_EQ(hipSuccess, module_unload(module));
+}
+
+TEST(HipModuleExecutionTest, CooperativeLaunchPreservesStreamAndGraphOrdering) {
+  if (hrx_cts_amdgpu_hip_cooperative_test_kernels_size() == 0) {
+    GTEST_SKIP() << "ROCm device libraries are unavailable";
+  }
+
+  void* library = dlopen(CandidateLibPath(), RTLD_NOW | RTLD_LOCAL);
+  if (!library) {
+    GTEST_SKIP() << "cannot dlopen " << CandidateLibPath() << ": " << dlerror();
+  }
+
+  const auto init = ResolveHipSymbol<HipInitFn>(library, "hipInit");
+  const auto get_device =
+      ResolveHipSymbol<HipGetDeviceFn>(library, "hipGetDevice");
+  const auto get_device_properties = ResolveHipSymbol<HipGetDevicePropertiesFn>(
+      library, "hipGetDeviceProperties");
+  const auto module_load_data =
+      ResolveHipSymbol<HipModuleLoadDataFn>(library, "hipModuleLoadData");
+  const auto module_unload =
+      ResolveHipSymbol<HipModuleUnloadFn>(library, "hipModuleUnload");
+  const auto module_get_function =
+      ResolveHipSymbol<HipModuleGetFunctionFn>(library, "hipModuleGetFunction");
+  const auto module_launch_cooperative_kernel =
+      ResolveHipSymbol<HipModuleLaunchCooperativeKernelFn>(
+          library, "hipModuleLaunchCooperativeKernel");
+  const auto hip_malloc = ResolveHipSymbol<HipMallocFn>(library, "hipMalloc");
+  const auto hip_free = ResolveHipSymbol<HipFreeFn>(library, "hipFree");
+  const auto hip_memcpy_async =
+      ResolveHipSymbol<HipMemcpyAsyncFn>(library, "hipMemcpyAsync");
+  const auto hip_memset_async =
+      ResolveHipSymbol<HipMemsetAsyncFn>(library, "hipMemsetAsync");
+  const auto stream_create =
+      ResolveHipSymbol<HipStreamCreateFn>(library, "hipStreamCreate");
+  const auto stream_destroy =
+      ResolveHipSymbol<HipStreamDestroyFn>(library, "hipStreamDestroy");
+  const auto stream_synchronize =
+      ResolveHipSymbol<HipStreamSynchronizeFn>(library, "hipStreamSynchronize");
+  const auto device_get_resource = ResolveHipSymbol<HipDeviceGetDevResourceFn>(
+      library, "hipDeviceGetDevResource");
+  const auto device_get_execution_context =
+      ResolveHipSymbol<HipDeviceGetExecutionCtxFn>(library,
+                                                   "hipDeviceGetExecutionCtx");
+  const auto generate_resource_descriptor =
+      ResolveHipSymbol<HipDevResourceGenerateDescFn>(
+          library, "hipDevResourceGenerateDesc");
+  const auto green_context_create =
+      ResolveHipSymbol<HipGreenCtxCreateFn>(library, "hipGreenCtxCreate");
+  const auto execution_context_destroy =
+      ResolveHipSymbol<HipExecutionCtxDestroyFn>(library,
+                                                 "hipExecutionCtxDestroy");
+  const auto execution_context_stream_create =
+      ResolveHipSymbol<HipExecutionCtxStreamCreateFn>(
+          library, "hipExecutionCtxStreamCreate");
+  const auto stream_begin_capture = ResolveHipSymbol<HipStreamBeginCaptureFn>(
+      library, "hipStreamBeginCapture");
+  const auto stream_end_capture =
+      ResolveHipSymbol<HipStreamEndCaptureFn>(library, "hipStreamEndCapture");
+  const auto graph_destroy =
+      ResolveHipSymbol<HipGraphDestroyFn>(library, "hipGraphDestroy");
+  const auto graph_instantiate =
+      ResolveHipSymbol<HipGraphInstantiateFn>(library, "hipGraphInstantiate");
+  const auto graph_launch =
+      ResolveHipSymbol<HipGraphLaunchFn>(library, "hipGraphLaunch");
+  const auto graph_exec_destroy =
+      ResolveHipSymbol<HipGraphExecDestroyFn>(library, "hipGraphExecDestroy");
+
+  ASSERT_NE(nullptr, init);
+  ASSERT_NE(nullptr, get_device);
+  ASSERT_NE(nullptr, get_device_properties);
+  ASSERT_NE(nullptr, module_load_data);
+  ASSERT_NE(nullptr, module_unload);
+  ASSERT_NE(nullptr, module_get_function);
+  ASSERT_NE(nullptr, module_launch_cooperative_kernel);
+  ASSERT_NE(nullptr, hip_malloc);
+  ASSERT_NE(nullptr, hip_free);
+  ASSERT_NE(nullptr, hip_memcpy_async);
+  ASSERT_NE(nullptr, hip_memset_async);
+  ASSERT_NE(nullptr, stream_create);
+  ASSERT_NE(nullptr, stream_destroy);
+  ASSERT_NE(nullptr, stream_synchronize);
+  ASSERT_NE(nullptr, device_get_resource);
+  ASSERT_NE(nullptr, device_get_execution_context);
+  ASSERT_NE(nullptr, generate_resource_descriptor);
+  ASSERT_NE(nullptr, green_context_create);
+  ASSERT_NE(nullptr, execution_context_destroy);
+  ASSERT_NE(nullptr, execution_context_stream_create);
+  ASSERT_NE(nullptr, stream_begin_capture);
+  ASSERT_NE(nullptr, stream_end_capture);
+  ASSERT_NE(nullptr, graph_destroy);
+  ASSERT_NE(nullptr, graph_instantiate);
+  ASSERT_NE(nullptr, graph_launch);
+  ASSERT_NE(nullptr, graph_exec_destroy);
+
+  const hipError_t init_result = init(/*flags=*/0);
+  if (init_result != hipSuccess) {
+    GTEST_SKIP() << "hipInit failed: " << init_result;
+  }
+  int device = 0;
+  ASSERT_EQ(hipSuccess, get_device(&device));
+  hipDeviceProp_t properties = {};
+  ASSERT_EQ(hipSuccess, get_device_properties(&properties, device));
+  if (!properties.cooperativeLaunch) {
+    GTEST_SKIP() << "device does not support cooperative launch";
+  }
+
+  const hrx_cts::AmdgpuHipCooperativeTestImage test_image =
+      hrx_cts::FindAmdgpuHipCooperativeTestImage(properties.gcnArchName);
+  ASSERT_NE(nullptr, test_image.file)
+      << "no embedded cooperative HSACO for " << properties.gcnArchName;
+
+  std::vector<uint8_t> image(test_image.file->data,
+                             test_image.file->data + test_image.file->size);
+  hipModule_t module = nullptr;
+  ASSERT_EQ(hipSuccess, module_load_data(&module, image.data()));
+  std::fill(image.begin(), image.end(), uint8_t{0xA5});
+  std::vector<uint8_t>().swap(image);
+  hipFunction_t function = nullptr;
+  ASSERT_EQ(hipSuccess, module_get_function(&function, module,
+                                            "hrx_cooperative_grid_sync"));
+
+  constexpr uint32_t kWorkgroupCount = 4;
+  constexpr uint32_t kWorkgroupSize = 64;
+  hipDeviceptr_t scratch = nullptr;
+  hipDeviceptr_t output = nullptr;
+  ASSERT_EQ(hipSuccess,
+            hip_malloc(&scratch, kWorkgroupCount * sizeof(uint32_t)));
+  ASSERT_EQ(hipSuccess,
+            hip_malloc(&output, kWorkgroupCount * sizeof(uint32_t)));
+  hipStream_t direct_stream = nullptr;
+  ASSERT_EQ(hipSuccess, stream_create(&direct_stream));
+  ScopedStream direct_stream_guard(direct_stream,
+                                   StreamDeleter{stream_destroy});
+  hipStream_t graph_stream = nullptr;
+  ASSERT_EQ(hipSuccess, stream_create(&graph_stream));
+  ScopedStream graph_stream_guard(graph_stream, StreamDeleter{stream_destroy});
+
+  hipExecutionCtx_t primary_context = nullptr;
+  ASSERT_EQ(hipSuccess, device_get_execution_context(&primary_context, device));
+  hipStream_t primary_context_stream = nullptr;
+  ASSERT_EQ(hipSuccess, execution_context_stream_create(
+                            &primary_context_stream, primary_context,
+                            hipStreamDefault, /*priority=*/0));
+  ScopedStream primary_context_stream_guard(primary_context_stream,
+                                            StreamDeleter{stream_destroy});
+
+  hipDevResource full_resource;
+  ASSERT_EQ(hipSuccess,
+            device_get_resource(device, &full_resource, hipDevResourceTypeSm));
+  hipDevResourceDesc_t full_resource_descriptor = nullptr;
+  ASSERT_EQ(hipSuccess,
+            generate_resource_descriptor(&full_resource_descriptor,
+                                         &full_resource, /*resource_count=*/1));
+  hipExecutionCtx_t full_resource_context = nullptr;
+  ASSERT_EQ(hipSuccess, green_context_create(&full_resource_context,
+                                             full_resource_descriptor, device,
+                                             /*flags=*/0));
+  ScopedExecutionContext full_resource_context_guard(
+      full_resource_context,
+      ExecutionContextDeleter{execution_context_destroy});
+  hipStream_t full_resource_stream = nullptr;
+  ASSERT_EQ(hipSuccess, execution_context_stream_create(
+                            &full_resource_stream, full_resource_context,
+                            hipStreamDefault, /*priority=*/0));
+  ScopedStream full_resource_stream_guard(full_resource_stream,
+                                          StreamDeleter{stream_destroy});
+
+  auto launch = [&](hipStream_t stream, uint32_t incarnation) {
+    hipDeviceptr_t scratch_argument = scratch;
+    hipDeviceptr_t output_argument = output;
+    uint32_t workgroup_count = kWorkgroupCount;
+    void* arguments[] = {&scratch_argument, &output_argument, &incarnation,
+                         &workgroup_count};
+    return module_launch_cooperative_kernel(
+        function, kWorkgroupCount, 1, 1, kWorkgroupSize, 1, 1,
+        /*shared_memory_bytes=*/0, stream, arguments);
+  };
+  auto expected_sum = [](uint32_t incarnation) {
+    return kWorkgroupCount * incarnation +
+           (kWorkgroupCount * (kWorkgroupCount - 1)) / 2;
+  };
+
+  constexpr uint32_t kDirectIncarnation = 100;
+  std::array<uint32_t, kWorkgroupCount> direct_expected = {};
+  direct_expected.fill(expected_sum(kDirectIncarnation));
+  // These three operations execute on ordinary, cooperative, and ordinary
+  // queue realizations. Their shared stream timeline must order both queue
+  // transitions without relying on either hardware queue being FIFO.
+  ASSERT_EQ(hipSuccess,
+            hip_memset_async(output, 0, kWorkgroupCount * sizeof(uint32_t),
+                             direct_stream));
+  ASSERT_EQ(hipSuccess, launch(direct_stream, kDirectIncarnation));
+  std::array<uint32_t, kWorkgroupCount> actual = {};
+  ASSERT_EQ(hipSuccess, hip_memcpy_async(actual.data(), output, sizeof(actual),
+                                         hipMemcpyDeviceToHost, direct_stream));
+  ASSERT_EQ(hipSuccess, stream_synchronize(direct_stream));
+  EXPECT_EQ(direct_expected, actual);
+
+  constexpr uint32_t kPrimaryContextIncarnation = 125;
+  std::array<uint32_t, kWorkgroupCount> primary_context_expected = {};
+  primary_context_expected.fill(expected_sum(kPrimaryContextIncarnation));
+  ASSERT_EQ(hipSuccess,
+            hip_memset_async(output, 0, kWorkgroupCount * sizeof(uint32_t),
+                             primary_context_stream));
+  ASSERT_EQ(hipSuccess,
+            launch(primary_context_stream, kPrimaryContextIncarnation));
+  actual.fill(UINT32_MAX);
+  ASSERT_EQ(hipSuccess,
+            hip_memcpy_async(actual.data(), output, sizeof(actual),
+                             hipMemcpyDeviceToHost, primary_context_stream));
+  ASSERT_EQ(hipSuccess, stream_synchronize(primary_context_stream));
+  EXPECT_EQ(primary_context_expected, actual);
+
+  constexpr uint32_t kFullResourceIncarnation = 150;
+  std::array<uint32_t, kWorkgroupCount> full_resource_expected = {};
+  full_resource_expected.fill(expected_sum(kFullResourceIncarnation));
+  ASSERT_EQ(hipSuccess,
+            hip_memset_async(output, 0, kWorkgroupCount * sizeof(uint32_t),
+                             full_resource_stream));
+  ASSERT_EQ(hipSuccess, launch(full_resource_stream, kFullResourceIncarnation));
+  actual.fill(UINT32_MAX);
+  ASSERT_EQ(hipSuccess,
+            hip_memcpy_async(actual.data(), output, sizeof(actual),
+                             hipMemcpyDeviceToHost, full_resource_stream));
+  ASSERT_EQ(hipSuccess, stream_synchronize(full_resource_stream));
+  EXPECT_EQ(full_resource_expected, actual);
+
+  constexpr uint32_t kGraphIncarnation = 200;
+  std::array<uint32_t, kWorkgroupCount> graph_expected = {};
+  graph_expected.fill(expected_sum(kGraphIncarnation));
+  // Capture creates a recordable memset partition followed by a direct
+  // cooperative dispatch partition. Replaying twice proves each launch gets
+  // fresh grid-synchronization state and rejoins the launching stream tail.
+  ASSERT_EQ(hipSuccess,
+            stream_begin_capture(graph_stream, hipStreamCaptureModeGlobal));
+  ASSERT_EQ(hipSuccess,
+            hip_memset_async(output, 0, kWorkgroupCount * sizeof(uint32_t),
+                             graph_stream));
+  ASSERT_EQ(hipSuccess, launch(graph_stream, kGraphIncarnation));
+  hipGraph_t graph = nullptr;
+  ASSERT_EQ(hipSuccess, stream_end_capture(graph_stream, &graph));
+  ASSERT_NE(nullptr, graph);
+  hipGraphExec_t graph_executable = nullptr;
+  ASSERT_EQ(hipSuccess,
+            graph_instantiate(&graph_executable, graph,
+                              /*error_node=*/nullptr, /*log_buffer=*/nullptr,
+                              /*buffer_size=*/0));
+
+  for (int replay = 0; replay < 2; ++replay) {
+    actual.fill(UINT32_MAX);
+    ASSERT_EQ(hipSuccess, graph_launch(graph_executable, graph_stream));
+    ASSERT_EQ(hipSuccess,
+              hip_memcpy_async(actual.data(), output, sizeof(actual),
+                               hipMemcpyDeviceToHost, graph_stream));
+    ASSERT_EQ(hipSuccess, stream_synchronize(graph_stream));
+    EXPECT_EQ(graph_expected, actual);
+  }
+
+  EXPECT_EQ(hipSuccess, graph_exec_destroy(graph_executable));
+  EXPECT_EQ(hipSuccess, graph_destroy(graph));
+  EXPECT_EQ(hipSuccess, hip_free(output));
+  EXPECT_EQ(hipSuccess, hip_free(scratch));
   EXPECT_EQ(hipSuccess, module_unload(module));
 }
 

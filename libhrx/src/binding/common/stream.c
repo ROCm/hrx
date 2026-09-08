@@ -4,6 +4,8 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
+#include "common/stream.h"
+
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -311,6 +313,7 @@ iree_status_t iree_hal_streaming_stream_create(
   stream->completed_value = 0;
   stream->queue = queue;
   iree_hal_queue_retain(stream->queue);
+  stream->cooperative_queue = NULL;
   stream->memory_reuse_dependencies = NULL;
   stream->memory_reuse_dependency_count = 0;
   stream->memory_reuse_dependency_capacity = 0;
@@ -349,6 +352,42 @@ iree_status_t iree_hal_streaming_stream_create(
   return status;
 }
 
+iree_status_t iree_hal_streaming_stream_select_cooperative_queue_locked(
+    iree_hal_streaming_stream_t* stream, iree_hal_queue_t** out_queue) {
+  IREE_ASSERT_ARGUMENT(stream);
+  IREE_ASSERT_ARGUMENT(out_queue);
+
+  if (IREE_UNLIKELY(!stream->context || !stream->queue)) {
+    return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
+                            "stream execution context has been destroyed");
+  }
+  if (iree_all_bits_set(iree_hal_queue_features(stream->queue),
+                        IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH)) {
+    *out_queue = stream->queue;
+    return iree_ok_status();
+  }
+  if (stream->cooperative_queue) {
+    *out_queue = stream->cooperative_queue;
+    return iree_ok_status();
+  }
+
+  iree_hal_queue_params_t params;
+  iree_hal_queue_params_initialize(&params);
+  params.priority = iree_hal_queue_priority(stream->queue);
+  params.features = iree_hal_queue_features(stream->queue) |
+                    IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH;
+  params.execution_resources =
+      iree_hal_queue_execution_resources(stream->queue);
+  iree_hal_queue_t* cooperative_queue = NULL;
+  IREE_RETURN_IF_ERROR(iree_hal_device_acquire_queue(
+      stream->context->device, iree_hal_queue_family(stream->queue), &params,
+      &cooperative_queue));
+
+  stream->cooperative_queue = cooperative_queue;
+  *out_queue = cooperative_queue;
+  return iree_ok_status();
+}
+
 static void iree_hal_streaming_stream_destroy(
     iree_hal_streaming_stream_t* stream) {
   IREE_TRACE_ZONE_BEGIN(z0);
@@ -365,9 +404,12 @@ static void iree_hal_streaming_stream_destroy(
     iree_slim_mutex_lock(&stream->mutex);
     if (stream->context == context) {
       iree_hal_queue_t* queue = stream->queue;
+      iree_hal_queue_t* cooperative_queue = stream->cooperative_queue;
       stream->queue = NULL;
+      stream->cooperative_queue = NULL;
       stream->context = NULL;
       iree_slim_mutex_unlock(&stream->mutex);
+      iree_hal_queue_release(cooperative_queue);
       iree_hal_queue_release(queue);
     } else {
       iree_slim_mutex_unlock(&stream->mutex);
@@ -1249,23 +1291,14 @@ iree_status_t iree_hal_streaming_launch_kernel(
   uint64_t timing_barrier_ns = 0;
   const bool direct_queue_dispatch_requested =
       hrx_direct_queue_dispatch_enabled();
+  const bool cooperative_dispatch = iree_any_bit_set(
+      params->flags, IREE_HAL_STREAMING_DISPATCH_FLAG_COOPERATIVE);
 
   // Verify the symbol is a function.
   if (symbol->type != IREE_HAL_STREAMING_SYMBOL_TYPE_FUNCTION) {
     IREE_TRACE_ZONE_END(z0);
     return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                             "symbol is not a function (type=%d)", symbol->type);
-  }
-
-  // Check if cooperative launch is requested.
-  if (params->flags & IREE_HAL_STREAMING_DISPATCH_FLAG_COOPERATIVE) {
-    // Cooperative launch requires a backend dispatch mode that reserves the
-    // full grid concurrently. The HAL dispatch path does not expose that
-    // contract, so fail loudly.
-    IREE_TRACE_ZONE_END(z0);
-    return iree_make_status(
-        IREE_STATUS_UNIMPLEMENTED,
-        "cooperative kernel launch not yet implemented in HAL layer");
   }
 
   // Verify parameter storage early for metadata-described launches. The
@@ -1289,19 +1322,6 @@ iree_status_t iree_hal_streaming_launch_kernel(
         z0, iree_hal_streaming_capture_set_last_node(stream, node));
     IREE_TRACE_ZONE_END(z0);
     return iree_ok_status();
-  }
-
-  // Ensure prior command-buffer work is submitted before direct dispatches.
-  // Direct dispatches use the stream timeline wait/signal chain below; command
-  // buffer dispatches continue recording into the current stream command
-  // buffer.
-  if (direct_queue_dispatch_requested && stream->command_buffer) {
-    uint64_t timing_step_ns = timing_enabled ? hrx_launch_timing_now_ns() : 0;
-    iree_status_t flush_status = iree_hal_streaming_stream_flush(stream);
-    if (timing_enabled) {
-      timing_begin_ns += hrx_launch_timing_now_ns() - timing_step_ns;
-    }
-    IREE_RETURN_AND_END_ZONE_IF_ERROR(z0, flush_status);
   }
 
   // Check if this is a "native" kernel without IREE parameter metadata.
@@ -1394,7 +1414,11 @@ iree_status_t iree_hal_streaming_launch_kernel(
     timing_params_ns += hrx_launch_timing_now_ns() - timing_params_start_ns;
   }
 
-  bool dispatch_directly = direct_queue_dispatch_requested;
+  // Cooperative dispatch is an operation-level queue requirement, not mutable
+  // stream state. Submit it directly through the cooperative realization while
+  // preserving the stream's timeline around the cross-queue operation.
+  bool dispatch_directly =
+      direct_queue_dispatch_requested || cooperative_dispatch;
   if (iree_status_is_ok(status) && !dispatch_directly) {
     for (iree_host_size_t i = 0; i < arguments.bindings.count; ++i) {
       const iree_hal_buffer_ref_t* binding = &arguments.bindings.values[i];
@@ -1405,12 +1429,13 @@ iree_status_t iree_hal_streaming_launch_kernel(
         break;
       }
     }
-    if (dispatch_directly && stream->command_buffer) {
-      uint64_t timing_step_ns = timing_enabled ? hrx_launch_timing_now_ns() : 0;
-      status = iree_hal_streaming_stream_flush(stream);
-      if (timing_enabled) {
-        timing_begin_ns += hrx_launch_timing_now_ns() - timing_step_ns;
-      }
+  }
+  if (iree_status_is_ok(status) && dispatch_directly &&
+      stream->command_buffer) {
+    uint64_t timing_step_ns = timing_enabled ? hrx_launch_timing_now_ns() : 0;
+    status = iree_hal_streaming_stream_flush(stream);
+    if (timing_enabled) {
+      timing_begin_ns += hrx_launch_timing_now_ns() - timing_step_ns;
     }
   }
 
@@ -1442,15 +1467,25 @@ iree_status_t iree_hal_streaming_launch_kernel(
         (arguments.use_raw_arguments || is_pre_packed)
             ? IREE_HAL_DISPATCH_FLAG_CUSTOM_DIRECT_ARGUMENTS
             : IREE_HAL_DISPATCH_FLAG_NONE;
+    if (cooperative_dispatch) {
+      flags |= IREE_HAL_DISPATCH_FLAG_COOPERATIVE;
+    }
 
     uint64_t timing_step_ns = timing_enabled ? hrx_launch_timing_now_ns() : 0;
     bool should_flush = false;
     iree_slim_mutex_lock(&stream->mutex);
     if (dispatch_directly) {
+      iree_hal_queue_t* dispatch_queue = stream->queue;
+      if (cooperative_dispatch) {
+        status = iree_hal_streaming_stream_select_cooperative_queue_locked(
+            stream, &dispatch_queue);
+      }
       uint64_t wait_value = 0;
       uint64_t signal_value = 0;
-      status = iree_hal_streaming_stream_reserve_next_value_locked(
-          stream, &wait_value, &signal_value);
+      if (iree_status_is_ok(status)) {
+        status = iree_hal_streaming_stream_reserve_next_value_locked(
+            stream, &wait_value, &signal_value);
+      }
       const iree_hal_semaphore_list_t wait_semaphores = {
           .count = wait_value > 0 ? 1 : 0,
           .semaphores = &stream->timeline_semaphore,
@@ -1463,7 +1498,7 @@ iree_status_t iree_hal_streaming_launch_kernel(
       };
       if (iree_status_is_ok(status)) {
         status = iree_hal_queue_dispatch(
-            stream->queue, wait_semaphores, signal_semaphores,
+            dispatch_queue, wait_semaphores, signal_semaphores,
             symbol->executable,
             iree_hal_executable_function_from_index(symbol->export_ordinal),
             config,
@@ -1475,7 +1510,7 @@ iree_status_t iree_hal_streaming_launch_kernel(
         // The accepted dispatch owns the value it signals, so the timeline
         // advances here and stays advanced even when the flush below fails.
         stream->pending_value = signal_value;
-        status = iree_hal_queue_flush(stream->queue);
+        status = iree_hal_queue_flush(dispatch_queue);
       }
     } else {
       uint64_t timing_begin_step_ns =

@@ -122,6 +122,8 @@ enum iree_hal_streaming_graph_partition_type_e {
   IREE_HAL_STREAMING_GRAPH_PARTITION_TYPE_HOST_CALL,
   // Must be launched as a nested executable graph.
   IREE_HAL_STREAMING_GRAPH_PARTITION_TYPE_GRAPH,
+  // Must be submitted as a direct queue dispatch operation.
+  IREE_HAL_STREAMING_GRAPH_PARTITION_TYPE_DISPATCH,
   // Barrier node.
   IREE_HAL_STREAMING_GRAPH_PARTITION_TYPE_EMPTY,
 };

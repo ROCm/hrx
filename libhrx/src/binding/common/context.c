@@ -286,13 +286,17 @@ static void iree_hal_streaming_context_destroy(
   for (iree_host_size_t i = 0; i < detached_stream_count; ++i) {
     iree_hal_streaming_stream_t* stream = context->streams[i];
     iree_hal_queue_t* queue = NULL;
+    iree_hal_queue_t* cooperative_queue = NULL;
     iree_slim_mutex_lock(&stream->mutex);
     if (stream->context == context) {
       queue = stream->queue;
+      cooperative_queue = stream->cooperative_queue;
       stream->queue = NULL;
+      stream->cooperative_queue = NULL;
       stream->context = NULL;
     }
     iree_slim_mutex_unlock(&stream->mutex);
+    iree_hal_queue_release(cooperative_queue);
     iree_hal_queue_release(queue);
   }
   for (iree_host_size_t i = 0; i < detached_stream_count; ++i) {

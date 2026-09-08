@@ -526,6 +526,10 @@ typedef struct iree_hal_streaming_stream_t {
   // context.
   iree_hal_queue_t* queue;
 
+  // Lazily acquired cooperative realization of |queue| retaining its exact
+  // family, priority, and execution-resource set. NULL until first use.
+  iree_hal_queue_t* cooperative_queue;
+
   // Event dependencies that establish safe cross-stream allocation reuse.
   iree_hal_streaming_memory_reuse_dependency_t* memory_reuse_dependencies;
   // Number of valid entries in |memory_reuse_dependencies|.

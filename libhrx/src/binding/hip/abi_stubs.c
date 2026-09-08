@@ -1031,20 +1031,6 @@ HIPAPI hipError_t hipLaunchByPtr(const void* func) {
   return hipErrorNotSupported;
 }
 
-HIPAPI hipError_t hipLaunchCooperativeKernel(const void* f, dim3 gridDim,
-                                             dim3 blockDimX,
-                                             void** kernelParams,
-                                             unsigned int sharedMemBytes,
-                                             hipStream_t stream) {
-  (void)f;
-  (void)gridDim;
-  (void)blockDimX;
-  (void)kernelParams;
-  (void)sharedMemBytes;
-  (void)stream;
-  return hipErrorNotSupported;
-}
-
 HIPAPI hipError_t hipLaunchCooperativeKernelMultiDevice(
     hipLaunchParams* launchParamsList, int numDevices, unsigned int flags) {
   (void)launchParamsList;

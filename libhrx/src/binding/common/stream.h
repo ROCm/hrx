@@ -16,6 +16,16 @@ extern "C" {
 typedef struct iree_hal_streaming_stream_t iree_hal_streaming_stream_t;
 typedef struct iree_hal_streaming_context_t iree_hal_streaming_context_t;
 
+// Selects the exact hardware queue on which a cooperative operation submitted
+// to |stream| must execute. Lazily acquires and retains a queue with the same
+// family, priority, and execution-resource set as the stream's ordinary queue.
+// The returned pointer is borrowed from |stream| and unchanged on failure.
+//
+// Synchronization: caller must hold |stream->mutex|.
+IREE_MUST_USE_RESULT iree_status_t
+iree_hal_streaming_stream_select_cooperative_queue_locked(
+    iree_hal_streaming_stream_t* stream, iree_hal_queue_t** out_queue);
+
 // Retains the stream's context for one operation. Returns false after context
 // teardown has detached the stream. The caller releases |*out_context|.
 bool iree_hal_streaming_stream_retain_context(

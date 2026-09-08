@@ -126,10 +126,22 @@ static iree_status_t iree_hal_streaming_query_device_info(
   const bool is_gfx1100 = strncmp(device->gcn_arch_name, "gfx1100", 7) == 0;
   const bool is_gfx942 = strncmp(device->gcn_arch_name, "gfx942", 6) == 0;
 
-  // Query cooperative launch support.
-  // TODO: Query from actual device properties.
-  // Cooperative launch requires Pascal (SM 6.0) or newer.
-  device->supports_cooperative_launch = (device->compute_capability_major >= 6);
+  // Cooperative launch is a property of the queue family selected for HIP
+  // streams, not of a marketing architecture number. A provisioned
+  // cooperative queue can be used directly; otherwise the family must support
+  // both the feature and dynamic acquisition of the specialized realization.
+  iree_hal_queue_t* primary_queue = NULL;
+  IREE_RETURN_IF_ERROR(
+      iree_hal_streaming_device_select_primary_queue(device, &primary_queue));
+  const iree_hal_queue_family_spec_t* primary_queue_family_spec =
+      iree_hal_queue_family_spec(iree_hal_queue_family(primary_queue));
+  device->supports_cooperative_launch =
+      iree_all_bits_set(iree_hal_queue_features(primary_queue),
+                        IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH) ||
+      (iree_all_bits_set(primary_queue_family_spec->supported_queue_features,
+                         IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH) &&
+       iree_all_bits_set(primary_queue_family_spec->flags,
+                         IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION));
 
   device->max_threads_per_block = iree_hal_streaming_u32_or_default(
       launch ? launch->maximum_workgroup_invocations : 0, 1024);

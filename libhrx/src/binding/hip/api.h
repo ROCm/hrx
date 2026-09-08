@@ -1675,6 +1675,11 @@ HIPAPI const char* hipKernelNameRefByPtr(const void* hostFunction,
 HIPAPI hipError_t hipLaunchKernel(const void* function_address, dim3 numBlocks,
                                   dim3 dimBlocks, void** args,
                                   size_t sharedMemBytes, hipStream_t stream);
+HIPAPI hipError_t hipLaunchCooperativeKernel(const void* function_address,
+                                             dim3 grid_dim, dim3 block_dim,
+                                             void** kernel_params,
+                                             unsigned int shared_memory_bytes,
+                                             hipStream_t stream);
 HIPAPI hipError_t hipModuleLaunchKernel(
     hipFunction_t f, unsigned int gridDimX, unsigned int gridDimY,
     unsigned int gridDimZ, unsigned int blockDimX, unsigned int blockDimY,

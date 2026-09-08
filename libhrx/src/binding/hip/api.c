@@ -2237,7 +2237,7 @@ HIPAPI hipError_t hipGetDeviceProperties(hipDeviceProp_t* prop, int device) {
   prop->concurrentManagedAccess = 1;
   prop->computePreemptionSupported = 0;
   prop->canUseHostPointerForRegisteredMem = 1;
-  prop->cooperativeLaunch = 0;
+  prop->cooperativeLaunch = device_obj->supports_cooperative_launch ? 1 : 0;
   prop->cooperativeMultiDeviceLaunch = 0;
   prop->sharedMemPerBlockOptin = device_obj->max_shared_memory_per_block_optin;
   prop->pageableMemoryAccessUsesHostPageTables = 0;
@@ -2455,6 +2455,12 @@ HIPAPI hipError_t hipDeviceGetAttribute(int* value, hipDeviceAttribute_t attr,
       break;
     case hipDeviceAttributeCanUseStreamWaitValue:
       *value = 1;
+      break;
+    case hipDeviceAttributeCooperativeLaunch:
+      *value = device_obj->supports_cooperative_launch ? 1 : 0;
+      break;
+    case hipDeviceAttributeCooperativeMultiDeviceLaunch:
+      *value = 0;
       break;
     case hipDeviceAttributeImageSupport:
       *value = 1;
@@ -13109,6 +13115,36 @@ HIPAPI const char* hipKernelNameRefByPtr(const void* hostFunction,
 // Execution control
 //===----------------------------------------------------------------------===//
 
+// Resolves either a compiler-registered host function address or a tagged
+// module function handle to its binding-owned symbol. |out_symbol| is unchanged
+// on failure.
+static hipError_t iree_hip_resolve_function_symbol(
+    iree_hal_streaming_context_t* context, const void* function_address,
+    iree_hal_streaming_symbol_t** out_symbol) {
+  if (!context || !function_address) return hipErrorInvalidValue;
+
+  iree_hal_streaming_symbol_t* symbol = NULL;
+  if (iree_hal_streaming_symbol_has_tag(function_address)) {
+    symbol = iree_hal_streaming_symbol_untag(function_address);
+  } else {
+    iree_status_t lookup_status = iree_hal_streaming_context_symbol_map_lookup(
+        &context->symbol_map, (void*)function_address, &symbol);
+    if (!iree_status_is_ok(lookup_status)) {
+      return iree_status_to_fixed_hip_result(lookup_status,
+                                             hipErrorInvalidDeviceFunction);
+    }
+    if (symbol == (iree_hal_streaming_symbol_t*)function_address) {
+      return hipErrorInvalidDeviceFunction;
+    }
+  }
+
+  if (!symbol || symbol->type != IREE_HAL_STREAMING_SYMBOL_TYPE_FUNCTION) {
+    return hipErrorInvalidDeviceFunction;
+  }
+  *out_symbol = symbol;
+  return hipSuccess;
+}
+
 // Launches a kernel with specified configuration.
 //
 // Parameters:
@@ -13166,50 +13202,13 @@ HIPAPI hipError_t hipLaunchKernel(const void* function_address, dim3 numBlocks,
   iree_hal_streaming_context_t* context = resolved_stream.context;
   iree_hal_streaming_stream_t* stream_obj = resolved_stream.stream;
 
-  // Resolve the host function pointer to a symbol.
-  // Check if this is already a tagged symbol from hipModuleGetFunction (driver
-  // API) or if we need to do the host lookup.
   iree_hal_streaming_symbol_t* symbol = NULL;
-  if (iree_hal_streaming_symbol_has_tag(function_address)) {
-    // Fast path: a symbol pointer - just untag and use directly.
-    symbol = iree_hal_streaming_symbol_untag(function_address);
-    HIP_DEBUG_LOG(
-        "[DEBUG_TAG] Using tagged symbol %p -> copy=%u bind=%u name=%.*s\n",
-        function_address, symbol->parameters.copy_count,
-        symbol->parameters.binding_count,
-        (int)(symbol->name.size > 80 ? 80 : symbol->name.size),
-        symbol->name.data ? symbol->name.data : "(null)");
-  } else {
-    // Slow path: must look up in symbol map.
-    // This may demand-load the entire parent module of the function.
-    iree_status_t lookup_status = iree_hal_streaming_context_symbol_map_lookup(
-        &context->symbol_map, (void*)function_address, &symbol);
-    if (!iree_status_is_ok(lookup_status)) {
-      // Symbol not found in registry - invalid function.
-      iree_status_ignore(lookup_status);
-      HIP_DEBUG_LOG("[DEBUG_LOOKUP] Lookup failed for %p\n", function_address);
-      symbol = NULL;
-    } else if (symbol == (iree_hal_streaming_symbol_t*)function_address) {
-      // Symbol was not found in registry - the lookup returns the host pointer
-      // as a fallback which is not a valid symbol.
-      HIP_DEBUG_LOG("[DEBUG_LOOKUP] Identity returned for %p\n",
-                    function_address);
-      symbol = NULL;
-    } else {
-      // Found valid symbol
-      if (symbol->name.data && strstr(symbol->name.data, "indexSelect")) {
-        HIP_DEBUG_LOG(
-            "[DEBUG_LOOKUP] Found indexSelect: copy=%u bind=%u const=%u\n",
-            symbol->parameters.copy_count, symbol->parameters.binding_count,
-            (unsigned)symbol->parameters.constant_bytes);
-      }
-    }
-  }
-
-  if (!symbol) {
+  hipError_t symbol_result =
+      iree_hip_resolve_function_symbol(context, function_address, &symbol);
+  if (symbol_result != hipSuccess) {
     iree_hip_resolved_stream_release(&resolved_stream);
     IREE_TRACE_ZONE_END(z0);
-    HIP_RETURN_ERROR(hipErrorInvalidDeviceFunction);
+    HIP_RETURN_ERROR(symbol_result);
   }
 
   hipError_t launch_config_result = iree_hip_validate_launch_configuration(
@@ -13648,7 +13647,81 @@ HIPAPI hipError_t hipExtModuleLaunchKernel(
                                stream, kernelParams, extra);
 }
 
-// Launches a cooperative kernel with grid-wide synchronization support.
+static hipError_t iree_hip_launch_cooperative_symbol(
+    iree_hal_streaming_context_t* context, iree_hal_streaming_stream_t* stream,
+    iree_hal_streaming_symbol_t* symbol, unsigned int grid_dim_x,
+    unsigned int grid_dim_y, unsigned int grid_dim_z, unsigned int block_dim_x,
+    unsigned int block_dim_y, unsigned int block_dim_z,
+    unsigned int shared_memory_bytes, void** kernel_params) {
+  iree_hal_streaming_device_t* device = context->device_entry;
+  hipError_t result = iree_hip_validate_launch_configuration(
+      device, symbol, grid_dim_x, grid_dim_y, grid_dim_z, block_dim_x,
+      block_dim_y, block_dim_z, shared_memory_bytes);
+  if (result != hipSuccess) return result;
+  if (!device->supports_cooperative_launch) return hipErrorNotSupported;
+
+  const uint32_t block_size = block_dim_x * block_dim_y * block_dim_z;
+  uint32_t maximum_block_count = 0;
+  iree_status_t status = iree_hal_streaming_calculate_max_cooperative_blocks(
+      device, symbol, block_size, shared_memory_bytes, &maximum_block_count);
+  result = iree_status_to_hip_result(status);
+  if (result != hipSuccess) return result;
+
+  uint64_t total_block_count = 0;
+  uint64_t xy_block_count = 0;
+  if (!iree_checked_mul_u64(grid_dim_x, grid_dim_y, &xy_block_count) ||
+      !iree_checked_mul_u64(xy_block_count, grid_dim_z, &total_block_count) ||
+      total_block_count > maximum_block_count) {
+    return hipErrorCooperativeLaunchTooLarge;
+  }
+
+  const iree_hal_streaming_dispatch_params_t params = {
+      .grid_dim = {grid_dim_x, grid_dim_y, grid_dim_z},
+      .block_dim = {block_dim_x, block_dim_y, block_dim_z},
+      .shared_memory_bytes = shared_memory_bytes,
+      .buffer = kernel_params,
+      .flags = IREE_HAL_STREAMING_DISPATCH_FLAG_COOPERATIVE |
+               IREE_HAL_STREAMING_DISPATCH_FLAG_ARGS_ARRAY,
+  };
+  result = iree_hip_order_legacy_stream_dependencies(context, stream);
+  if (result != hipSuccess) return result;
+  return iree_status_to_hip_result(
+      iree_hal_streaming_launch_kernel(symbol, &params, stream));
+}
+
+// Launches a compiler-registered cooperative kernel with grid-wide
+// synchronization support.
+HIPAPI hipError_t hipLaunchCooperativeKernel(const void* function_address,
+                                             dim3 grid_dim, dim3 block_dim,
+                                             void** kernel_params,
+                                             unsigned int shared_memory_bytes,
+                                             hipStream_t stream) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (!function_address) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidDeviceFunction);
+  }
+
+  iree_hip_resolved_stream_t resolved_stream = {0};
+  hipError_t result =
+      iree_hip_resolve_registered_stream(stream, &resolved_stream);
+  if (result == hipSuccess) {
+    iree_hal_streaming_symbol_t* symbol = NULL;
+    result = iree_hip_resolve_function_symbol(resolved_stream.context,
+                                              function_address, &symbol);
+    if (result == hipSuccess) {
+      result = iree_hip_launch_cooperative_symbol(
+          resolved_stream.context, resolved_stream.stream, symbol, grid_dim.x,
+          grid_dim.y, grid_dim.z, block_dim.x, block_dim.y, block_dim.z,
+          shared_memory_bytes, kernel_params);
+    }
+  }
+  iree_hip_resolved_stream_release(&resolved_stream);
+  IREE_TRACE_ZONE_END(z0);
+  HIP_RETURN_ERROR(result);
+}
+
+// Launches a module cooperative kernel with grid-wide synchronization support.
 //
 // Parameters:
 //  - f: [IN] Kernel function handle from hipModuleGetFunction().
@@ -13688,9 +13761,10 @@ HIPAPI hipError_t hipExtModuleLaunchKernel(
 // - Higher launch overhead than regular kernels.
 //
 // Device requirements:
-// - Device must support cooperative launch (check device attributes).
-// - Compute capability 6.0+ for NVIDIA, RDNA+ for AMD.
-// - Limited by SM/CU count and available resources.
+// - The stream queue family must support cooperative dispatch.
+// - The requested stream priority and execution resources must have a
+//   cooperative queue realization.
+// - Grid size is limited by device occupancy and resources.
 //
 // Performance considerations:
 // - May reduce occupancy to ensure all blocks are resident.
@@ -13715,7 +13789,7 @@ HIPAPI hipError_t hipModuleLaunchCooperativeKernel(
 
   if (!f) {
     IREE_TRACE_ZONE_END(z0);
-    HIP_RETURN_ERROR(hipErrorInvalidValue);
+    HIP_RETURN_ERROR(hipErrorInvalidResourceHandle);
   }
 
   iree_hip_resolved_stream_t resolved_stream = {0};
@@ -13727,7 +13801,6 @@ HIPAPI hipError_t hipModuleLaunchCooperativeKernel(
   }
   iree_hal_streaming_context_t* context = resolved_stream.context;
   iree_hal_streaming_stream_t* stream_obj = resolved_stream.stream;
-  iree_hal_streaming_device_t* device = context->device_entry;
 
   if (!iree_hal_streaming_symbol_has_tag(f)) {
     iree_hip_resolved_stream_release(&resolved_stream);
@@ -13741,68 +13814,12 @@ HIPAPI hipError_t hipModuleLaunchCooperativeKernel(
     HIP_RETURN_ERROR(hipErrorInvalidHandle);
   }
 
-  hipError_t launch_config_result = iree_hip_validate_launch_configuration(
-      device, symbol, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
-      blockDimZ, sharedMemBytes);
-  if (launch_config_result != hipSuccess) {
-    iree_hip_resolved_stream_release(&resolved_stream);
-    IREE_TRACE_ZONE_END(z0);
-    HIP_RETURN_ERROR(launch_config_result);
-  }
-
-  // Calculate maximum blocks for cooperative launch.
-  // This will return 0 if the device doesn't support cooperative launch.
-  uint32_t block_size = blockDimX * blockDimY * blockDimZ;
-  uint32_t max_blocks = 0;
-  iree_status_t status = iree_hal_streaming_calculate_max_cooperative_blocks(
-      device, symbol, block_size, sharedMemBytes, &max_blocks);
-  hipError_t result =
-      iree_status_to_fixed_hip_result(status, hipErrorInvalidValue);
-  if (result != hipSuccess) {
-    iree_hip_resolved_stream_release(&resolved_stream);
-    IREE_TRACE_ZONE_END(z0);
-    HIP_RETURN_ERROR(result);
-  }
-
-  // Verify grid size doesn't exceed max active blocks.
-  // If max_blocks is 0 (device doesn't support cooperative launch) or
-  // grid is too large, return error.
-  uint64_t total_blocks =
-      (uint64_t)gridDimX * (uint64_t)gridDimY * (uint64_t)gridDimZ;
-  if (max_blocks == 0 || total_blocks > max_blocks) {
-    iree_hip_resolved_stream_release(&resolved_stream);
-    IREE_TRACE_ZONE_END(z0);
-    HIP_RETURN_ERROR(hipErrorCooperativeLaunchTooLarge);
-  }
-
-  // Set up dispatch params with cooperative flag.
-  // Cooperative launch always uses kernelParams format.
-  const iree_hal_streaming_dispatch_params_t params = {
-      .grid_dim = {gridDimX, gridDimY, gridDimZ},
-      .block_dim = {blockDimX, blockDimY, blockDimZ},
-      .shared_memory_bytes = sharedMemBytes,
-      .buffer = kernelParams,  // Array of pointers to parameters.
-      .flags = IREE_HAL_STREAMING_DISPATCH_FLAG_COOPERATIVE,
-  };
-
-  hipError_t dependency_result =
-      iree_hip_order_legacy_stream_dependencies(context, stream_obj);
-  if (dependency_result != hipSuccess) {
-    iree_hip_resolved_stream_release(&resolved_stream);
-    IREE_TRACE_ZONE_END(z0);
-    HIP_RETURN_ERROR(dependency_result);
-  }
-  status = iree_hal_streaming_launch_kernel(symbol, &params, stream_obj);
-  result =
-      iree_status_to_fixed_hip_result(status, hipErrorInvalidConfiguration);
+  hipError_t result = iree_hip_launch_cooperative_symbol(
+      context, stream_obj, symbol, gridDimX, gridDimY, gridDimZ, blockDimX,
+      blockDimY, blockDimZ, sharedMemBytes, kernelParams);
   iree_hip_resolved_stream_release(&resolved_stream);
-  if (result != hipSuccess) {
-    IREE_TRACE_ZONE_END(z0);
-    HIP_RETURN_ERROR(result);
-  }
-
   IREE_TRACE_ZONE_END(z0);
-  return hipSuccess;
+  HIP_RETURN_ERROR(result);
 }
 
 // Enqueues a host function callback in a stream.
@@ -16517,35 +16534,6 @@ hipGraphExecUpdate(hipGraphExec_t hGraphExec, hipGraph_t hGraph,
   }
 
   IREE_TRACE_ZONE_END(z0);
-  return hipSuccess;
-}
-
-static hipError_t iree_hip_resolve_function_symbol(
-    iree_hal_streaming_context_t* context, const void* function_address,
-    iree_hal_streaming_symbol_t** out_symbol) {
-  *out_symbol = NULL;
-  if (!context || !function_address) return hipErrorInvalidValue;
-
-  if (iree_hal_streaming_symbol_has_tag(function_address)) {
-    *out_symbol = iree_hal_streaming_symbol_untag(function_address);
-  } else {
-    iree_status_t lookup_status = iree_hal_streaming_context_symbol_map_lookup(
-        &context->symbol_map, (void*)function_address, out_symbol);
-    if (!iree_status_is_ok(lookup_status)) {
-      iree_status_ignore(lookup_status);
-      return hipErrorInvalidDeviceFunction;
-    }
-    if (*out_symbol == (iree_hal_streaming_symbol_t*)function_address) {
-      *out_symbol = NULL;
-      return hipErrorInvalidDeviceFunction;
-    }
-  }
-
-  if (!*out_symbol ||
-      (*out_symbol)->type != IREE_HAL_STREAMING_SYMBOL_TYPE_FUNCTION) {
-    *out_symbol = NULL;
-    return hipErrorInvalidDeviceFunction;
-  }
   return hipSuccess;
 }
 
