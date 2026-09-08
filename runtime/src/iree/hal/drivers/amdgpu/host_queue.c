@@ -875,6 +875,14 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
         "AMDGPU cooperative queues require the complete execution-resource "
         "set");
   }
+  if (IREE_UNLIKELY(is_cooperative &&
+                    params->hardware.grid_sync_strategy ==
+                        IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_NONE)) {
+    return iree_make_status(
+        IREE_STATUS_UNIMPLEMENTED,
+        "AMDGPU cooperative grid synchronization is unavailable for this "
+        "target");
+  }
 
   IREE_TRACE_ZONE_BEGIN(z0);
 
@@ -898,6 +906,7 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
   out_queue->profiling.memory = params->memory.profiling;
   out_queue->axis = params->identity.axis;
   out_queue->wait_barrier_strategy = params->hardware.wait_barrier_strategy;
+  out_queue->grid_sync_strategy = params->hardware.grid_sync_strategy;
   out_queue->vendor_packet_capabilities =
       params->hardware.vendor_packet_capabilities;
   out_queue->pm4_timestamp_strategy = params->hardware.pm4_timestamp_strategy;

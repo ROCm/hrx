@@ -18,6 +18,7 @@
 #include "iree/hal/drivers/amdgpu/abi/signal.h"
 #include "iree/hal/drivers/amdgpu/abi/tsan.h"
 #include "iree/hal/drivers/amdgpu/device/blit.h"
+#include "iree/hal/drivers/amdgpu/device/grid_sync.h"
 #include "iree/hal/drivers/amdgpu/queue_execution_resources.h"
 #include "iree/hal/drivers/amdgpu/queue_scope.h"
 #include "iree/hal/drivers/amdgpu/util/aql_ring.h"
@@ -218,6 +219,8 @@ typedef struct iree_hal_amdgpu_host_queue_params_t {
     iree_hal_amdgpu_aql_queue_execution_mode_t aql_execution_mode;
     // Device-side strategy used to resolve cross-queue epoch waits.
     iree_hal_amdgpu_wait_barrier_strategy_t wait_barrier_strategy;
+    // Device-side strategy used to synchronize cooperative grids.
+    iree_hal_amdgpu_grid_sync_strategy_t grid_sync_strategy;
     // Vendor-packet capabilities available to this queue.
     iree_hal_amdgpu_vendor_packet_capability_flags_t vendor_packet_capabilities;
     // PM4 timestamp sequence available to this queue.
@@ -605,6 +608,9 @@ typedef struct iree_hal_amdgpu_host_queue_t {
 
   // Device-side wait strategy selected once from the GPU ISA at initialization.
   iree_hal_amdgpu_wait_barrier_strategy_t wait_barrier_strategy;
+
+  // Cooperative grid synchronization strategy selected from the GPU ISA.
+  iree_hal_amdgpu_grid_sync_strategy_t grid_sync_strategy;
 
   // AMD vendor-packet capabilities selected from the GPU ISA.
   iree_hal_amdgpu_vendor_packet_capability_flags_t vendor_packet_capabilities;

@@ -339,7 +339,11 @@ typedef struct iree_hal_amdgpu_physical_device_t {
   iree_hal_amdgpu_wait_barrier_strategy_t wait_barrier_strategy;
   // Queue-local PM4 timestamp strategy selected from this GPU agent's ISA.
   iree_hal_amdgpu_pm4_timestamp_strategy_t pm4_timestamp_strategy;
-  // True when HSA exposes an agent cooperative queue.
+  // Cooperative grid synchronization strategy selected from this GPU agent's
+  // ISA.
+  iree_hal_amdgpu_grid_sync_strategy_t grid_sync_strategy;
+  // True when HSA exposes an agent cooperative queue and the driver has a grid
+  // synchronization strategy for its ISA.
   uint32_t supports_cooperative_dispatch : 1;
 
   // Host queue construction policy valid while frontier assignment is live.

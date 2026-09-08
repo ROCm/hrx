@@ -938,6 +938,8 @@ iree_hal_amdgpu_physical_device_initialize_queue_execution_strategy(
   out_physical_device->vendor_packet_capabilities = vendor_packet_capabilities;
   out_physical_device->wait_barrier_strategy = wait_barrier_strategy;
   out_physical_device->pm4_timestamp_strategy = pm4_timestamp_strategy;
+  out_physical_device->grid_sync_strategy =
+      iree_hal_amdgpu_select_grid_sync_strategy(gfxip_version);
 
   bool hsa_supports_cooperative_queues = false;
   const hsa_status_t cooperative_queue_status = iree_hsa_agent_get_info_raw(
@@ -952,7 +954,9 @@ iree_hal_amdgpu_physical_device_initialize_queue_execution_strategy(
         "querying cooperative queue support");
   }
   out_physical_device->supports_cooperative_dispatch =
-      hsa_supports_cooperative_queues;
+      hsa_supports_cooperative_queues &&
+      out_physical_device->grid_sync_strategy !=
+          IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_NONE;
   return iree_ok_status();
 }
 
@@ -1292,6 +1296,7 @@ static void iree_hal_amdgpu_physical_device_initialize_host_queue_construction(
                       physical_device),
               .aql_execution_mode = physical_device->aql_queue_execution_mode,
               .wait_barrier_strategy = physical_device->wait_barrier_strategy,
+              .grid_sync_strategy = physical_device->grid_sync_strategy,
               .vendor_packet_capabilities =
                   physical_device->vendor_packet_capabilities,
               .pm4_timestamp_strategy = physical_device->pm4_timestamp_strategy,
