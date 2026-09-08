@@ -543,6 +543,59 @@ loom_module(
             'IREE_HAL_DRIVER_WEBGPU AND IREE_ARCH STREQUAL "wasm_32"',
         )
 
+    def test_target_compatible_with_x86_64(self):
+        functions = bazel_to_cmake_converter.BuildFileFunctions(
+            converter=SimpleNamespace(body=""),
+            targets=bazel_to_cmake_targets.TargetConverter(repo_map={"@hrx": ""}),
+            build_dir="",
+        )
+
+        self.assertEqual(
+            functions._target_compatible_condition(["@platforms//cpu:x86_64"]),
+            'IREE_ARCH STREQUAL "x86_64"',
+        )
+
+    def test_target_compatible_with_parenthesizes_disjunctions(self):
+        functions = bazel_to_cmake_converter.BuildFileFunctions(
+            converter=SimpleNamespace(body=""),
+            targets=bazel_to_cmake_targets.TargetConverter(repo_map={"@hrx": ""}),
+            build_dir="",
+        )
+
+        self.assertEqual(
+            functions._target_compatible_condition(
+                [
+                    SimpleNamespace(cmake_condition="AMDF_BUILD"),
+                    SimpleNamespace(
+                        cmake_condition="AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA"
+                    ),
+                ]
+            ),
+            "AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA)",
+        )
+
+    def test_platform_select_deps_supports_named_target_blocks(self):
+        functions = bazel_to_cmake_converter.BuildFileFunctions(
+            converter=SimpleNamespace(body=""),
+            targets=bazel_to_cmake_targets.TargetConverter(repo_map={"@hrx": ""}),
+            build_dir="libamdf",
+        )
+
+        runtime_data = functions.select(
+            {
+                "@platforms//os:windows": ["//runtime/src/iree/base:base"],
+                "//conditions:default": [],
+            }
+        )
+        target_block, select_block = functions._convert_platform_select_deps(
+            "amdf_runtime_data", runtime_data, block_name="RUNTIME_DATA"
+        )
+
+        self.assertIn("  RUNTIME_DATA\n", target_block)
+        self.assertNotIn("  DEPS\n", target_block)
+        self.assertIn("${_amdf_runtime_data_platform_runtime_data}", target_block)
+        self.assertIn('if(CMAKE_SYSTEM_NAME STREQUAL "Windows")', select_block)
+
     def test_cc_binary_linkshared_emits_shared_library(self):
         converter = SimpleNamespace(body="")
         functions = bazel_to_cmake_converter.BuildFileFunctions(
