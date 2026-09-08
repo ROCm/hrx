@@ -148,6 +148,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/build_tools/third_party/rocm/headers.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/build_tools/third_party/spirv_tools/spirv_tools.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/build_tools/third_party/vulkan_headers/vulkan_headers.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/build_tools/third_party/catch2/catch2.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/build_tools/third_party/wkmi/wkmi.cmake")
 
 iree_setup_toolchain()
 hrx_configure_ipo()
@@ -167,6 +168,10 @@ if(IREE_HAL_DRIVER_AMDGPU)
 endif()
 if(IREE_HAL_DRIVER_VULKAN)
   iree_configure_vulkan_headers()
+endif()
+if(AMDF_BUILD AND WIN32 AND IREE_ARCH STREQUAL "x86_64" AND
+   (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
+  iree_configure_amdf_wkmi()
 endif()
 if(IREE_BUILD_TESTS AND (IREE_HAL_DRIVER_VULKAN OR
     (LOOM_BUILD AND LOOM_TARGET_ARCH_SPIRV AND LOOM_EMIT_SPIRV)))

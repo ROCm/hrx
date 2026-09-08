@@ -26,7 +26,23 @@ bazel_dep(name = "catch2", version = "3.13.0", dev_dependency = True)
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
 rocm_repository = use_repo_rule("//build_tools/third_party/rocm:repository.bzl", "rocm_repository")
+
+http_file(
+    name = "amdf_wkmi_header",
+    downloaded_file_path = "wkmi.h",
+    sha256 = "9b76c44ae9898ec070bf10dee9564f24f33434d574b3c4bf6e0b707e6b6786f6",
+    url = "https://raw.githubusercontent.com/ROCm/rocm-systems/85196955cb4342c047f165d64c64c15a0aa5ab1c/shared/amdgpu-windows-interop/wkmi/wkmi.h",
+)
+
+http_file(
+    name = "amdf_wkmi_library",
+    downloaded_file_path = "wkmi.lib",
+    sha256 = "0264bd496f9f6ed71780e137a999963c6254bb2d592a8d3899d6b823c810f89f",
+    url = "https://therock-dvc.s3.amazonaws.com/rocm-systems/files/md5/5d/b2da7799ad342700df22f594012f70",
+)
 
 http_archive(
     name = "spirv_headers",

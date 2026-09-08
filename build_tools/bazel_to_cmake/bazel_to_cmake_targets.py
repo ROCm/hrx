@@ -47,6 +47,7 @@ class TargetConverter:
                 "//third_party:spirv_val": ["iree::third_party::spirv_val"],
                 "//third_party:vulkan_headers": ["iree::third_party::vulkan_headers"],
                 "//third_party:catch2": ["iree::third_party::catch2"],
+                "//third_party:amdf_wkmi": ["iree::third_party::amdf_wkmi"],
                 "@webgpu_headers": [],
                 # py_binary targets have no CMake equivalent.
                 # This is the only target bazel needs to execute the lit tests.
