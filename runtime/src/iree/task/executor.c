@@ -231,6 +231,17 @@ iree_host_size_t iree_task_executor_worker_count(
   return executor->worker_count;
 }
 
+iree_host_size_t iree_task_executor_minimum_worker_local_memory_size(
+    iree_task_executor_t* executor) {
+  if (executor->worker_count == 0) return 0;
+  iree_host_size_t minimum_size = executor->workers[0].local_memory.data_length;
+  for (iree_host_size_t i = 1; i < executor->worker_count; ++i) {
+    minimum_size =
+        iree_min(minimum_size, executor->workers[i].local_memory.data_length);
+  }
+  return minimum_size;
+}
+
 void iree_task_executor_wake_workers(iree_task_executor_t* executor,
                                      int32_t count) {
   if (count <= 0) return;

@@ -229,6 +229,40 @@ enum iree_hal_queue_execute_flag_bits_t {
   IREE_HAL_QUEUE_EXECUTE_FLAG_BORROW_BINDING_TABLE_LIFETIME = 1ull << 0,
 };
 
+// Bitfield controlling an exact-queue dispatch concurrency query.
+typedef uint64_t iree_hal_queue_dispatch_concurrency_flags_t;
+enum iree_hal_queue_dispatch_concurrency_flag_bits_t {
+  // Default dispatch concurrency behavior.
+  IREE_HAL_QUEUE_DISPATCH_CONCURRENCY_FLAG_NONE = 0,
+};
+
+// Exact dispatch configuration used to query queue concurrency.
+typedef struct iree_hal_queue_dispatch_concurrency_params_t {
+  // Exact non-zero workgroup dimensions being queried.
+  uint32_t workgroup_size[3];
+
+  // Additional workgroup-local memory required per workgroup, in bytes.
+  uint32_t dynamic_workgroup_local_memory;
+} iree_hal_queue_dispatch_concurrency_params_t;
+
+// Concurrent residency available to one dispatch on an exact queue.
+typedef struct iree_hal_queue_dispatch_concurrency_t {
+  // Number of homogeneous scheduling domains available to the dispatch.
+  uint32_t scheduling_domain_count;
+
+  // Maximum concurrently resident workgroups in each scheduling domain.
+  // May be zero when the configuration is valid but cannot become resident.
+  uint32_t maximum_concurrent_workgroup_count_per_domain;
+} iree_hal_queue_dispatch_concurrency_t;
+
+// Returns the total concurrent workgroup count across all scheduling domains.
+static inline uint64_t
+iree_hal_queue_dispatch_concurrency_total_workgroup_count(
+    iree_hal_queue_dispatch_concurrency_t concurrency) {
+  return (uint64_t)concurrency.scheduling_domain_count *
+         concurrency.maximum_concurrent_workgroup_count_per_domain;
+}
+
 // Bitfield specifying flags controlling a dispatch operation.
 typedef uint64_t iree_hal_dispatch_flags_t;
 enum iree_hal_dispatch_flag_bits_t {
@@ -679,6 +713,32 @@ iree_hal_queue_host_call(iree_hal_queue_t* queue,
                          iree_hal_host_call_t call, const uint64_t args[4],
                          iree_hal_host_call_flags_t flags);
 
+// Queries the concurrent residency of one dispatch on the exact |queue|.
+//
+// The query is synchronous and read-only: it enqueues no work, establishes no
+// ordering, reserves no execution resources, and does not account for other
+// work executing concurrently. It reports the architectural concurrency of
+// the exact loaded |function| and |params| across the immutable execution
+// resources available to |queue|.
+//
+// Scheduling domains are homogeneous partitions chosen by the implementation
+// for this executable configuration. They have no stable identity, cannot be
+// selected by callers, and may differ between functions on the same queue.
+//
+// Every workgroup dimension in |params| must be non-zero. A configuration that
+// is otherwise valid but cannot make one workgroup resident returns success
+// with maximum_concurrent_workgroup_count_per_domain set to zero. An
+// implementation that cannot calculate an exact result returns
+// IREE_STATUS_UNIMPLEMENTED.
+//
+// |out_concurrency| is unchanged on failure.
+IREE_API_EXPORT iree_status_t iree_hal_queue_query_dispatch_concurrency(
+    iree_hal_queue_t* queue, iree_hal_executable_t* executable,
+    iree_hal_executable_function_t function,
+    iree_hal_queue_dispatch_concurrency_params_t params,
+    iree_hal_queue_dispatch_concurrency_flags_t flags,
+    iree_hal_queue_dispatch_concurrency_t* out_concurrency);
+
 // Enqueues a direct executable dispatch on the exact hardware |queue|.
 //
 // The executable must have been loaded for the exact family containing
@@ -992,6 +1052,14 @@ typedef struct iree_hal_queue_vtable_t {
       const iree_hal_semaphore_list_t signal_semaphore_list,
       iree_hal_host_call_t call, const uint64_t args[4],
       iree_hal_host_call_flags_t flags);
+
+  // Queries the concurrent residency of one direct executable dispatch.
+  iree_status_t(IREE_API_PTR* query_dispatch_concurrency)(
+      iree_hal_queue_t* queue, iree_hal_executable_t* executable,
+      iree_hal_executable_function_t function,
+      iree_hal_queue_dispatch_concurrency_params_t params,
+      iree_hal_queue_dispatch_concurrency_flags_t flags,
+      iree_hal_queue_dispatch_concurrency_t* out_concurrency);
 
   // Enqueues a direct executable dispatch.
   iree_status_t(IREE_API_PTR* dispatch)(

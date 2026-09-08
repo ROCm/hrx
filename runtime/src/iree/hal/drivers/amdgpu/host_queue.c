@@ -2288,6 +2288,23 @@ static iree_status_t iree_hal_amdgpu_host_queue_host_call(
       queue, wait_semaphore_list, signal_semaphore_list, call, args, flags);
 }
 
+static iree_status_t iree_hal_amdgpu_host_queue_query_dispatch_concurrency(
+    iree_hal_queue_t* base_queue, iree_hal_executable_t* executable,
+    iree_hal_executable_function_t function,
+    iree_hal_queue_dispatch_concurrency_params_t params,
+    iree_hal_queue_dispatch_concurrency_flags_t flags,
+    iree_hal_queue_dispatch_concurrency_t* out_concurrency) {
+  IREE_HAL_ASSERT_TYPE(base_queue, &iree_hal_amdgpu_host_queue_vtable);
+  (void)executable;
+  (void)function;
+  (void)params;
+  (void)flags;
+  (void)out_concurrency;
+  return iree_make_status(
+      IREE_STATUS_UNIMPLEMENTED,
+      "AMDGPU queue dispatch concurrency queries are not implemented");
+}
+
 static iree_status_t iree_hal_amdgpu_host_queue_dispatch(
     iree_hal_queue_t* base_queue,
     const iree_hal_semaphore_list_t wait_semaphore_list,
@@ -2487,6 +2504,8 @@ static const iree_hal_queue_vtable_t iree_hal_amdgpu_host_queue_vtable = {
     .barrier = iree_hal_amdgpu_host_queue_barrier,
     .execute = iree_hal_amdgpu_host_queue_execute,
     .host_call = iree_hal_amdgpu_host_queue_host_call,
+    .query_dispatch_concurrency =
+        iree_hal_amdgpu_host_queue_query_dispatch_concurrency,
     .dispatch = iree_hal_amdgpu_host_queue_dispatch,
     .atomic_wait = iree_hal_amdgpu_host_queue_atomic_wait,
     .atomic_store = iree_hal_amdgpu_host_queue_atomic_store,

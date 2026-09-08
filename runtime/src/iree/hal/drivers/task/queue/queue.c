@@ -5013,6 +5013,46 @@ static iree_status_t iree_hal_task_queue_host_call(
       signal_semaphore_list, call, args, flags);
 }
 
+static iree_status_t iree_hal_task_queue_query_dispatch_concurrency(
+    iree_hal_queue_t* base_queue, iree_hal_executable_t* executable,
+    iree_hal_executable_function_t function,
+    iree_hal_queue_dispatch_concurrency_params_t params,
+    iree_hal_queue_dispatch_concurrency_flags_t flags,
+    iree_hal_queue_dispatch_concurrency_t* out_concurrency) {
+  IREE_HAL_ASSERT_TYPE(base_queue, &iree_hal_task_queue_vtable);
+  (void)flags;
+  iree_hal_task_queue_t* queue = (iree_hal_task_queue_t*)base_queue;
+
+  iree_hal_executable_function_info_t function_info;
+  IREE_RETURN_IF_ERROR(
+      iree_hal_executable_function_info(executable, function, &function_info));
+  if (!iree_all_bits_set(
+          function_info.resource_usage.provided_flags,
+          IREE_HAL_EXECUTABLE_FUNCTION_RESOURCE_FLAG_WORKGROUP_LOCAL_MEMORY)) {
+    return iree_make_status(
+        IREE_STATUS_UNIMPLEMENTED,
+        "task executable does not report workgroup-local memory use");
+  }
+  const uint32_t worker_count =
+      (uint32_t)iree_task_executor_worker_count(queue->executor);
+  if (IREE_UNLIKELY(worker_count == 0)) {
+    return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
+                            "task queue executor has no workers");
+  }
+  const uint64_t required_local_memory_size =
+      (uint64_t)function_info.resource_usage.fixed_workgroup_local_memory_size +
+      params.dynamic_workgroup_local_memory;
+  const iree_host_size_t available_local_memory_size =
+      iree_task_executor_minimum_worker_local_memory_size(queue->executor);
+
+  *out_concurrency = (iree_hal_queue_dispatch_concurrency_t){
+      .scheduling_domain_count = worker_count,
+      .maximum_concurrent_workgroup_count_per_domain =
+          required_local_memory_size <= available_local_memory_size ? 1u : 0u,
+  };
+  return iree_ok_status();
+}
+
 static iree_status_t iree_hal_task_queue_dispatch(
     iree_hal_queue_t* base_queue,
     const iree_hal_semaphore_list_t wait_semaphore_list,
@@ -5148,6 +5188,8 @@ static const iree_hal_queue_vtable_t iree_hal_task_queue_vtable = {
     .barrier = iree_hal_task_queue_barrier,
     .execute = iree_hal_task_queue_execute,
     .host_call = iree_hal_task_queue_host_call,
+    .query_dispatch_concurrency =
+        iree_hal_task_queue_query_dispatch_concurrency,
     .dispatch = iree_hal_task_queue_dispatch,
     .atomic_wait = iree_hal_task_queue_atomic_wait,
     .atomic_store = iree_hal_task_queue_atomic_store,

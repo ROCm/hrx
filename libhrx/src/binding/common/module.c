@@ -371,7 +371,6 @@ iree_status_t iree_hal_streaming_module_extract_metadata(
 
     // Cache generic loaded-function facts for compatibility API queries and
     // launch validation.
-    symbol->occupancy_info = export_infos[i].occupancy_info;
     status = iree_hal_streaming_function_attributes_initialize(
         device_spec, &export_infos[i], &symbol->function_attributes);
     if (!iree_status_is_ok(status)) break;

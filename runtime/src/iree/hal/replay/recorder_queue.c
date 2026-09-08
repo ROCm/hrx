@@ -757,6 +757,20 @@ static iree_status_t iree_hal_replay_recorder_queue_host_call(
   return status;
 }
 
+static iree_status_t iree_hal_replay_recorder_queue_query_dispatch_concurrency(
+    iree_hal_queue_t* base_queue, iree_hal_executable_t* executable,
+    iree_hal_executable_function_t function,
+    iree_hal_queue_dispatch_concurrency_params_t params,
+    iree_hal_queue_dispatch_concurrency_flags_t flags,
+    iree_hal_queue_dispatch_concurrency_t* out_concurrency) {
+  iree_hal_replay_recorder_queue_t* queue =
+      (iree_hal_replay_recorder_queue_t*)base_queue;
+  return iree_hal_queue_query_dispatch_concurrency(
+      queue->base_queue,
+      iree_hal_replay_recorder_executable_base_or_self(executable), function,
+      params, flags, out_concurrency);
+}
+
 static iree_status_t iree_hal_replay_recorder_queue_dispatch(
     iree_hal_queue_t* base_queue,
     const iree_hal_semaphore_list_t wait_semaphore_list,
@@ -1961,6 +1975,8 @@ static const iree_hal_queue_vtable_t iree_hal_replay_recorder_queue_vtable = {
     .barrier = iree_hal_replay_recorder_queue_barrier,
     .execute = iree_hal_replay_recorder_queue_execute,
     .host_call = iree_hal_replay_recorder_queue_host_call,
+    .query_dispatch_concurrency =
+        iree_hal_replay_recorder_queue_query_dispatch_concurrency,
     .dispatch = iree_hal_replay_recorder_queue_dispatch,
     .atomic_wait = iree_hal_replay_recorder_queue_atomic_wait,
     .atomic_store = iree_hal_replay_recorder_queue_atomic_store,

@@ -239,6 +239,66 @@ iree_hal_queue_host_call(iree_hal_queue_t* queue,
   return status;
 }
 
+IREE_API_EXPORT iree_status_t iree_hal_queue_query_dispatch_concurrency(
+    iree_hal_queue_t* queue, iree_hal_executable_t* executable,
+    iree_hal_executable_function_t function,
+    iree_hal_queue_dispatch_concurrency_params_t params,
+    iree_hal_queue_dispatch_concurrency_flags_t flags,
+    iree_hal_queue_dispatch_concurrency_t* out_concurrency) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (IREE_UNLIKELY(!queue)) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(IREE_STATUS_INVALID_ARGUMENT, "queue is null"));
+  } else if (IREE_UNLIKELY(!executable)) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                             "dispatch executable is null"));
+  } else if (IREE_UNLIKELY(!out_concurrency)) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                             "dispatch concurrency output is null"));
+  } else if (IREE_UNLIKELY(iree_hal_executable_queue_family(executable) !=
+                           iree_hal_queue_family(queue))) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(
+                IREE_STATUS_INVALID_ARGUMENT,
+                "executable queue family %u does not match query queue "
+                "family %u",
+                iree_hal_queue_family_ordinal(
+                    iree_hal_executable_queue_family(executable)),
+                iree_hal_queue_family_ordinal(iree_hal_queue_family(queue))));
+  } else if (IREE_UNLIKELY(params.workgroup_size[0] == 0 ||
+                           params.workgroup_size[1] == 0 ||
+                           params.workgroup_size[2] == 0)) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                             "dispatch concurrency workgroup dimensions must "
+                             "all be non-zero"));
+  } else if (IREE_UNLIKELY(flags !=
+                           IREE_HAL_QUEUE_DISPATCH_CONCURRENCY_FLAG_NONE)) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(
+                IREE_STATUS_INVALID_ARGUMENT,
+                "unsupported queue dispatch concurrency flags: 0x%016" PRIx64,
+                flags));
+  }
+
+  iree_hal_queue_dispatch_concurrency_t concurrency = {0};
+  iree_status_t status = _VTABLE_DISPATCH(queue, query_dispatch_concurrency)(
+      queue, executable, function, params, flags, &concurrency);
+  if (iree_status_is_ok(status) &&
+      IREE_UNLIKELY(concurrency.scheduling_domain_count == 0)) {
+    status = iree_make_status(
+        IREE_STATUS_FAILED_PRECONDITION,
+        "queue returned dispatch concurrency with no scheduling domains");
+  }
+  if (iree_status_is_ok(status)) {
+    *out_concurrency = concurrency;
+  }
+  IREE_TRACE_ZONE_END(z0);
+  return status;
+}
+
 IREE_API_EXPORT iree_status_t iree_hal_queue_dispatch(
     iree_hal_queue_t* queue,
     const iree_hal_semaphore_list_t wait_semaphore_list,

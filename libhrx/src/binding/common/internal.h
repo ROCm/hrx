@@ -715,9 +715,7 @@ typedef struct iree_hal_streaming_symbol_t {
   iree_hal_executable_t* executable;
   iree_hal_executable_export_ordinal_t export_ordinal;
 
-  // Function attributes (only valid for FUNCTION type).
-  iree_hal_occupancy_info_t occupancy_info;
-  // Cached generic facts and mutable compatibility limits.
+  // Cached generic facts and mutable compatibility limits for functions.
   iree_hal_streaming_function_attributes_t function_attributes;
 
   // Function parameter information used for argument packing and unpacking.
