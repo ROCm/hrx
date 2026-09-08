@@ -8,6 +8,7 @@
 #define IREE_EXPERIMENTAL_STREAMING_INTERNAL_H_
 
 #include "common/event_timestamp_pool.h"
+#include "common/execution_resource.h"
 #include "common/fat_binary.h"
 #include "common/function_attributes.h"
 #include "common/hrx_bridge.h"
@@ -348,6 +349,10 @@ typedef struct iree_hal_streaming_device_t {
   // shares internal representations. Accessed via hrx_device_hal().
   iree_hal_device_t* hal_device;
   iree_hal_device_info_t info;
+
+  // Immutable execution-resource sets interned for copied compatibility API
+  // values. Entries live until this device incarnation is deinitialized.
+  iree_hal_streaming_execution_resource_table_t execution_resource_table;
 
   // Device capabilities.
   uint32_t compute_capability_major;

@@ -291,6 +291,12 @@ static iree_status_t iree_hal_streaming_initialize_device(
   out_device->graph_memory_reserved_high = 0;
   out_device->graph_memory_reusable_size_entries = NULL;
 
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_streaming_execution_resource_table_initialize(
+        out_device->hal_device, registry->host_allocator,
+        &out_device->execution_resource_table);
+  }
+
   if (!iree_status_is_ok(status)) {
     iree_hal_streaming_deinitialize_device(out_device);
   }
@@ -330,6 +336,9 @@ static void iree_hal_streaming_deinitialize_device(
   // Release primary context (may not exist if never accessed).
   iree_hal_streaming_context_release(device->primary_context);
   device->primary_context = NULL;
+
+  iree_hal_streaming_execution_resource_table_deinitialize(
+      &device->execution_resource_table);
 
   iree_hal_streaming_graph_memory_size_entry_t* graph_memory_entry =
       device->graph_memory_reusable_size_entries;

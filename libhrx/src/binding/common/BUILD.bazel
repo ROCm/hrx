@@ -18,6 +18,18 @@ package(
 )
 
 hrx_cc_library(
+    name = "execution_resource",
+    srcs = ["execution_resource.c"],
+    hdrs = ["execution_resource.h"],
+    includes = [".."],
+    deps = [
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/threading",
+        "//runtime/src/iree/hal",
+    ],
+)
+
+hrx_cc_library(
     name = "function_attributes",
     srcs = ["function_attributes.c"],
     hdrs = ["function_attributes.h"],
@@ -76,6 +88,7 @@ hrx_cc_library(
     ],
     textual_hdrs = ["//build_tools/amdgpu:elf_machine_map.inl"],
     deps = [
+        ":execution_resource",
         ":function_attributes",
         "//build_tools/bazel:pthreads",
         "//libhrx/src/libhrx:hrx_static",
@@ -89,6 +102,19 @@ hrx_cc_library(
         "//runtime/src/iree/hal/utils:resource_set",
         "//runtime/src/iree/io:file_handle",
         "//third_party:zstd",
+    ],
+)
+
+hrx_cc_test(
+    name = "execution_resource_test",
+    srcs = ["execution_resource_test.cc"],
+    deps = [
+        ":execution_resource",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/testing:mock_device",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
     ],
 )
 
