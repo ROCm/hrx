@@ -55,7 +55,7 @@
       }
     },
     {
-      "name": "rejects folded same-group stages before source lowering",
+      "name": "rejects frame epilogues until the worker can execute completion phases",
       "run": {
         "tool": "loom-compile",
         "args": [
@@ -71,7 +71,7 @@
       },
       "stderr": {
         "contains": [
-          "AIE2P same-group pipeline rate change requires a composite state machine"
+          "AIE2P frame-completion stages require a phased worker program"
         ]
       }
     },
@@ -128,7 +128,28 @@
       },
       "stderr": {
         "contains": [
-          "AIE2P same-group pipeline rate change requires a composite state machine"
+          "pipeline group 0 stage 1 record shape is neither the shared record cadence nor its completed frame"
+        ]
+      }
+    },
+    {
+      "name": "rejects a worker wait cycle introduced by coalescing a source DAG",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/composite_stateful.loom",
+          "--root=cyclic_worker_array",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--output={tmp}/cyclic_worker.xdna"
+        ]
+      },
+      "exit": {
+        "nonzero": true
+      },
+      "stderr": {
+        "contains": [
+          "AIE2P worker channel cycle requires interleaved channel phases"
         ]
       }
     },

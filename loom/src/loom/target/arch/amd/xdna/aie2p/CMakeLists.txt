@@ -220,6 +220,7 @@ loom_cc_library(
     ::leaf_object
     iree::base
     iree::base::internal::arena
+    loom::analysis::scc
     loom::codegen::low::packet
     loom::codegen::low::target_binding
     loom::ir
@@ -352,6 +353,7 @@ loom_cc_library(
     ::array_plan
     iree::base
     iree::base::internal::arena
+    loom::analysis::pipeline_firing
     loom::analysis::pipeline_plan
     loom::codegen::low::builder
     loom::ir

@@ -43,8 +43,9 @@ pipeline.def<kernel> public retain target(@array_target) @parallel_folded_compos
   %left_flow = pipeline.read %left_view on %workers : view<2x1xf32>, group -> pipeline.flow<tile<1xf32>>
   %right_flow = pipeline.read %right_view on %workers : view<2x1xf32>, group -> pipeline.flow<tile<1xf32>>
   %shared_flow = pipeline.read %shared_view on %workers : view<2x1xf32>, group -> pipeline.flow<tile<1xf32>>
-  %left_records = pipeline.stage @add_f32_record on %workers(%left_flow, %shared_flow) : (group, pipeline.flow<tile<1xf32>>, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
-  %right_records = pipeline.stage @add_f32_record on %workers(%right_flow, %shared_flow) : (group, pipeline.flow<tile<1xf32>>, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  %mapped_shared = pipeline.stage @copy_f32_record on %workers(%shared_flow) : (group, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  %left_records = pipeline.stage @add_f32_record on %workers(%left_flow, %mapped_shared) : (group, pipeline.flow<tile<1xf32>>, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  %right_records = pipeline.stage @add_f32_record on %workers(%right_flow, %mapped_shared) : (group, pipeline.flow<tile<1xf32>>, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
   %left_sum = pipeline.fold<addf> %left_records : pipeline.flow<tile<1xf32>>
   %right_sum = pipeline.fold<addf> %right_records : pipeline.flow<tile<1xf32>>
   pipeline.write %left_sum to %left_output_view : pipeline.flow<tile<1xf32>>, view<1xf32>
@@ -69,6 +70,21 @@ pipeline.def<kernel> public retain target(@array_target) @rate_changed_composite
   pipeline.return
 }
 
+pipeline.def<kernel> public retain target(@array_target) @cyclic_worker_array() launch(%input: buffer, %output: buffer) {
+  %lane_count = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %outer_workers = group.create %lane_count : index -> group
+  %middle_workers = group.create %lane_count : index -> group
+  %input_view = buffer.view %input[%base] : buffer -> view<16xi32>
+  %output_view = buffer.view %output[%base] : buffer -> view<16xi32>
+  %input_flow = pipeline.read %input_view on %outer_workers : view<16xi32>, group -> pipeline.flow<tile<16xi32>>
+  %first_flow = pipeline.stage @copy_i32x16 on %outer_workers(%input_flow) : (group, pipeline.flow<tile<16xi32>>) -> (pipeline.flow<tile<16xi32>>)
+  %middle_flow = pipeline.stage @copy_i32x16 on %middle_workers(%first_flow) : (group, pipeline.flow<tile<16xi32>>) -> (pipeline.flow<tile<16xi32>>)
+  %output_flow = pipeline.stage @copy_i32x16 on %outer_workers(%middle_flow) : (group, pipeline.flow<tile<16xi32>>) -> (pipeline.flow<tile<16xi32>>)
+  pipeline.write %output_flow to %output_view : pipeline.flow<tile<16xi32>>, view<16xi32>
+  pipeline.return
+}
+
 func.def target(@core_target) @copy_i32x16(%input: buffer, %output: buffer) {
   %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 64} : buffer, buffer
   %base = index.constant 0 : offset
@@ -76,6 +92,16 @@ func.def target(@core_target) @copy_i32x16(%input: buffer, %output: buffer) {
   %output_view = buffer.view %output_aligned[%base] : buffer -> view<16xi32>
   %value = vector.load %input_view[0] : view<16xi32> -> vector<16xi32>
   vector.store %value, %output_view[0] : vector<16xi32>, view<16xi32>
+  func.return
+}
+
+func.def target(@core_target) @copy_f32_record(%input: buffer, %output: buffer) {
+  %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 64} : buffer, buffer
+  %base = index.constant 0 : offset
+  %input_view = buffer.view %input_aligned[%base] : buffer -> view<1xf32>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<1xf32>
+  %value = view.load %input_view[0] : view<1xf32> -> f32
+  view.store %value, %output_view[0] : f32, view<1xf32>
   func.return
 }
 
