@@ -475,7 +475,6 @@ hipError_t iree_hip_execution_context_stream_create(
   hipError_t result = hipSuccess;
   iree_hal_streaming_context_t* common_context = NULL;
   iree_hal_queue_t* queue = NULL;
-  iree_hal_streaming_stream_t* common_stream = NULL;
   hipStream_t stream = NULL;
 
   iree_slim_mutex_lock(&context->mutex);
@@ -520,22 +519,13 @@ hipError_t iree_hip_execution_context_stream_create(
   }
 
   if (result == hipSuccess) {
-    iree_status_t status = iree_hal_streaming_stream_create(
-        common_context, queue, IREE_HAL_STREAMING_STREAM_FLAG_NON_BLOCKING,
-        hip_priority, common_context->host_allocator, &common_stream);
+    iree_status_t status = iree_hip_stream_create(
+        common_context, queue, hipStreamNonBlocking, hip_priority, &stream);
     if (!iree_status_is_ok(status)) {
       result = iree_hip_execution_context_consume_status(status);
     }
   }
   iree_hal_queue_release(queue);
-
-  if (result == hipSuccess) {
-    iree_status_t status = iree_hip_stream_publish(
-        common_stream, common_context->host_allocator, &stream);
-    if (!iree_status_is_ok(status)) {
-      result = iree_hip_execution_context_consume_status(status);
-    }
-  }
 
   if (result == hipSuccess) {
     iree_hip_execution_context_retain(context);
@@ -547,9 +537,6 @@ hipError_t iree_hip_execution_context_stream_create(
     stream->next_execution_context_stream = context->stream_head;
     context->stream_head = stream;
     iree_slim_mutex_unlock(&stream->mutex);
-  } else if (common_stream) {
-    iree_hal_streaming_context_unregister_stream(common_context, common_stream);
-    iree_hal_streaming_stream_release(common_stream);
   }
   iree_slim_mutex_unlock(&context->mutex);
 

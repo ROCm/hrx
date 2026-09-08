@@ -57,11 +57,18 @@ using HipExecutionCtxStreamCreateFn = hipError_t (*)(hipStream_t* stream,
                                                      hipExecutionCtx_t context,
                                                      unsigned int flags,
                                                      int priority);
+using HipDeviceGetStreamPriorityRangeFn =
+    hipError_t (*)(int* least_priority, int* greatest_priority);
+using HipStreamCreateWithPriorityFn = hipError_t (*)(hipStream_t* stream,
+                                                     unsigned int flags,
+                                                     int priority);
 using HipStreamGetDevResourceFn = hipError_t (*)(hipStream_t stream,
                                                  hipDevResource* resource,
                                                  hipDevResourceType type);
 using HipStreamGetFlagsFn = hipError_t (*)(hipStream_t stream,
                                            unsigned int* flags);
+using HipStreamGetPriorityFn = hipError_t (*)(hipStream_t stream,
+                                              int* priority);
 using HipStreamDestroyFn = hipError_t (*)(hipStream_t stream);
 
 struct ExecutionContextDeleter {
@@ -129,11 +136,20 @@ struct HipRuntimeApi {
   // Creates a stream on an exact execution context.
   HipExecutionCtxStreamCreateFn context_stream_create = nullptr;
 
+  // Queries the binding's supported stream priority range.
+  HipDeviceGetStreamPriorityRangeFn device_get_stream_priority_range = nullptr;
+
+  // Creates a stream with a scheduling priority hint.
+  HipStreamCreateWithPriorityFn stream_create_with_priority = nullptr;
+
   // Queries the exact SM resource assigned to a stream.
   HipStreamGetDevResourceFn stream_get_resource = nullptr;
 
   // Queries stream creation flags.
   HipStreamGetFlagsFn stream_get_flags = nullptr;
+
+  // Queries the clamped scheduling priority assigned to a stream.
+  HipStreamGetPriorityFn stream_get_priority = nullptr;
 
   // Destroys a live or execution-context-detached stream.
   HipStreamDestroyFn stream_destroy = nullptr;
@@ -181,10 +197,18 @@ class HipExecutionResourceApiTest : public testing::Test {
       api_.context_stream_create =
           ResolveHipSymbol<HipExecutionCtxStreamCreateFn>(
               api_.library, "hipExecutionCtxStreamCreate");
+      api_.device_get_stream_priority_range =
+          ResolveHipSymbol<HipDeviceGetStreamPriorityRangeFn>(
+              api_.library, "hipDeviceGetStreamPriorityRange");
+      api_.stream_create_with_priority =
+          ResolveHipSymbol<HipStreamCreateWithPriorityFn>(
+              api_.library, "hipStreamCreateWithPriority");
       api_.stream_get_resource = ResolveHipSymbol<HipStreamGetDevResourceFn>(
           api_.library, "hipStreamGetDevResource");
       api_.stream_get_flags = ResolveHipSymbol<HipStreamGetFlagsFn>(
           api_.library, "hipStreamGetFlags");
+      api_.stream_get_priority = ResolveHipSymbol<HipStreamGetPriorityFn>(
+          api_.library, "hipStreamGetPriority");
       api_.stream_destroy = ResolveHipSymbol<HipStreamDestroyFn>(
           api_.library, "hipStreamDestroy");
     }
@@ -201,8 +225,11 @@ class HipExecutionResourceApiTest : public testing::Test {
     ASSERT_NE(api_.context_get_device, nullptr);
     ASSERT_NE(api_.context_get_id, nullptr);
     ASSERT_NE(api_.context_stream_create, nullptr);
+    ASSERT_NE(api_.device_get_stream_priority_range, nullptr);
+    ASSERT_NE(api_.stream_create_with_priority, nullptr);
     ASSERT_NE(api_.stream_get_resource, nullptr);
     ASSERT_NE(api_.stream_get_flags, nullptr);
+    ASSERT_NE(api_.stream_get_priority, nullptr);
     ASSERT_NE(api_.stream_destroy, nullptr);
 
     ASSERT_EQ(hipSuccess, api_.init(/*flags=*/0));
@@ -488,6 +515,33 @@ TEST_F(HipExecutionResourceApiTest,
                         sizeof(stream_resource)),
             0);
   EXPECT_EQ(hipSuccess, api_.stream_destroy(stream_guard.release()));
+}
+
+TEST_F(HipExecutionResourceApiTest, CreatesStreamsAtClampedHardwarePriorities) {
+  int least_priority = 7;
+  int greatest_priority = 7;
+  ASSERT_EQ(hipSuccess, api_.device_get_stream_priority_range(
+                            &least_priority, &greatest_priority));
+  ASSERT_LT(greatest_priority, least_priority);
+
+  hipStream_t stream = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.stream_create_with_priority(&stream, hipStreamNonBlocking,
+                                             greatest_priority - 1));
+  ScopedStream stream_guard(stream, StreamDeleter{api_.stream_destroy});
+
+  int actual_priority = 7;
+  ASSERT_EQ(hipSuccess, api_.stream_get_priority(stream, &actual_priority));
+  EXPECT_EQ(actual_priority, greatest_priority);
+
+  hipDevResource full_resource;
+  ASSERT_EQ(hipSuccess, api_.device_get_resource(device_, &full_resource,
+                                                 hipDevResourceTypeSm));
+  hipDevResource stream_resource;
+  ASSERT_EQ(hipSuccess, api_.stream_get_resource(stream, &stream_resource,
+                                                 hipDevResourceTypeSm));
+  EXPECT_EQ(
+      std::memcmp(&stream_resource, &full_resource, sizeof(full_resource)), 0);
 }
 
 TEST_F(HipExecutionResourceApiTest,

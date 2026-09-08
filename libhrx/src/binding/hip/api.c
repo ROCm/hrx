@@ -569,15 +569,6 @@ static bool iree_hip_memory_pools_supported(void) { return true; }
 // Flag translation functions
 //===----------------------------------------------------------------------===//
 
-static iree_hal_streaming_stream_flags_t iree_hip_stream_flags_to_internal(
-    unsigned int hip_flags) {
-  iree_hal_streaming_stream_flags_t flags = IREE_HAL_STREAMING_STREAM_FLAG_NONE;
-  if (hip_flags & hipStreamNonBlocking) {
-    flags |= IREE_HAL_STREAMING_STREAM_FLAG_NON_BLOCKING;
-  }
-  return flags;
-}
-
 static bool iree_hip_stream_create_flags_are_valid(unsigned int flags) {
   return (flags & ~hipStreamNonBlocking) == 0;
 }
@@ -1587,16 +1578,6 @@ static hipError_t iree_hip_resolve_per_thread_stream(
   state->stream = stream;
   *out_stream = stream;
   return hipSuccess;
-}
-
-static void iree_hip_stream_discard_unpublished(
-    iree_hal_streaming_stream_t* stream) {
-  if (!stream) return;
-  iree_hal_streaming_context_t* context = NULL;
-  iree_hal_streaming_stream_retain_context(stream, &context);
-  iree_hal_streaming_context_unregister_stream(context, stream);
-  iree_hal_streaming_stream_release(stream);
-  iree_hal_streaming_context_release(context);
 }
 
 typedef struct iree_hip_resolved_stream_t {
@@ -10640,18 +10621,9 @@ HIPAPI hipError_t hipStreamCreate(hipStream_t* stream) {
     HIP_RETURN_ERROR(init_result);
   }
 
-  iree_hal_streaming_stream_t* stream_obj = NULL;
-  iree_status_t status = iree_hal_streaming_stream_create(
-      context, context->queue, IREE_HAL_STREAMING_STREAM_FLAG_NONE, 0,
-      context->host_allocator, &stream_obj);
-
-  if (iree_status_is_ok(status)) {
-    status =
-        iree_hip_stream_publish(stream_obj, context->host_allocator, stream);
-  }
-  if (!iree_status_is_ok(status)) {
-    iree_hip_stream_discard_unpublished(stream_obj);
-  }
+  iree_status_t status =
+      iree_hip_stream_create(context, context->queue, hipStreamDefault,
+                             /*priority=*/0, stream);
 
   hipError_t result = iree_status_to_hip_result(status);
   IREE_TRACE_ZONE_END(z0);
@@ -10717,18 +10689,8 @@ HIPAPI hipError_t hipStreamCreateWithFlags(hipStream_t* stream,
     HIP_RETURN_ERROR(init_result);
   }
 
-  iree_hal_streaming_stream_t* stream_obj = NULL;
-  iree_status_t status = iree_hal_streaming_stream_create(
-      context, context->queue, iree_hip_stream_flags_to_internal(flags), 0,
-      context->host_allocator, &stream_obj);
-
-  if (iree_status_is_ok(status)) {
-    status =
-        iree_hip_stream_publish(stream_obj, context->host_allocator, stream);
-  }
-  if (!iree_status_is_ok(status)) {
-    iree_hip_stream_discard_unpublished(stream_obj);
-  }
+  iree_status_t status = iree_hip_stream_create(context, context->queue, flags,
+                                                /*priority=*/0, stream);
 
   hipError_t result = iree_status_to_hip_result(status);
   IREE_TRACE_ZONE_END(z0);
@@ -10741,7 +10703,7 @@ HIPAPI hipError_t hipStreamCreateWithFlags(hipStream_t* stream,
 //  - stream: [OUT] Pointer to receive the created stream handle.
 //  - flags: [IN] Stream creation flags (hipStreamDefault or
 //                hipStreamNonBlocking).
-//  - priority: [IN] Stream priority (higher values = higher priority).
+//  - priority: [IN] Stream priority (lower values = higher priority).
 //
 // Returns:
 //  - hipSuccess: Stream created successfully.
@@ -10755,7 +10717,7 @@ HIPAPI hipError_t hipStreamCreateWithFlags(hipStream_t* stream,
 // Synchronization: This operation is synchronous.
 //
 // Priority behavior:
-// - Higher numerical values indicate higher priority.
+// - Lower numerical values indicate higher priority.
 // - Priority range can be queried with hipDeviceGetStreamPriorityRange().
 // - Work in higher priority streams may preempt lower priority streams.
 // - Priorities are hints; actual scheduling depends on hardware support.
@@ -10799,19 +10761,26 @@ HIPAPI hipError_t hipStreamCreateWithPriority(hipStream_t* stream,
     HIP_RETURN_ERROR(init_result);
   }
 
-  iree_hal_streaming_stream_t* stream_obj = NULL;
-  iree_status_t status = iree_hal_streaming_stream_create(
-      context, context->queue, iree_hip_stream_flags_to_internal(flags),
-      iree_hip_clamp_stream_priority(priority), context->host_allocator,
-      &stream_obj);
-
+  const int hip_priority = iree_hip_clamp_stream_priority(priority);
+  iree_hal_queue_t* acquired_queue = NULL;
+  iree_hal_queue_t* queue = context->queue;
+  iree_status_t status = iree_ok_status();
+  if (hip_priority != 0) {
+    iree_hal_queue_params_t queue_params;
+    iree_hal_queue_params_initialize(&queue_params);
+    queue_params.priority = (iree_hal_queue_priority_t)-hip_priority;
+    queue_params.execution_resources =
+        iree_hal_queue_execution_resources(context->queue);
+    status = iree_hal_device_acquire_queue(
+        context->device, iree_hal_queue_family(context->queue), &queue_params,
+        &acquired_queue);
+    queue = acquired_queue;
+  }
   if (iree_status_is_ok(status)) {
     status =
-        iree_hip_stream_publish(stream_obj, context->host_allocator, stream);
+        iree_hip_stream_create(context, queue, flags, hip_priority, stream);
   }
-  if (!iree_status_is_ok(status)) {
-    iree_hip_stream_discard_unpublished(stream_obj);
-  }
+  iree_hal_queue_release(acquired_queue);
 
   hipError_t result = iree_status_to_hip_result(status);
   IREE_TRACE_ZONE_END(z0);
@@ -10896,7 +10865,7 @@ HIPAPI hipError_t hipStreamDestroy(hipStream_t stream) {
 // Priority behavior:
 // - Returns the priority assigned when the stream was created.
 //  - Default streams have priority 0.
-// - Higher numerical values indicate higher priority.
+// - Lower numerical values indicate higher priority.
 // - If priorities are not supported, returns 0.
 //
 // Multi-GPU: Queries the stream associated with the current context.

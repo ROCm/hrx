@@ -18,6 +18,7 @@ extern "C" {
 
 typedef struct iree_hal_streaming_context_t iree_hal_streaming_context_t;
 typedef struct iree_hal_streaming_stream_t iree_hal_streaming_stream_t;
+typedef struct iree_hal_queue_t iree_hal_queue_t;
 
 // Binding-private ownership and lifetime state behind a public HIP stream
 // handle. The common stream remains the execution engine while this object
@@ -41,6 +42,14 @@ struct hipStream_st {
   // Host allocator owning this handle allocation.
   iree_allocator_t host_allocator;
 };
+
+// Creates and publishes a HIP stream that submits through the exact hardware
+// |queue|. The common stream retains |queue| and records the clamped HIP
+// |priority| for compatibility queries. |out_handle| is unchanged on failure.
+iree_status_t iree_hip_stream_create(iree_hal_streaming_context_t* context,
+                                     iree_hal_queue_t* queue,
+                                     unsigned int flags, int priority,
+                                     hipStream_t* out_handle);
 
 // Publishes |stream| as an opaque HIP stream handle. On success the handle
 // assumes ownership of the caller's stream reference and |out_handle| receives

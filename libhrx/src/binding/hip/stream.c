@@ -23,6 +23,34 @@ static void iree_hip_stream_handle_retain(uintptr_t handle) {
   iree_atomic_ref_count_inc(&stream->ref_count);
 }
 
+iree_status_t iree_hip_stream_create(iree_hal_streaming_context_t* context,
+                                     iree_hal_queue_t* queue,
+                                     unsigned int flags, int priority,
+                                     hipStream_t* out_handle) {
+  IREE_ASSERT_ARGUMENT(context);
+  IREE_ASSERT_ARGUMENT(queue);
+  IREE_ASSERT_ARGUMENT(out_handle);
+
+  iree_hal_streaming_stream_flags_t stream_flags =
+      IREE_HAL_STREAMING_STREAM_FLAG_NONE;
+  if (flags & hipStreamNonBlocking) {
+    stream_flags |= IREE_HAL_STREAMING_STREAM_FLAG_NON_BLOCKING;
+  }
+
+  iree_hal_streaming_stream_t* stream = NULL;
+  iree_status_t status = iree_hal_streaming_stream_create(
+      context, queue, stream_flags, priority, context->host_allocator, &stream);
+  if (iree_status_is_ok(status)) {
+    status =
+        iree_hip_stream_publish(stream, context->host_allocator, out_handle);
+  }
+  if (!iree_status_is_ok(status) && stream) {
+    iree_hal_streaming_context_unregister_stream(context, stream);
+    iree_hal_streaming_stream_release(stream);
+  }
+  return status;
+}
+
 iree_status_t iree_hip_stream_publish(iree_hal_streaming_stream_t* stream,
                                       iree_allocator_t host_allocator,
                                       hipStream_t* out_handle) {
