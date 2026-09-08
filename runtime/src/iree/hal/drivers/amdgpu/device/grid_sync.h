@@ -14,7 +14,22 @@ extern "C" {
 #endif  // __cplusplus
 
 //===----------------------------------------------------------------------===//
-// Grid synchronization kernel ABI
+// Grid synchronization strategy
+//===----------------------------------------------------------------------===//
+
+// Implementation strategy used to synchronize workgroups within one
+// cooperative grid.
+typedef enum iree_hal_amdgpu_grid_sync_strategy_e {
+  // Cooperative grid synchronization is unavailable.
+  IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_NONE = 0,
+  // Workgroups synchronize through a device-visible grid sync info block.
+  IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_MEMORY = 1,
+  // Workgroups synchronize through an initialized hardware GWS resource.
+  IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_GWS = 2,
+} iree_hal_amdgpu_grid_sync_strategy_t;
+
+//===----------------------------------------------------------------------===//
+// GWS initialization kernel ABI
 //===----------------------------------------------------------------------===//
 
 // Kernel arguments for initializing the hardware GWS barrier resource.

@@ -10,6 +10,7 @@
 #include "iree/base/api.h"
 #include "iree/hal/device.h"
 #include "iree/hal/drivers/amdgpu/aql_prepublished_kernarg_storage.h"
+#include "iree/hal/drivers/amdgpu/device/grid_sync.h"
 #include "iree/hal/drivers/amdgpu/target/identity.h"
 #include "iree/hal/drivers/amdgpu/util/aql_ring.h"
 #include "iree/hal/drivers/amdgpu/util/kernarg_ring.h"
@@ -273,6 +274,10 @@ iree_status_t iree_hal_amdgpu_select_cpu_visible_device_coarse_memory(
 // Selects the queue-local PM4 timestamp packet strategy for |version|.
 iree_hal_amdgpu_pm4_timestamp_strategy_t
 iree_hal_amdgpu_select_pm4_timestamp_strategy(
+    iree_hal_amdgpu_gfxip_version_t version);
+
+// Selects the cooperative grid synchronization strategy for |version|.
+iree_hal_amdgpu_grid_sync_strategy_t iree_hal_amdgpu_select_grid_sync_strategy(
     iree_hal_amdgpu_gfxip_version_t version);
 
 // AMDGPU memory-system facts used to derive conservative HAL topology flags.
