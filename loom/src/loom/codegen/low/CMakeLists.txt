@@ -412,6 +412,7 @@ loom_cc_library(
   DEPS
     ::placement_pair
     ::storage_relation
+    ::target_binding
     iree::base
     iree::base::internal::arena
     loom::analysis::liveness
