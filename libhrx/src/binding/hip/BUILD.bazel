@@ -183,6 +183,26 @@ hrx_cc_library(
     ],
 )
 
+hrx_cc_library(
+    name = "stream",
+    srcs = ["stream.c"],
+    hdrs = [
+        "api.h",
+        "stream.h",
+    ],
+    includes = [
+        "../..",
+        "../../../include",
+        "../../libhrx",
+    ],
+    deps = [
+        ":handle_registry",
+        "//libhrx/src/binding/common",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/threading",
+    ],
+)
+
 hrx_cc_shared_library(
     name = "amdhip64",
     srcs = [
@@ -216,6 +236,7 @@ hrx_cc_shared_library(
         ":execution_resource_descriptor",
         ":handle_registry",
         ":launch_params",
+        ":stream",
         "//libhrx/src/binding/common",
         "//runtime/src/iree/base",
         "//runtime/src/iree/base/threading",

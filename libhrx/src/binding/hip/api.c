@@ -33,6 +33,7 @@
 #include "binding/hip/execution_resource_descriptor.h"
 #include "binding/hip/handle_registry.h"
 #include "binding/hip/launch_params.h"
+#include "binding/hip/stream.h"
 #include "common/direct_transfer.h"
 #include "common/graph.h"
 #include "common/internal.h"
@@ -1588,60 +1589,6 @@ static hipError_t iree_hip_resolve_per_thread_stream(
   return hipSuccess;
 }
 
-static iree_once_flag iree_hip_stream_registry_once = IREE_ONCE_FLAG_INIT;
-static iree_hip_handle_registry_t iree_hip_stream_registry;
-
-static void iree_hip_stream_registry_initialize(void) {
-  iree_hip_handle_registry_initialize(&iree_hip_stream_registry);
-}
-
-static void iree_hip_stream_handle_retain(uintptr_t handle) {
-  iree_hal_streaming_stream_retain((iree_hal_streaming_stream_t*)handle);
-}
-
-static iree_status_t iree_hip_stream_register(
-    iree_hal_streaming_stream_t* stream) {
-  iree_call_once(&iree_hip_stream_registry_once,
-                 iree_hip_stream_registry_initialize);
-  return iree_hip_handle_registry_insert(&iree_hip_stream_registry,
-                                         (uintptr_t)stream);
-}
-
-static bool iree_hip_stream_unregister_public_handle(
-    iree_hal_streaming_stream_t* stream) {
-  iree_call_once(&iree_hip_stream_registry_once,
-                 iree_hip_stream_registry_initialize);
-  if (!iree_hip_handle_registry_remove(&iree_hip_stream_registry,
-                                       (uintptr_t)stream)) {
-    return false;
-  }
-
-  // The initial stream reference is owned by the published handle. The
-  // registry itself only records the address so lookups can reject stale
-  // handles without dereferencing them.
-  iree_hal_streaming_stream_release(stream);
-  return true;
-}
-
-static bool iree_hip_stream_lookup_retain(
-    hipStream_t stream, iree_hal_streaming_stream_t** out_stream) {
-  IREE_ASSERT_ARGUMENT(out_stream);
-  *out_stream = NULL;
-  if (!stream || stream == hipStreamLegacy || stream == hipStreamPerThread) {
-    return false;
-  }
-
-  iree_call_once(&iree_hip_stream_registry_once,
-                 iree_hip_stream_registry_initialize);
-  if (!iree_hip_handle_registry_lookup_retain(&iree_hip_stream_registry,
-                                              (uintptr_t)stream,
-                                              iree_hip_stream_handle_retain)) {
-    return false;
-  }
-  *out_stream = (iree_hal_streaming_stream_t*)stream;
-  return true;
-}
-
 static void iree_hip_stream_discard_unpublished(
     iree_hal_streaming_stream_t* stream) {
   if (!stream) return;
@@ -1653,6 +1600,9 @@ static void iree_hip_stream_discard_unpublished(
 }
 
 typedef struct iree_hip_resolved_stream_t {
+  // Explicit HIP stream handle retained for the API operation, or NULL for an
+  // implicit default or per-thread stream.
+  hipStream_t handle;
   // Context retained for the duration of the API operation.
   iree_hal_streaming_context_t* context;
   // Stream retained for the duration of the API operation.
@@ -1662,6 +1612,11 @@ typedef struct iree_hip_resolved_stream_t {
 static void iree_hip_resolved_stream_release(
     iree_hip_resolved_stream_t* resolved_stream) {
   if (!resolved_stream) return;
+  // Release the wrapper's owning common-stream reference before the retained
+  // operation references. If destruction concurrently removed the stream from
+  // its context list, this lets the common stream clear its borrowed context
+  // pointer while |context| is still guaranteed live.
+  iree_hip_stream_release(resolved_stream->handle);
   iree_hal_streaming_stream_release(resolved_stream->stream);
   iree_hal_streaming_context_release(resolved_stream->context);
   memset(resolved_stream, 0, sizeof(*resolved_stream));
@@ -1673,13 +1628,12 @@ static hipError_t iree_hip_resolve_registered_stream(
   memset(out_resolved_stream, 0, sizeof(*out_resolved_stream));
 
   if (stream && stream != hipStreamLegacy && stream != hipStreamPerThread) {
-    hipError_t result = iree_hip_ensure_initialized();
-    if (result != hipSuccess) return result;
-    if (!iree_hip_stream_lookup_retain(stream, &out_resolved_stream->stream)) {
+    if (!iree_hip_stream_lookup_retain(stream, &out_resolved_stream->handle)) {
       return hipErrorInvalidResourceHandle;
     }
-    if (!iree_hal_streaming_stream_retain_context(
-            out_resolved_stream->stream, &out_resolved_stream->context)) {
+    if (!iree_hip_stream_retain_attached(out_resolved_stream->handle,
+                                         &out_resolved_stream->stream,
+                                         &out_resolved_stream->context)) {
       iree_hip_resolved_stream_release(out_resolved_stream);
       return hipErrorContextIsDestroyed;
     }
@@ -10671,11 +10625,10 @@ HIPAPI hipError_t hipStreamCreate(hipStream_t* stream) {
       context->host_allocator, &stream_obj);
 
   if (iree_status_is_ok(status)) {
-    status = iree_hip_stream_register(stream_obj);
+    status =
+        iree_hip_stream_publish(stream_obj, context->host_allocator, stream);
   }
-  if (iree_status_is_ok(status)) {
-    *stream = (hipStream_t)stream_obj;
-  } else {
+  if (!iree_status_is_ok(status)) {
     iree_hip_stream_discard_unpublished(stream_obj);
   }
 
@@ -10749,11 +10702,10 @@ HIPAPI hipError_t hipStreamCreateWithFlags(hipStream_t* stream,
       context->host_allocator, &stream_obj);
 
   if (iree_status_is_ok(status)) {
-    status = iree_hip_stream_register(stream_obj);
+    status =
+        iree_hip_stream_publish(stream_obj, context->host_allocator, stream);
   }
-  if (iree_status_is_ok(status)) {
-    *stream = (hipStream_t)stream_obj;
-  } else {
+  if (!iree_status_is_ok(status)) {
     iree_hip_stream_discard_unpublished(stream_obj);
   }
 
@@ -10833,11 +10785,10 @@ HIPAPI hipError_t hipStreamCreateWithPriority(hipStream_t* stream,
       &stream_obj);
 
   if (iree_status_is_ok(status)) {
-    status = iree_hip_stream_register(stream_obj);
+    status =
+        iree_hip_stream_publish(stream_obj, context->host_allocator, stream);
   }
-  if (iree_status_is_ok(status)) {
-    *stream = (hipStream_t)stream_obj;
-  } else {
+  if (!iree_status_is_ok(status)) {
     iree_hip_stream_discard_unpublished(stream_obj);
   }
 
@@ -10878,29 +10829,30 @@ HIPAPI hipError_t hipStreamDestroy(hipStream_t stream) {
     HIP_RETURN_ERROR(hipErrorInvalidResourceHandle);
   }
 
-  iree_hip_resolved_stream_t resolved_stream = {0};
-  hipError_t result =
-      iree_hip_resolve_registered_stream(stream, &resolved_stream);
-  if (result != hipSuccess) {
-    IREE_TRACE_ZONE_END(z0);
-    HIP_RETURN_ERROR(result);
-  }
-  if (!iree_hip_stream_unregister_public_handle(resolved_stream.stream)) {
-    iree_hip_resolved_stream_release(&resolved_stream);
+  hipStream_t owned_handle = NULL;
+  if (!iree_hip_stream_take(stream, &owned_handle)) {
     IREE_TRACE_ZONE_END(z0);
     HIP_RETURN_ERROR(hipErrorInvalidResourceHandle);
   }
 
   // Remove handle visibility before synchronizing so no new API operation can
   // acquire the stream. Operations that resolved the handle concurrently hold
-  // both the stream and its context. The final stream release performs another
-  // synchronization after those operations finish queueing their work.
-  iree_status_t status =
-      iree_hal_streaming_stream_synchronize(resolved_stream.stream);
-  iree_hal_streaming_context_unregister_stream(resolved_stream.context,
-                                               resolved_stream.stream);
-  iree_hip_resolved_stream_release(&resolved_stream);
-  result = iree_status_to_hip_result(status);
+  // both the common stream and its context. A detached execution-context stream
+  // has no common objects left to synchronize but retains this public wrapper
+  // until the application destroys it.
+  iree_hal_streaming_stream_t* stream_obj = NULL;
+  iree_hal_streaming_context_t* context = NULL;
+  iree_status_t status = iree_ok_status();
+  if (iree_hip_stream_retain_attached(owned_handle, &stream_obj, &context)) {
+    status = iree_hal_streaming_stream_synchronize(stream_obj);
+    iree_hal_streaming_context_unregister_stream(context, stream_obj);
+    iree_hip_stream_release(owned_handle);
+    owned_handle = NULL;
+    iree_hal_streaming_stream_release(stream_obj);
+    iree_hal_streaming_context_release(context);
+  }
+  iree_hip_stream_release(owned_handle);
+  hipError_t result = iree_status_to_hip_result(status);
   IREE_TRACE_ZONE_END(z0);
   return result;
 }
@@ -11634,7 +11586,6 @@ HIPAPI hipError_t hipExtStreamCreateWithCUMask(hipStream_t* stream,
   if (!stream || mask_count == 0 || !mask) {
     HIP_RETURN_ERROR(hipErrorInvalidValue);
   }
-  *stream = NULL;
   // A masked stream requires queue selection that enforces the requested
   // compute-unit set. Recording the mask on a virtual stream without applying
   // it to submitted work would expose a stream that violates its contract.
