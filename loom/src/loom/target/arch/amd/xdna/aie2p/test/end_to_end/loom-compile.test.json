@@ -91,16 +91,20 @@
             "COMPILE-REPORT: pipeline root=second_array realization=spatial-program",
             "COMPILE-REPORT: pipeline root=fanout_array realization=spatial-program groups=3 workers=3 bindings=3 channels=5 slots=10 locks=12 dma_channels=9",
             "COMPILE-REPORT: pipeline root=partitioned_write_array realization=spatial-program groups=1 workers=2 bindings=2 channels=4 slots=8 locks=8 dma_channels=8",
+            "COMPILE-REPORT: pipeline root=broadcast_read_array realization=spatial-program groups=1 workers=2 bindings=2 channels=4 slots=8 locks=8 dma_channels=7 dma_bds=11 routes=18 code_bytes=312 max_worker_code_bytes=156 min_code_headroom_bytes=16228 worker_storage_bytes=0 channel_storage_bytes=32 max_tile_local_bytes=49156 min_local_headroom_bytes=16380 max_bank_storage_bytes=4 bank_capacity_bytes=16384 external_dma_bytes=36 routed_dma_bytes=0",
             "pipeline.worker[0] entry=copy_record group=0 lane=0 resident=1 folded=0",
             "input_channels=1 output_channels=2 ring_states=2",
             "pipeline.channel[1] transport=routed-dma sender=worker[0]:1 receiver=worker[1]:0 capacity=2 records=1 record_bytes=4 activation_bytes=4 local_storage_bytes=16 locks=4 dma_channels=2",
             "pipeline.channel[2] transport=routed-dma sender=worker[0]:1 receiver=worker[2]:0 capacity=2 records=1 record_bytes=4 activation_bytes=4 local_storage_bytes=8 locks=2 dma_channels=1",
             "pipeline.channel[2] transport=external-dma sender=worker[0]:1 receiver=binding[1]:0 capacity=2 records=3 record_bytes=4 activation_bytes=12 local_storage_bytes=8 locks=2 dma_channels=2 dma_bds=3 routes=4 binding=1 partition=0/2 binding_offset=0 binding_span=12 task_bytes=12 task_repeats=1 external_bytes=12",
             "pipeline.channel[3] transport=external-dma sender=worker[1]:1 receiver=binding[1]:0 capacity=2 records=3 record_bytes=4 activation_bytes=12 local_storage_bytes=8 locks=2 dma_channels=2 dma_bds=3 routes=5 binding=1 partition=1/2 binding_offset=12 binding_span=12 task_bytes=12 task_repeats=1 external_bytes=12",
+            "pipeline.channel[0] transport=external-dma sender=binding[0]:0 receiver=worker[0]:0 capacity=2 records=3 record_bytes=4 activation_bytes=12 local_storage_bytes=8 locks=2 dma_channels=2 dma_bds=3 routes=4 binding=0 partition=0/1 binding_offset=0 binding_span=12 task_bytes=12 task_repeats=1 external_bytes=12",
+            "pipeline.channel[1] transport=external-dma sender=binding[0]:0 receiver=worker[1]:0 capacity=2 records=3 record_bytes=4 activation_bytes=12 local_storage_bytes=8 locks=2 dma_channels=1 dma_bds=2 routes=5",
             "function=first_array$worker$0",
             "function=second_array$worker$0",
             "function=fanout_array$worker$0",
             "function=partitioned_write_array$worker$1",
+            "function=broadcast_read_array$worker$1",
             " spills=0 spill_plans=0"
           ]
         }

@@ -66,6 +66,20 @@ pipeline.def<kernel> public retain target(@array_target) @partitioned_write_arra
   pipeline.return
 }
 
+pipeline.def<kernel> public retain target(@array_target) @broadcast_read_array() launch(%input: buffer, %output: buffer) {
+  %lane_count = index.constant 2 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %lane_count : index -> group
+
+  %input_view = buffer.view %input[%base] : buffer -> view<3x1xf32>
+  %output_view = buffer.view %output[%base] : buffer -> view<2x3x1xf32>
+
+  %input_flow = pipeline.read %input_view on %workers : view<3x1xf32>, group -> pipeline.flow<tile<1xf32>>
+  %output_flow = pipeline.stage @copy_record on %workers(%input_flow) : (group, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  pipeline.write %output_flow to %output_view : pipeline.flow<tile<1xf32>>, view<2x3x1xf32>
+  pipeline.return
+}
+
 func.def target(@core_target) @copy_record(%input: buffer, %output: buffer) {
   %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 4} : buffer, buffer
   %base = index.constant 0 : offset
