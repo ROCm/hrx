@@ -81,6 +81,21 @@ pipeline.def<kernel> public retain target(@array_target) @broadcast_read_array()
   pipeline.return
 }
 
+pipeline.def<kernel> public retain target(@array_target) @repeated_sliding_window_array() launch(%input: buffer, %output: buffer) {
+  %lane_count = index.constant 1 : index
+  %input_base = index.constant 256 : offset
+  %output_base = index.constant 512 : offset
+  %workers = group.create %lane_count : index -> group
+
+  %input_view = buffer.view %input[%input_base] : buffer -> view<2x3x4xf32, #encoding.layout.strided<strides=[0, 2, 1]>>
+  %output_view = buffer.view %output[%output_base] : buffer -> view<2x3x4xf32>
+
+  %input_flow = pipeline.read %input_view on %workers : view<2x3x4xf32, #encoding.layout.strided<strides=[0, 2, 1]>>, group -> pipeline.flow<tile<4xf32>>
+  %output_flow = pipeline.stage @copy_f32x4_record on %workers(%input_flow) : (group, pipeline.flow<tile<4xf32>>) -> (pipeline.flow<tile<4xf32>>)
+  pipeline.write %output_flow to %output_view : pipeline.flow<tile<4xf32>>, view<2x3x4xf32>
+  pipeline.return
+}
+
 func.def target(@core_target) @copy_record(%input: buffer, %output: buffer) {
   %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 4} : buffer, buffer
   %base = index.constant 0 : offset
@@ -88,5 +103,15 @@ func.def target(@core_target) @copy_record(%input: buffer, %output: buffer) {
   %output_view = buffer.view %output_aligned[%base] : buffer -> view<1xf32>
   %value = view.load %input_view[0] : view<1xf32> -> f32
   view.store %value, %output_view[0] : f32, view<1xf32>
+  func.return
+}
+
+func.def target(@core_target) @copy_f32x4_record(%input: buffer, %output: buffer) {
+  %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 16} : buffer, buffer
+  %base = index.constant 0 : offset
+  %input_view = buffer.view %input_aligned[%base] : buffer -> view<4xf32>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<4xf32>
+  %value = vector.load %input_view[0] : view<4xf32> -> vector<4xf32>
+  vector.store %value, %output_view[0] : vector<4xf32>, view<4xf32>
   func.return
 }
