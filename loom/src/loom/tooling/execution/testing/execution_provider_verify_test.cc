@@ -24,6 +24,7 @@ iree_status_t FakeExecutionBackendRunOneShot(
 
 const loom_run_execution_backend_t kFakeExecutionBackend = {
     /*.name=*/IREE_SVL("fake-execution"),
+    /*.device_driver_name=*/IREE_SVL("fake"),
     /*.flags=*/0,
     /*.probe=*/{},
     /*.run_one_shot=*/FakeExecutionBackendRunOneShot,
@@ -31,6 +32,15 @@ const loom_run_execution_backend_t kFakeExecutionBackend = {
 
 const loom_run_execution_backend_t kDuplicateFakeExecutionBackend = {
     /*.name=*/IREE_SVL("fake-execution"),
+    /*.device_driver_name=*/IREE_SVL("other-fake"),
+    /*.flags=*/0,
+    /*.probe=*/{},
+    /*.run_one_shot=*/FakeExecutionBackendRunOneShot,
+};
+
+const loom_run_execution_backend_t kDuplicateDriverExecutionBackend = {
+    /*.name=*/IREE_SVL("other-execution"),
+    /*.device_driver_name=*/IREE_SVL("fake"),
     /*.flags=*/0,
     /*.probe=*/{},
     /*.run_one_shot=*/FakeExecutionBackendRunOneShot,
@@ -43,6 +53,12 @@ const loom_run_execution_backend_t* const kFakeExecutionBackends[] = {
 const loom_run_execution_backend_t* const kDuplicateFakeExecutionBackends[] = {
     &kFakeExecutionBackend,
     &kDuplicateFakeExecutionBackend,
+};
+
+const loom_run_execution_backend_t* const kDuplicateDriverExecutionBackends[] =
+    {
+        &kFakeExecutionBackend,
+        &kDuplicateDriverExecutionBackend,
 };
 
 const loom_target_provider_t kCoreTestTargetProvider = {
@@ -72,6 +88,14 @@ const loom_run_execution_provider_t kDuplicateExecutionProvider = {
     IREE_ARRAYSIZE(kDuplicateFakeExecutionBackends),
 };
 
+const loom_run_execution_provider_t kDuplicateDriverExecutionProvider = {
+    /*.name=*/IREE_SVL("duplicate-driver"),
+    /*.target_provider=*/{},
+    /*.execution_backends=*/kDuplicateDriverExecutionBackends,
+    /*.execution_backend_count=*/
+    IREE_ARRAYSIZE(kDuplicateDriverExecutionBackends),
+};
+
 TEST(ExecutionProviderTest, ComposesDescriptorRegistryAndExecutionBackends) {
   const loom_run_execution_provider_t* providers[] = {
       &kCoreTestProvider,
@@ -90,8 +114,8 @@ TEST(ExecutionProviderTest, ComposesDescriptorRegistryAndExecutionBackends) {
       loom_run_execution_environment_execution_backend_registry(&environment);
   ASSERT_NE(execution_backend_registry, nullptr);
   EXPECT_EQ(execution_backend_registry->backend_count, 1u);
-  EXPECT_EQ(loom_run_execution_backend_registry_lookup(
-                execution_backend_registry, IREE_SV("fake-execution")),
+  EXPECT_EQ(loom_run_execution_backend_registry_lookup_device_driver(
+                execution_backend_registry, IREE_SV("fake")),
             &kFakeExecutionBackend);
 
   loom_target_low_descriptor_registry_t low_registry = {};
@@ -130,6 +154,78 @@ TEST(ExecutionProviderTest, RejectsDuplicateExecutionBackendNames) {
   };
   IREE_EXPECT_STATUS_IS(IREE_STATUS_INVALID_ARGUMENT,
                         loom_run_execution_provider_set_verify(&provider_set));
+}
+
+TEST(ExecutionProviderTest, RejectsDuplicateExecutionDeviceDrivers) {
+  const loom_run_execution_provider_t* providers[] = {
+      &kDuplicateDriverExecutionProvider,
+  };
+  const loom_run_execution_provider_set_t provider_set = {
+      /*.providers=*/providers,
+      /*.provider_count=*/IREE_ARRAYSIZE(providers),
+  };
+  IREE_EXPECT_STATUS_IS(IREE_STATUS_INVALID_ARGUMENT,
+                        loom_run_execution_provider_set_verify(&provider_set));
+}
+
+TEST(ExecutionBackendTest, SelectsDeviceDriverFromSingleUri) {
+  const iree_string_view_t uris[] = {IREE_SVL("fake://device-0")};
+  iree_string_view_t device_uri = iree_string_view_empty();
+  iree_string_view_t device_driver_name = iree_string_view_empty();
+  IREE_ASSERT_OK(loom_run_execution_select_device_driver(
+      {/*.count=*/IREE_ARRAYSIZE(uris), /*.values=*/uris}, &device_uri,
+      &device_driver_name));
+  EXPECT_TRUE(iree_string_view_equal(device_uri, uris[0]));
+  EXPECT_TRUE(iree_string_view_equal(device_driver_name, IREE_SV("fake")));
+}
+
+TEST(ExecutionBackendTest, RejectsMissingDeviceUri) {
+  iree_string_view_t device_uri = iree_string_view_empty();
+  iree_string_view_t device_driver_name = iree_string_view_empty();
+  IREE_EXPECT_STATUS_IS(
+      IREE_STATUS_INVALID_ARGUMENT,
+      loom_run_execution_select_device_driver(
+          iree_string_view_list_empty(), &device_uri, &device_driver_name));
+}
+
+TEST(ExecutionBackendTest, RejectsMultipleDeviceUris) {
+  const iree_string_view_t uris[] = {
+      IREE_SVL("fake://device-0"),
+      IREE_SVL("fake://device-1"),
+  };
+  iree_string_view_t device_uri = iree_string_view_empty();
+  iree_string_view_t device_driver_name = iree_string_view_empty();
+  IREE_EXPECT_STATUS_IS(IREE_STATUS_INVALID_ARGUMENT,
+                        loom_run_execution_select_device_driver(
+                            {/*.count=*/IREE_ARRAYSIZE(uris), /*.values=*/uris},
+                            &device_uri, &device_driver_name));
+}
+
+TEST(ExecutionBackendTest, RejectsDeviceUriWithoutDriver) {
+  const iree_string_view_t uris[] = {IREE_SVL("://device-0")};
+  iree_string_view_t device_uri = iree_string_view_empty();
+  iree_string_view_t device_driver_name = iree_string_view_empty();
+  IREE_EXPECT_STATUS_IS(IREE_STATUS_INVALID_ARGUMENT,
+                        loom_run_execution_select_device_driver(
+                            {/*.count=*/IREE_ARRAYSIZE(uris), /*.values=*/uris},
+                            &device_uri, &device_driver_name));
+}
+
+TEST(ExecutionBackendTest, UnknownAndDisabledDriversHaveNoBackend) {
+  const loom_run_execution_backend_t* backends[] = {&kFakeExecutionBackend};
+  loom_run_execution_backend_registry_t registry = {};
+  loom_run_execution_backend_registry_initialize_from_entries(
+      backends, IREE_ARRAYSIZE(backends), &registry);
+  EXPECT_EQ(loom_run_execution_backend_registry_lookup_device_driver(
+                &registry, IREE_SV("unknown")),
+            nullptr);
+
+  loom_run_execution_backend_registry_t empty_registry = {};
+  loom_run_execution_backend_registry_initialize_from_entries(
+      /*backends=*/nullptr, /*backend_count=*/0, &empty_registry);
+  EXPECT_EQ(loom_run_execution_backend_registry_lookup_device_driver(
+                &empty_registry, IREE_SV("fake")),
+            nullptr);
 }
 
 }  // namespace

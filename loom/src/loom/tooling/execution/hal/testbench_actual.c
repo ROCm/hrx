@@ -26,6 +26,7 @@
 #include "loom/tooling/compile/pipeline.h"
 #include "loom/tooling/compile/report_capture.h"
 #include "loom/tooling/config/config.h"
+#include "loom/tooling/execution/execution_backend.h"
 #include "loom/util/fact_table.h"
 
 typedef struct loom_run_hal_testbench_actual_sequence_span_t
@@ -131,86 +132,32 @@ void loom_run_hal_testbench_context_deinitialize(
   *context = (loom_run_hal_testbench_context_t){0};
 }
 
-iree_string_view_t loom_run_hal_testbench_device_uri_driver_name(
-    iree_string_view_t device_uri) {
-  iree_string_view_t driver_name = iree_string_view_empty();
-  iree_string_view_split(device_uri, ':', &driver_name, NULL);
-  return driver_name;
-}
-
 static iree_status_t loom_run_hal_testbench_context_select_device_provider(
     loom_run_hal_testbench_context_t* context) {
   if (context->device_provider != NULL) {
     return iree_ok_status();
   }
 
-  const iree_string_view_list_t device_uris = iree_hal_device_flag_list();
-  if (device_uris.count > 1) {
-    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-                            "HAL kernel launches support exactly one "
-                            "--device= URI; got %" PRIhsz,
-                            device_uris.count);
-  }
+  iree_string_view_t device_uri = iree_string_view_empty();
+  iree_string_view_t device_driver_name = iree_string_view_empty();
+  IREE_RETURN_IF_ERROR(loom_run_execution_select_device_driver(
+      iree_hal_device_flag_list(), &device_uri, &device_driver_name));
+
   const loom_device_provider_registry_t* registry =
       context->device_provider_registry;
-  if (device_uris.count == 1) {
-    const iree_string_view_t driver_name =
-        loom_run_hal_testbench_device_uri_driver_name(device_uris.values[0]);
-    if (registry != NULL) {
-      for (iree_host_size_t i = 0; i < registry->provider_count; ++i) {
-        const loom_device_provider_t* device_provider = registry->providers[i];
-        if (iree_string_view_equal(device_provider->driver_name, driver_name)) {
-          context->device_provider = device_provider;
-          return iree_ok_status();
-        }
-      }
+  if (registry != NULL) {
+    context->device_provider = loom_device_provider_registry_lookup_driver(
+        registry, device_driver_name);
+    if (context->device_provider != NULL) {
+      return iree_ok_status();
     }
-
-    iree_string_builder_t driver_names;
-    iree_string_builder_initialize(context->host_allocator, &driver_names);
-    iree_status_t status = iree_ok_status();
-    if (registry != NULL && registry->provider_count != 0) {
-      status = loom_device_provider_registry_format_driver_names(registry,
-                                                                 &driver_names);
-    } else {
-      status = iree_string_builder_append_cstring(&driver_names, "none");
-    }
-    if (iree_status_is_ok(status)) {
-      const iree_string_view_t driver_names_view =
-          iree_string_builder_view(&driver_names);
-      status = iree_make_status(
-          IREE_STATUS_INVALID_ARGUMENT,
-          "--device=%.*s selects HAL driver `%.*s`, which is not available in "
-          "this Loom installation; available --device drivers: [%.*s]",
-          (int)device_uris.values[0].size, device_uris.values[0].data,
-          (int)driver_name.size, driver_name.data, (int)driver_names_view.size,
-          driver_names_view.data);
-    }
-    iree_string_builder_deinitialize(&driver_names);
-    return status;
   }
-
-  if (registry == NULL || registry->provider_count == 0) {
-    return iree_make_status(
-        IREE_STATUS_UNAVAILABLE,
-        "HAL kernel launches are not available in this Loom installation");
-  }
-
-  iree_string_builder_t driver_names;
-  iree_string_builder_initialize(context->host_allocator, &driver_names);
-  iree_status_t status = loom_device_provider_registry_format_driver_names(
-      registry, &driver_names);
-  if (iree_status_is_ok(status)) {
-    const iree_string_view_t driver_names_view =
-        iree_string_builder_view(&driver_names);
-    status = iree_make_status(
-        IREE_STATUS_INVALID_ARGUMENT,
-        "HAL kernel launches require an explicit --device= URI to select a "
-        "HAL driver; available --device drivers: [%.*s]",
-        (int)driver_names_view.size, driver_names_view.data);
-  }
-  iree_string_builder_deinitialize(&driver_names);
-  return status;
+  return iree_make_status(
+      IREE_STATUS_INVALID_ARGUMENT,
+      "--device=%.*s selects HAL driver '%.*s', which has no linked Loom "
+      "device provider",
+      (int)device_uri.size, device_uri.data, (int)device_driver_name.size,
+      device_driver_name.data);
 }
 
 iree_status_t loom_run_hal_testbench_context_validate_explicit_device(

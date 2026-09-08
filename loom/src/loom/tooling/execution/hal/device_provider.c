@@ -40,29 +40,15 @@ void loom_device_provider_registry_initialize_from_entries(
   };
 }
 
-const loom_device_provider_t* loom_device_provider_registry_lookup(
-    const loom_device_provider_registry_t* registry, iree_string_view_t name) {
+const loom_device_provider_t* loom_device_provider_registry_lookup_driver(
+    const loom_device_provider_registry_t* registry,
+    iree_string_view_t driver_name) {
   IREE_ASSERT_ARGUMENT(registry);
   for (iree_host_size_t i = 0; i < registry->provider_count; ++i) {
     const loom_device_provider_t* provider = registry->providers[i];
-    if (iree_string_view_equal(provider->artifact_provider->name, name)) {
+    if (iree_string_view_equal(provider->driver_name, driver_name)) {
       return provider;
     }
   }
   return NULL;
-}
-
-iree_status_t loom_device_provider_registry_format_driver_names(
-    const loom_device_provider_registry_t* registry,
-    iree_string_builder_t* output) {
-  IREE_ASSERT_ARGUMENT(registry);
-  IREE_ASSERT_ARGUMENT(output);
-  for (iree_host_size_t i = 0; i < registry->provider_count; ++i) {
-    if (i > 0) {
-      IREE_RETURN_IF_ERROR(iree_string_builder_append_cstring(output, ", "));
-    }
-    IREE_RETURN_IF_ERROR(iree_string_builder_append_string(
-        output, registry->providers[i]->driver_name));
-  }
-  return iree_ok_status();
 }

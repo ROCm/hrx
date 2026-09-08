@@ -14,6 +14,7 @@ static const loom_run_hal_execution_backend_t kLoomAmdgpuHalExecutionBackend = {
     .base =
         {
             .name = IREE_SVL("amdgpu-hal"),
+            .device_driver_name = IREE_SVL("amdgpu"),
             .flags = LOOM_RUN_EXECUTION_BACKEND_FLAG_HAL_OPTIONS,
             .probe = loom_run_hal_execution_backend_probe,
             .run_one_shot = loom_run_hal_execution_backend_run_one_shot,

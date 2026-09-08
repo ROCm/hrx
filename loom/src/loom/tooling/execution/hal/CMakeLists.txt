@@ -123,6 +123,7 @@ loom_cc_library(
     loom::tooling::compile::pipeline
     loom::tooling::compile::report_capture
     loom::tooling::config
+    loom::tooling::execution::execution_backend
     loom::tooling::execution::session
     loom::tooling::testbench
     loom::tooling::testbench::invocation
