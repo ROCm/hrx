@@ -20,6 +20,7 @@
             "\"backend\":\"xdna\"",
             "\"artifact_format\":\"elf\"",
             "\"status\":{\"code\":0,\"name\":\"OK\"}",
+            "\"function\":\"split_k_array$group$1\"",
             "\"plan_key\":\"bf16bf16_m8n8k1\"",
             "\"spill_count\":0"
           ]
@@ -31,6 +32,69 @@
           "non_empty": true
         }
       ]
+    },
+    {
+      "name": "rejects buffered same-group stages before source lowering",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/composite_stateful.loom",
+          "--root=buffered_composite_array",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--output={tmp}/buffered_composite.xdna"
+        ]
+      },
+      "exit": {
+        "nonzero": true
+      },
+      "stderr": {
+        "contains": [
+          "AIE2P buffered same-group pipeline flow requires a composite ring state machine"
+        ]
+      }
+    },
+    {
+      "name": "rejects folded same-group stages before source lowering",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/composite_stateful.loom",
+          "--root=folded_composite_array",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--output={tmp}/folded_composite.xdna"
+        ]
+      },
+      "exit": {
+        "nonzero": true
+      },
+      "stderr": {
+        "contains": [
+          "AIE2P same-group pipeline fold requires a composite state machine"
+        ]
+      }
+    },
+    {
+      "name": "rejects unequal same-group stage rates before source lowering",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/composite_stateful.loom",
+          "--root=rate_changed_composite_array",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--output={tmp}/rate_changed_composite.xdna"
+        ]
+      },
+      "exit": {
+        "nonzero": true
+      },
+      "stderr": {
+        "contains": [
+          "AIE2P same-group pipeline rate change requires a composite state machine"
+        ]
+      }
     },
     {
       "name": "reports fixed-record spatial realization details",
@@ -101,6 +165,11 @@
             "pipeline.channel[0] transport=external-dma sender=binding[0]:0 receiver=worker[0]:0 capacity=2 records=3 record_bytes=4 activation_bytes=12 local_storage_bytes=8 locks=2 dma_channels=2 dma_bds=3 routes=4 binding=0 partition=0/1 binding_offset=64 binding_span=20 task_bytes=12 task_repeats=1 external_bytes=12",
             "pipeline.channel[1] transport=external-dma sender=binding[0]:0 receiver=worker[1]:0 capacity=2 records=3 record_bytes=4 activation_bytes=12 local_storage_bytes=8 locks=2 dma_channels=1 dma_bds=2 routes=5",
             "COMPILE-REPORT: pipeline root=repeated_sliding_window_array realization=spatial-program groups=1 workers=1 bindings=2 channels=2 slots=4 locks=4 dma_channels=4 dma_bds=6 routes=8",
+            "COMPILE-REPORT: pipeline root=fused_chain_array realization=spatial-program groups=1 workers=2 bindings=2 channels=4",
+            "pipeline.worker[0] entry=fused_chain_array$group$0 group=0 lane=0 resident=1 folded=0",
+            "pipeline.worker[1] entry=fused_chain_array$group$0 group=0 lane=1 resident=1 folded=0",
+            "COMPILE-REPORT: pipeline root=fused_fanout_array realization=spatial-program groups=1 workers=1 bindings=2 channels=2",
+            "pipeline.worker[0] entry=fused_fanout_array$group$0 group=0 lane=0 resident=1 folded=0",
             "pipeline.worker[0] entry=copy_f32x4_record group=0 lane=0 resident=1 folded=0",
             "input_records=6 output_records=6",
             "pipeline.channel[0] transport=external-dma sender=binding[0]:0 receiver=worker[0]:0 capacity=2 records=6 record_bytes=16 activation_bytes=96 local_storage_bytes=32 locks=2 dma_channels=2 dma_bds=3 routes=4 binding=0 partition=0/1 binding_offset=256 binding_span=32 task_bytes=48 task_repeats=2 external_bytes=96",
@@ -111,6 +180,9 @@
             "function=partitioned_write_array$worker$1",
             "function=broadcast_read_array$worker$1",
             "function=repeated_sliding_window_array$worker$0",
+            "function=fused_chain_array$worker$0",
+            "function=fused_chain_array$worker$1",
+            "function=fused_fanout_array$worker$0",
             " spills=0 spill_plans=0"
           ]
         }

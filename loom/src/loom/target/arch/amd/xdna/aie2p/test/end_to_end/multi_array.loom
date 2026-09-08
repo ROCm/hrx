@@ -96,12 +96,56 @@ pipeline.def<kernel> public retain target(@array_target) @repeated_sliding_windo
   pipeline.return
 }
 
+pipeline.def<kernel> public retain target(@array_target) @fused_chain_array() launch(%input: buffer, %output: buffer) {
+  %lane_count = index.constant 2 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %lane_count : index -> group
+
+  %input_view = buffer.view %input[%base] : buffer -> view<2x1xf32>
+  %output_view = buffer.view %output[%base] : buffer -> view<2x1xf32>
+
+  %input_flow = pipeline.scatter %input_view across %workers : view<2x1xf32>, group -> pipeline.flow<tile<1xf32>>
+  %intermediate_flow = pipeline.stage @copy_record on %workers(%input_flow) : (group, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  %output_flow = pipeline.stage @copy_record on %workers(%intermediate_flow) : (group, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  pipeline.write %output_flow to %output_view : pipeline.flow<tile<1xf32>>, view<2x1xf32>
+  pipeline.return
+}
+
+pipeline.def<kernel> public retain target(@array_target) @fused_fanout_array() launch(%input: buffer, %output: buffer) {
+  %lane_count = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %lane_count : index -> group
+
+  %input_view = buffer.view %input[%base] : buffer -> view<1xf32>
+  %output_view = buffer.view %output[%base] : buffer -> view<1xf32>
+
+  %input_flow = pipeline.read %input_view on %workers : view<1xf32>, group -> pipeline.flow<tile<1xf32>>
+  %lhs_flow = pipeline.stage @copy_record on %workers(%input_flow) : (group, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  %rhs_flow = pipeline.stage @copy_record on %workers(%input_flow) : (group, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  %output_flow = pipeline.stage @add_records on %workers(%lhs_flow, %rhs_flow) : (group, pipeline.flow<tile<1xf32>>, pipeline.flow<tile<1xf32>>) -> (pipeline.flow<tile<1xf32>>)
+  pipeline.write %output_flow to %output_view : pipeline.flow<tile<1xf32>>, view<1xf32>
+  pipeline.return
+}
+
 func.def target(@core_target) @copy_record(%input: buffer, %output: buffer) {
   %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 4} : buffer, buffer
   %base = index.constant 0 : offset
   %input_view = buffer.view %input_aligned[%base] : buffer -> view<1xf32>
   %output_view = buffer.view %output_aligned[%base] : buffer -> view<1xf32>
   %value = view.load %input_view[0] : view<1xf32> -> f32
+  view.store %value, %output_view[0] : f32, view<1xf32>
+  func.return
+}
+
+func.def target(@core_target) @add_records(%lhs: buffer, %rhs: buffer, %output: buffer) {
+  %lhs_aligned, %rhs_aligned, %output_aligned = buffer.assume.alignment %lhs, %rhs, %output {minimum_alignment = 4} : buffer, buffer, buffer
+  %base = index.constant 0 : offset
+  %lhs_view = buffer.view %lhs_aligned[%base] : buffer -> view<1xf32>
+  %rhs_view = buffer.view %rhs_aligned[%base] : buffer -> view<1xf32>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<1xf32>
+  %lhs_value = view.load %lhs_view[0] : view<1xf32> -> f32
+  %rhs_value = view.load %rhs_view[0] : view<1xf32> -> f32
+  %value = scalar.addf %lhs_value, %rhs_value : f32
   view.store %value, %output_view[0] : f32, view<1xf32>
   func.return
 }

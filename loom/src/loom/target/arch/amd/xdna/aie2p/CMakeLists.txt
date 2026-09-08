@@ -342,8 +342,10 @@ loom_cc_library(
   NAME
     pipeline_lower
   HDRS
+    "pipeline/composition.h"
     "pipeline/lower.h"
   SRCS
+    "pipeline/composition.c"
     "pipeline/lower.c"
   DEPS
     ::array_descriptors
@@ -353,9 +355,14 @@ loom_cc_library(
     loom::analysis::pipeline_plan
     loom::codegen::low::builder
     loom::ir
+    loom::ops::buffer
+    loom::ops::func
+    loom::ops::index
     loom::ops::low
     loom::ops::op_defs
     loom::ops::pipeline
+    loom::rewrite::callable
+    loom::rewrite::rewriter
     loom::target::arch::amd::xdna::array_facts
     loom::util::fact_table
   PUBLIC
@@ -490,6 +497,7 @@ iree_execution_test_suite(
   TOOLS
     "loom-compile=loom::tools::loom-compile"
   DATA
+    "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/composite_stateful.loom"
     "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/f32_carrier.loom"
     "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/fixed_record_report.loom"
     "${PROJECT_SOURCE_DIR}/loom/src/loom/target/arch/amd/xdna/aie2p/test/end_to_end/multi_array.loom"
