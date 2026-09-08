@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "compiles promoted F32 carrier arithmetic into an XDNA product",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/f32_carrier.loom",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--output={tmp}/f32_carrier.xdna",
+          "--compile-report=details"
+        ]
+      },
+      "stderr": {
+        "contains": {
+          "unordered": [
+            "\"artifact_kind\":\"hal-executable\"",
+            "\"backend\":\"xdna\"",
+            "\"artifact_format\":\"elf\"",
+            "\"status\":{\"code\":0,\"name\":\"OK\"}",
+            "\"function\":\"f32_carrier_array$worker$0\"",
+            "\"function\":\"f32_carrier\"",
+            "\"spill_count\":0"
+          ]
+        }
+      },
+      "files": [
+        {
+          "path": "{tmp}/f32_carrier.xdna",
+          "non_empty": true
+        }
+      ]
+    },
+    {
+      "name": "compiles native integer packet conversions into one XDNA product",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/native_integer_conversion.loom",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--output={tmp}/native_integer_conversion.xdna",
+          "--compile-report=summary"
+        ]
+      },
+      "stderr": {
+        "contains": {
+          "unordered": [
+            "\"artifact_kind\":\"hal-executable\"",
+            "\"backend\":\"xdna\"",
+            "\"artifact_format\":\"elf\"",
+            "\"status\":{\"code\":0,\"name\":\"OK\"}",
+            "\"function\":\"fptosi_bf16x16_i32x16_array$worker$0\"",
+            "\"function\":\"extsi_i16x16_i32x16_array$worker$0\"",
+            "\"function\":\"extui_i8x64_i32x64_array$worker$0\"",
+            "\"function\":\"extsi_i16x32_i64x32_array$worker$0\"",
+            "\"function\":\"trunci_i16x32_i8x32_array$worker$0\"",
+            "\"function\":\"fptosi_bf16x16_i32x16\"",
+            "\"function\":\"extsi_i16x32_i64x32\"",
+            "\"function\":\"bitpack_i8x128_i4x128_array$worker$0\"",
+            "\"plan_key\":\"exact_bfloat16x16_to_signed_i32x16\"",
+            "\"plan_key\":\"native_memory_load_signed_i16x16_to_i32x16\"",
+            "\"plan_key\":\"native_memory_load_unsigned_i8x64_to_i32x64\"",
+            "\"plan_key\":\"native_memory_load_signed_i16x32_to_i64x32\"",
+            "\"plan_key\":\"native_memory_store_native_trunc_i16x32_to_i8x32\"",
+            "\"plan_key\":\"native_memory_store_native_bitpack_i8x128_to_i4x128\"",
+            "\"conversion_count\":1",
+            "\"spill_count\":0",
+            "\"allocation_materialized_copy_count\":0"
+          ]
+        }
+      },
+      "files": [
+        {
+          "path": "{tmp}/native_integer_conversion.xdna",
+          "non_empty": true
+        }
+      ]
+    }
+  ]
+}

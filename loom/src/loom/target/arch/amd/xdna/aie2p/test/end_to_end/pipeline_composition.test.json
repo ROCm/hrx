@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "rejects buffered same-group stages before source lowering",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/composite_stateful.loom",
+          "--root=buffered_composite_array",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--output={tmp}/buffered_composite.xdna"
+        ]
+      },
+      "exit": {
+        "nonzero": true
+      },
+      "stderr": {
+        "contains": [
+          "AIE2P buffered same-group pipeline flow requires a composite ring state machine"
+        ]
+      }
+    },
+    {
+      "name": "rejects frame epilogues until the worker can execute completion phases",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/composite_stateful.loom",
+          "--root=folded_composite_array",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--output={tmp}/folded_composite.xdna"
+        ]
+      },
+      "exit": {
+        "nonzero": true
+      },
+      "stderr": {
+        "contains": [
+          "AIE2P frame-completion stages require a phased worker program"
+        ]
+      }
+    },
+    {
+      "name": "compiles parallel folded stages into one resident worker",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/composite_stateful.loom",
+          "--root=parallel_folded_composite_array",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--output={tmp}/parallel_folded_composite.xdna",
+          "--compile-report=text-details"
+        ]
+      },
+      "stderr": {
+        "contains": {
+          "unordered": [
+            "COMPILE-REPORT: summary artifact=hal-executable status=OK",
+            "backend=xdna",
+            "COMPILE-REPORT: pipeline root=parallel_folded_composite_array realization=spatial-program groups=1 workers=1 bindings=5 channels=5 slots=10 locks=10 dma_channels=10",
+            "pipeline.worker[0] entry=parallel_folded_composite_array$group$0 group=0 lane=0 resident=1 folded=1",
+            "input_channels=3 output_channels=2",
+            "finite_loop_trips=2 fold=addf",
+            "pipeline.channel[3] transport=external-dma sender=worker[0]:3 receiver=binding[3]:0",
+            "pipeline.channel[4] transport=external-dma sender=worker[0]:4 receiver=binding[4]:0",
+            "function=parallel_folded_composite_array$worker$0",
+            " spills=0 spill_plans=0"
+          ]
+        }
+      },
+      "files": [
+        {
+          "path": "{tmp}/parallel_folded_composite.xdna",
+          "non_empty": true
+        }
+      ]
+    },
+    {
+      "name": "rejects unequal same-group stage rates before source lowering",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/composite_stateful.loom",
+          "--root=rate_changed_composite_array",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--output={tmp}/rate_changed_composite.xdna"
+        ]
+      },
+      "exit": {
+        "nonzero": true
+      },
+      "stderr": {
+        "contains": [
+          "pipeline group 0 stage 1 record shape is neither the shared record cadence nor its completed frame"
+        ]
+      }
+    },
+    {
+      "name": "rejects a worker wait cycle introduced by coalescing a source DAG",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/composite_stateful.loom",
+          "--root=cyclic_worker_array",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--output={tmp}/cyclic_worker.xdna"
+        ]
+      },
+      "exit": {
+        "nonzero": true
+      },
+      "stderr": {
+        "contains": [
+          "AIE2P worker channel cycle requires interleaved channel phases"
+        ]
+      }
+    }
+  ]
+}

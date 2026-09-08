@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "compiles a canonical GGML Q4_K gate/up SwiGLU pipeline",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/q4_q5_k_record_contraction.loom",
+          "--root=q4_k_gate_up_array",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--config=q4_q5_gate_up.input_size=32768",
+          "--config=q4_q5_gate_up.output_count=17",
+          "--output={tmp}/q4_k_gate_up.xdna",
+          "--compile-report=text-details"
+        ]
+      },
+      "stderr": {
+        "contains": {
+          "unordered": [
+            "COMPILE-REPORT: summary artifact=hal-executable status=OK",
+            "backend=xdna",
+            "COMPILE-REPORT: pipeline root=q4_k_gate_up_array realization=spatial-program groups=2 workers=3 bindings=4 channels=11 slots=22 locks=22 dma_channels=14",
+            "pipeline.worker[0] entry=q4_k_gate_up_array$group$0 group=0 lane=0 resident=1 folded=1 placement=0,2 input_channels=3 output_channels=2",
+            "pipeline.worker[2] entry=q4_k_gate_up_array$group$1 group=1 lane=0 resident=1 folded=0 placement=0,3 input_channels=4 output_channels=1",
+            "pipeline.channel[6] transport=neighbor-memory",
+            "pipeline.channel[10] transport=external-dma",
+            "worker_storage_bytes=68",
+            "routed_dma_bytes=0",
+            "finite_loop_trips=64 fold=addf",
+            "schema=ggml.q4_k layout=strided transform=none schema_elements=256 schema_record_bytes=144 schema_alignment=2 schema_records_per_record=1 transform_extra_bytes=0",
+            "binding_span=304128 task_bytes=156672 task_repeats=1 external_bytes=156672",
+            "schema=ggml.q8_1_x4 layout=strided transform=none schema_elements=128 schema_record_bytes=144 schema_alignment=16 schema_records_per_record=2 transform_extra_bytes=0",
+            "binding_span=18432 task_bytes=18432 task_repeats=17 external_bytes=313344",
+            "function=q4_k_projection_branch",
+            "function=q4_k_gate_up_array$group$1",
+            "function=q4_k_gate_up_array$worker$0",
+            "function=gate_up_swiglu",
+            " spills=0 spill_plans=0"
+          ]
+        }
+      },
+      "files": [
+        {
+          "path": "{tmp}/q4_k_gate_up.xdna",
+          "non_empty": true
+        }
+      ]
+    },
+    {
+      "name": "compiles a canonical GGML Q5_K gate/up SwiGLU pipeline",
+      "run": {
+        "tool": "loom-compile",
+        "args": [
+          "{srcdir}/q4_q5_k_record_contraction.loom",
+          "--root=q5_k_gate_up_array",
+          "--format=xdna",
+          "--target=amd.xdna.aie2p:amd.xdna.strix_halo.17f0_11",
+          "--config=q4_q5_gate_up.input_size=1024",
+          "--config=q4_q5_gate_up.output_count=3",
+          "--output={tmp}/q5_k_gate_up.xdna",
+          "--compile-report=text-details"
+        ]
+      },
+      "stderr": {
+        "contains": {
+          "unordered": [
+            "COMPILE-REPORT: summary artifact=hal-executable status=OK",
+            "backend=xdna",
+            "COMPILE-REPORT: pipeline root=q5_k_gate_up_array realization=spatial-program groups=2 workers=3 bindings=4 channels=11 slots=22 locks=22 dma_channels=14",
+            "pipeline.worker[0] entry=q5_k_gate_up_array$group$0 group=0 lane=0 resident=1 folded=1 placement=0,2 input_channels=3 output_channels=2",
+            "pipeline.worker[2] entry=q5_k_gate_up_array$group$1 group=1 lane=0 resident=1 folded=0 placement=0,3 input_channels=4 output_channels=1",
+            "pipeline.channel[6] transport=neighbor-memory",
+            "pipeline.channel[10] transport=external-dma",
+            "worker_storage_bytes=68",
+            "routed_dma_bytes=0",
+            "finite_loop_trips=2 fold=addf",
+            "schema=ggml.q5_k layout=strided transform=none schema_elements=256 schema_record_bytes=176 schema_alignment=2 schema_records_per_record=1 transform_extra_bytes=0",
+            "binding_span=1760 task_bytes=1056 task_repeats=1 external_bytes=1056",
+            "schema=ggml.q8_1_x4 layout=strided transform=none schema_elements=128 schema_record_bytes=144 schema_alignment=16 schema_records_per_record=2 transform_extra_bytes=0",
+            "binding_span=576 task_bytes=576 task_repeats=3 external_bytes=1728",
+            "function=q5_k_projection_branch",
+            "function=q5_k_gate_up_array$group$1",
+            "function=q5_k_gate_up_array$worker$0",
+            "function=gate_up_swiglu",
+            " spills=0 spill_plans=0"
+          ]
+        }
+      },
+      "files": [
+        {
+          "path": "{tmp}/q5_k_gate_up.xdna",
+          "non_empty": true
+        }
+      ]
+    }
+  ]
+}
