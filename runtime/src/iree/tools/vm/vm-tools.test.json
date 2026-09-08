@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "file round trip is canonical and byte exact",
+      "steps": [
+        {
+          "name": "assemble",
+          "run": {
+            "tool": "vm-as",
+            "args": [
+              "--output={tmp}/original.vm",
+              "{srcdir}/../../vm/bytecode/testdata/launch_config.vmasm"
+            ]
+          },
+          "stderr": {
+            "empty": true
+          },
+          "files": [
+            {
+              "path": "{tmp}/original.vm",
+              "non_empty": true
+            }
+          ]
+        },
+        {
+          "name": "disassemble",
+          "run": {
+            "tool": "vm-dis",
+            "args": [
+              "--output={tmp}/canonical.vmasm",
+              "{tmp}/original.vm"
+            ]
+          },
+          "stderr": {
+            "empty": true
+          },
+          "files": [
+            {
+              "path": "{tmp}/canonical.vmasm",
+              "equals": "{srcdir}/../../vm/bytecode/testdata/launch_config.vmasm"
+            }
+          ]
+        },
+        {
+          "name": "reassemble",
+          "run": {
+            "tool": "vm-as",
+            "args": [
+              "--output={tmp}/reassembled.vm",
+              "{tmp}/canonical.vmasm"
+            ]
+          },
+          "stderr": {
+            "empty": true
+          },
+          "files": [
+            {
+              "path": "{tmp}/reassembled.vm",
+              "equals": "{tmp}/original.vm"
+            }
+          ]
+        },
+        {
+          "name": "disassemble in place",
+          "run": {
+            "tool": "vm-dis",
+            "args": [
+              "--output={tmp}/reassembled.vm",
+              "{tmp}/reassembled.vm"
+            ]
+          },
+          "stderr": {
+            "empty": true
+          },
+          "files": [
+            {
+              "path": "{tmp}/reassembled.vm",
+              "equals": "{srcdir}/../../vm/bytecode/testdata/launch_config.vmasm"
+            }
+          ]
+        },
+        {
+          "name": "assemble in place",
+          "run": {
+            "tool": "vm-as",
+            "args": [
+              "--output={tmp}/reassembled.vm",
+              "{tmp}/reassembled.vm"
+            ]
+          },
+          "stderr": {
+            "empty": true
+          },
+          "files": [
+            {
+              "path": "{tmp}/reassembled.vm",
+              "equals": "{tmp}/original.vm"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "stdin stdout pipeline is byte exact",
+      "steps": [
+        {
+          "name": "assemble-stdout",
+          "run": {
+            "tool": "vm-as",
+            "stdin": {
+              "file": "{srcdir}/../../vm/bytecode/testdata/launch_config.vmasm"
+            }
+          },
+          "stdout": {
+            "non_empty": true,
+            "save": "{tmp}/original.vm"
+          },
+          "stderr": {
+            "empty": true
+          }
+        },
+        {
+          "name": "disassemble-stdout",
+          "run": {
+            "tool": "vm-dis",
+            "args": ["-"],
+            "stdin": {
+              "step_stdout": "assemble-stdout"
+            }
+          },
+          "stdout": {
+            "non_empty": true,
+            "save": "{tmp}/canonical.vmasm"
+          },
+          "stderr": {
+            "empty": true
+          },
+          "files": [
+            {
+              "path": "{tmp}/canonical.vmasm",
+              "equals": "{srcdir}/../../vm/bytecode/testdata/launch_config.vmasm"
+            }
+          ]
+        },
+        {
+          "name": "reassemble-stdout",
+          "run": {
+            "tool": "vm-as",
+            "args": ["--output=-", "-"],
+            "stdin": {
+              "step_stdout": "disassemble-stdout"
+            }
+          },
+          "stdout": {
+            "non_empty": true,
+            "save": "{tmp}/reassembled.vm"
+          },
+          "stderr": {
+            "empty": true
+          },
+          "files": [
+            {
+              "path": "{tmp}/reassembled.vm",
+              "equals": "{tmp}/original.vm"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "invalid assembly produces no output",
+      "run": {
+        "tool": "vm-as",
+        "args": ["-"],
+        "stdin": {
+          "text": "this is not VM assembly\n"
+        }
+      },
+      "exit": {
+        "nonzero": true
+      },
+      "stdout": {
+        "empty": true
+      },
+      "stderr": {
+        "contains": ["INVALID_ARGUMENT", "expected fixed punctuation"]
+      }
+    },
+    {
+      "name": "invalid bytecode produces no output",
+      "run": {
+        "tool": "vm-dis",
+        "args": ["-"],
+        "stdin": {
+          "text": "not a VM module"
+        }
+      },
+      "exit": {
+        "nonzero": true
+      },
+      "stdout": {
+        "empty": true
+      },
+      "stderr": {
+        "contains": ["INVALID_ARGUMENT", "bytecode image is truncated"]
+      }
+    }
+  ]
+}

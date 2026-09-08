@@ -30,3 +30,13 @@ alias(
     name = "iree-run-replay",
     actual = "//runtime/src/iree/tools/iree-run-replay",
 )
+
+alias(
+    name = "vm-as",
+    actual = "//runtime/src/iree/tools/vm:vm-as",
+)
+
+alias(
+    name = "vm-dis",
+    actual = "//runtime/src/iree/tools/vm:vm-dis",
+)
