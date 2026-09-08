@@ -61,6 +61,7 @@ amdf_status_t amdf_gpu_umd_device_create(
     return amdf_make_api_status(AMDF_STATUS_CODE_RESOURCE_EXHAUSTED);
   }
   InitializeSRWLock(&device->deferred_memory_release_lock);
+  amdf_kmt_device_status_initialize(&device->status);
   device->kmt = &endpoint->instance->kmt;
   device->adapter = endpoint->adapter;
   device->physical_adapter_index = endpoint->physical_adapter_index;

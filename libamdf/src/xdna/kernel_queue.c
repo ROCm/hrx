@@ -137,8 +137,11 @@ static amdf_status_t amdf_xdna_kernel_queue_query_status(
               occupancy == AMDF_XDNA_KERNEL_QUEUE_OCCUPANCY_RESERVING
           ? slot_submission
           : slot_submission - 1;
-  out_status->state = AMDF_KERNEL_QUEUE_STATE_ACTIVE;
-  out_status->terminal_status = AMDF_STATUS_OK;
+  out_status->terminal_status =
+      amdf_xdna_umd_kernel_queue_query_terminal_status(queue->umd);
+  out_status->state = amdf_status_is_ok(out_status->terminal_status)
+                          ? AMDF_KERNEL_QUEUE_STATE_ACTIVE
+                          : AMDF_KERNEL_QUEUE_STATE_DEVICE_LOST;
   return AMDF_STATUS_OK;
 }
 
@@ -151,6 +154,11 @@ static amdf_status_t amdf_xdna_kernel_queue_wait(
     return amdf_make_api_status(AMDF_STATUS_CODE_OUT_OF_RANGE);
   }
   for (;;) {
+    const amdf_status_t terminal_status =
+        amdf_xdna_umd_kernel_queue_query_terminal_status(queue->umd);
+    if (!amdf_status_is_ok(terminal_status)) {
+      return terminal_status;
+    }
     if (amdf_xdna_kernel_queue_try_retire(queue, submission)) {
       return AMDF_STATUS_OK;
     }
@@ -184,8 +192,7 @@ static amdf_status_t amdf_xdna_kernel_queue_wait(
     const amdf_status_t status = amdf_xdna_umd_kernel_queue_wait(
         queue->umd, pending_native_submission, timeout_nanoseconds,
         poll_duration_nanoseconds);
-    if (!amdf_status_is_ok(status) &&
-        !amdf_xdna_kernel_queue_try_retire(queue, submission)) {
+    if (!amdf_status_is_ok(status)) {
       return status;
     }
   }

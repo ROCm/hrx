@@ -100,6 +100,11 @@ static amdf_status_t amdf_windows_xdna_kernel_execution_submit_native(
     uint32_t command_byte_length,
     const amdf_windows_xdna_legacy_submission_t* submission,
     uint64_t* out_native_submission) {
+  const amdf_status_t terminal_status =
+      amdf_windows_xdna_kernel_execution_query_terminal_status(execution);
+  if (!amdf_status_is_ok(terminal_status)) {
+    return terminal_status;
+  }
   if (execution->last_native_submission == UINT64_MAX) {
     return amdf_make_api_status(AMDF_STATUS_CODE_RESOURCE_EXHAUSTED);
   }
@@ -117,8 +122,17 @@ static amdf_status_t amdf_windows_xdna_kernel_execution_submit_native(
   if (amdf_status_is_ok(status)) {
     execution->last_native_submission = native_submission;
     *out_native_submission = native_submission;
+  } else {
+    return amdf_kmt_device_status_observe_error(
+        &execution->device->status, execution->device->kmt,
+        execution->device->device, status);
   }
   return status;
+}
+
+amdf_status_t amdf_windows_xdna_kernel_execution_query_terminal_status(
+    const amdf_windows_xdna_kernel_execution_t* execution) {
+  return amdf_kmt_device_status_query(&execution->device->status);
 }
 
 static amdf_status_t amdf_windows_xdna_kernel_execution_wait_synchronous(
@@ -136,7 +150,9 @@ static amdf_status_t amdf_windows_xdna_kernel_execution_wait_synchronous(
   const amdf_status_t status =
       amdf_kmt_make_status(execution->device->kmt->wait_from_cpu(&wait));
   if (!amdf_status_is_ok(status)) {
-    return status;
+    return amdf_kmt_device_status_observe_error(
+        &execution->device->status, execution->device->kmt,
+        execution->device->device, status);
   }
   MemoryBarrier();
   return amdf_windows_xdna_kernel_execution_query_progress(execution) >=
@@ -649,6 +665,11 @@ amdf_status_t amdf_windows_xdna_kernel_execution_wait(
   if (execution == NULL || native_submission == 0) {
     return amdf_make_api_status(AMDF_STATUS_CODE_INVALID_ARGUMENT);
   }
+  const amdf_status_t terminal_status =
+      amdf_windows_xdna_kernel_execution_query_terminal_status(execution);
+  if (!amdf_status_is_ok(terminal_status)) {
+    return terminal_status;
+  }
   const uint64_t begin = amdf_windows_xdna_query_counter();
   const uint64_t poll_limit =
       timeout_nanoseconds == AMDF_TIMEOUT_INFINITE
@@ -693,6 +714,9 @@ amdf_status_t amdf_windows_xdna_kernel_execution_wait(
       status =
           amdf_kmt_make_status(execution->device->kmt->wait_from_cpu(&wait));
       if (!amdf_status_is_ok(status)) {
+        status = amdf_kmt_device_status_observe_error(
+            &execution->device->status, execution->device->kmt,
+            execution->device->device, status);
         break;
       }
       execution->wait_event_submission = native_submission;

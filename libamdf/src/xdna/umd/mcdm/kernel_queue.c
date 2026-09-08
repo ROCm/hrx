@@ -59,6 +59,12 @@ amdf_status_t amdf_xdna_umd_kernel_queue_wait(
       poll_duration_nanoseconds);
 }
 
+amdf_status_t amdf_xdna_umd_kernel_queue_query_terminal_status(
+    const amdf_xdna_umd_kernel_queue_t* queue) {
+  return amdf_windows_xdna_kernel_execution_query_terminal_status(
+      queue->execution);
+}
+
 amdf_status_t amdf_xdna_umd_kernel_queue_destroy(
     amdf_xdna_umd_kernel_queue_t* queue) {
   amdf_windows_xdna_kernel_execution_release_queue(queue->execution);

@@ -19,6 +19,7 @@ iree_cc_library(
     amdf::headers
     libamdf::src::gpu::umd::device
     libamdf::src::gpu::umd::wddm::wkmi::adapter
+    libamdf::src::platform::windows::device_status
     libamdf::src::platform::windows::kmt_api
   PUBLIC
 )
@@ -99,6 +100,25 @@ iree_cc_library(
     ::kernel_queue
     amdf::headers
   PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
+iree_cc_test(
+  NAME
+    kernel_queue_test
+  SRCS
+    "kernel_queue_test.cc"
+  DEPS
+    ::device_state
+    ::kernel_queue
+    amdf::headers
+    iree::third_party::google_test
+    iree::third_party::google_test_main
+    libamdf::src::gpu::umd::kernel_queue
+  LABELS
+    "iree-build-requirement=libamdf"
+    "iree-build-requirement=libamdf.gpu"
 )
 endif()
 

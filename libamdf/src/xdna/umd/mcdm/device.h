@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 
+#include "libamdf/src/platform/windows/device_status.h"
 #include "libamdf/src/platform/windows/kmt_api.h"
 #include "libamdf/src/xdna/umd/device.h"
 
@@ -24,6 +25,8 @@ struct amdf_xdna_umd_device_t {
   const amdf_kmt_api_t* kmt;
   // Logical KMT device owning paging and execution state.
   D3DKMT_HANDLE device;
+  // Confirmed execution failure shared by this device's execution paths.
+  amdf_kmt_device_status_t status;
   // Paging queue owned by this logical device.
   D3DKMT_HANDLE paging_queue;
   // Synchronization object owned by the paging queue.

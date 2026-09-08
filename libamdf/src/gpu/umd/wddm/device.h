@@ -9,6 +9,7 @@
 
 #include "libamdf/src/gpu/umd/device.h"
 #include "libamdf/src/gpu/umd/wddm/wkmi/adapter.h"
+#include "libamdf/src/platform/windows/device_status.h"
 #include "libamdf/src/platform/windows/kmt_api.h"
 
 typedef struct amdf_gpu_umd_memory_t amdf_gpu_umd_memory_t;
@@ -25,6 +26,8 @@ struct amdf_gpu_umd_device_t {
   amdf_gpu_wddm_wkmi_adapter_t wkmi;
   // Logical KMT device owning paging and future execution state.
   D3DKMT_HANDLE device;
+  // Confirmed execution failure shared by every queue on this device.
+  amdf_kmt_device_status_t status;
   // Paging queue owned by this logical device.
   D3DKMT_HANDLE paging_queue;
   // Synchronization object owned by the paging queue.

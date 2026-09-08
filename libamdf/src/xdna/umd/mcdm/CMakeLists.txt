@@ -46,6 +46,7 @@ iree_cc_library(
     "device.h"
   DEPS
     amdf::headers
+    libamdf::src::platform::windows::device_status
     libamdf::src::platform::windows::kmt_api
     libamdf::src::xdna::umd::device
   PUBLIC

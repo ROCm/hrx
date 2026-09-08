@@ -35,6 +35,7 @@ amdf_cc_library(
     hdrs = ["device.h"],
     target_compatible_with = MCDM_COMPATIBILITY,
     deps = [
+        "//libamdf/src/platform/windows:device_status",
         "//libamdf/src/platform/windows:kmt_api",
         "//libamdf/src/xdna/umd:device",
     ],

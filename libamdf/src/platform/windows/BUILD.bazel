@@ -32,6 +32,18 @@ amdf_cc_library(
 )
 
 amdf_cc_library(
+    name = "device_status",
+    srcs = ["device_status.c"],
+    hdrs = ["device_status.h"],
+    target_compatible_with = WINDOWS_COMPATIBILITY,
+    visibility = ["//libamdf/src:__subpackages__"],
+    deps = [
+        ":kmt_api",
+        "//libamdf/src:atomics",
+    ],
+)
+
+amdf_cc_library(
     name = "endpoint_properties",
     srcs = ["endpoint_properties.c"],
     hdrs = ["endpoint_properties.h"],
@@ -86,6 +98,17 @@ amdf_cc_library(
     deps = [
         ":endpoint",
         ":instance",
+    ],
+)
+
+amdf_cc_test(
+    name = "device_status_test",
+    srcs = ["device_status_test.cc"],
+    target_compatible_with = WINDOWS_COMPATIBILITY,
+    deps = [
+        ":device_status",
+        "//third_party:google_test",
+        "//third_party:google_test_main",
     ],
 )
 

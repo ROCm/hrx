@@ -40,6 +40,22 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
 iree_cc_library(
   NAME
+    device_status
+  HDRS
+    "device_status.h"
+  SRCS
+    "device_status.c"
+  DEPS
+    ::kmt_api
+    amdf::headers
+    libamdf::src::atomics
+  PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
+iree_cc_library(
+  NAME
     endpoint_properties
   HDRS
     "endpoint_properties.h"
@@ -113,6 +129,22 @@ iree_cc_library(
     ::instance
     amdf::headers
   PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
+iree_cc_test(
+  NAME
+    device_status_test
+  SRCS
+    "device_status_test.cc"
+  DEPS
+    ::device_status
+    amdf::headers
+    iree::third_party::google_test
+    iree::third_party::google_test_main
+  LABELS
+    "iree-build-requirement=libamdf"
 )
 endif()
 

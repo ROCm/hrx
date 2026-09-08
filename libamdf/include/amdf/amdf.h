@@ -773,22 +773,28 @@ typedef struct amdf_api_t {
   amdf_status_t(AMDF_CALL* kernel_queue_query_info)(
       amdf_kernel_queue_t* queue, amdf_kernel_queue_info_t* out_info);
 
-  /// Samples retirement and terminal state without waiting.
+  /// Samples retirement and observed terminal state without waiting.
   ///
   /// The operation may retire completed submissions and release their command
   /// borrows. It is thread-safe with submission and other status operations. It
   /// performs no allocation, system call, retry, sleep, or active polling. No
-  /// output is modified when validation fails.
+  /// output is modified when validation fails. ACTIVE means no terminal failure
+  /// has been observed, not that a fresh native health check was performed.
+  /// Rejection and timeout errors do not themselves mark a queue failed. A
+  /// terminal failure remains sticky and does not advance retirement.
   amdf_status_t(AMDF_CALL* kernel_queue_query_status)(
       amdf_kernel_queue_t* queue, amdf_kernel_queue_status_t* out_status);
 
-  /// Waits until `submission` retires or the timeout expires.
+  /// Waits until `submission` retires, a failure is observed, or time expires.
   ///
   /// `timeout_nanoseconds` includes active polling and the subsequent event
   /// wait. `poll_duration_nanoseconds` is clipped to that timeout; zero
   /// disables active polling. `AMDF_TIMEOUT_INFINITE` requests no deadline. A
   /// timeout observes but never cancels accepted work or releases its command
   /// borrows. The operation is thread-safe with submission and status queries.
+  /// A native wait error is returned even if progress concurrently advances;
+  /// callers use `kernel_queue_query_status` to determine retirement and
+  /// whether a terminal failure was observed before deciding to retry.
   amdf_status_t(AMDF_CALL* kernel_queue_wait)(
       amdf_kernel_queue_t* queue, uint64_t submission,
       uint64_t timeout_nanoseconds, uint64_t poll_duration_nanoseconds);

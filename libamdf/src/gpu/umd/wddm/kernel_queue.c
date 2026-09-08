@@ -125,6 +125,11 @@ amdf_status_t amdf_gpu_umd_kernel_queue_create(
 amdf_status_t amdf_gpu_umd_kernel_queue_submit(
     amdf_gpu_umd_kernel_queue_t* queue, uint64_t command_buffer_address,
     uint64_t command_buffer_byte_length, uint64_t* out_native_submission) {
+  const amdf_status_t terminal_status =
+      amdf_gpu_umd_kernel_queue_query_terminal_status(queue);
+  if (!amdf_status_is_ok(terminal_status)) {
+    return terminal_status;
+  }
   if (queue->native == NULL) {
     return amdf_make_api_status(AMDF_STATUS_CODE_FAILED_PRECONDITION);
   }
@@ -148,8 +153,17 @@ amdf_status_t amdf_gpu_umd_kernel_queue_submit(
   if (amdf_status_is_ok(status)) {
     queue->last_native_submission = native_submission;
     *out_native_submission = native_submission;
+  } else {
+    return amdf_kmt_device_status_observe_error(&queue->device->status,
+                                                queue->device->kmt,
+                                                queue->device->device, status);
   }
   return status;
+}
+
+amdf_status_t amdf_gpu_umd_kernel_queue_query_terminal_status(
+    const amdf_gpu_umd_kernel_queue_t* queue) {
+  return amdf_kmt_device_status_query(&queue->device->status);
 }
 
 uint64_t amdf_gpu_umd_kernel_queue_query_progress(
@@ -165,6 +179,11 @@ uint64_t amdf_gpu_umd_kernel_queue_query_progress(
 amdf_status_t amdf_gpu_umd_kernel_queue_wait(
     amdf_gpu_umd_kernel_queue_t* queue, uint64_t native_submission,
     uint64_t timeout_nanoseconds, uint64_t poll_duration_nanoseconds) {
+  const amdf_status_t terminal_status =
+      amdf_gpu_umd_kernel_queue_query_terminal_status(queue);
+  if (!amdf_status_is_ok(terminal_status)) {
+    return terminal_status;
+  }
   const uint64_t begin = amdf_gpu_wddm_query_counter();
   const uint64_t poll_limit =
       timeout_nanoseconds == AMDF_TIMEOUT_INFINITE
@@ -203,6 +222,9 @@ amdf_status_t amdf_gpu_umd_kernel_queue_wait(
       wait.hAsyncEvent = queue->wait_event;
       status = amdf_kmt_make_status(queue->device->kmt->wait_from_cpu(&wait));
       if (!amdf_status_is_ok(status)) {
+        status = amdf_kmt_device_status_observe_error(
+            &queue->device->status, queue->device->kmt, queue->device->device,
+            status);
         break;
       }
       queue->wait_event_submission = native_submission;

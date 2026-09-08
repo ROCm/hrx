@@ -31,6 +31,11 @@ amdf_status_t amdf_xdna_umd_kernel_queue_submit(
 uint64_t amdf_xdna_umd_kernel_queue_query_progress(
     const amdf_xdna_umd_kernel_queue_t* queue);
 
+// Returns the observed terminal device failure without native queries. An
+// operation error alone does not fail the queue or establish retirement.
+amdf_status_t amdf_xdna_umd_kernel_queue_query_terminal_status(
+    const amdf_xdna_umd_kernel_queue_t* queue);
+
 // Waits for one native progress value with caller-selected polling.
 amdf_status_t amdf_xdna_umd_kernel_queue_wait(
     amdf_xdna_umd_kernel_queue_t* queue, uint64_t native_submission,

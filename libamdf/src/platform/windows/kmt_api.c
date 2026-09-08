@@ -24,6 +24,8 @@ static amdf_status_t amdf_kmt_resolve_procedures(amdf_kmt_api_t* api) {
       (PFND3DKMT_CREATEDEVICE)GetProcAddress(api->module, "D3DKMTCreateDevice");
   api->destroy_device = (PFND3DKMT_DESTROYDEVICE)GetProcAddress(
       api->module, "D3DKMTDestroyDevice");
+  api->get_device_state = (PFND3DKMT_GETDEVICESTATE)GetProcAddress(
+      api->module, "D3DKMTGetDeviceState");
   api->create_paging_queue = (PFND3DKMT_CREATEPAGINGQUEUE)GetProcAddress(
       api->module, "D3DKMTCreatePagingQueue");
   api->destroy_paging_queue = (PFND3DKMT_DESTROYPAGINGQUEUE)GetProcAddress(
@@ -79,7 +81,8 @@ static amdf_status_t amdf_kmt_resolve_procedures(amdf_kmt_api_t* api) {
 
 bool amdf_kmt_api_supports_paging_devices(const amdf_kmt_api_t* api) {
   return api->create_device != NULL && api->destroy_device != NULL &&
-         api->create_paging_queue != NULL && api->destroy_paging_queue != NULL;
+         api->get_device_state != NULL && api->create_paging_queue != NULL &&
+         api->destroy_paging_queue != NULL;
 }
 
 bool amdf_kmt_api_supports_device_contexts(const amdf_kmt_api_t* api) {

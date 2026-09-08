@@ -34,7 +34,7 @@ static inline void amdf_atomic_uint64_initialize(amdf_atomic_uint64_t* atomic,
   atomic->value = value;
 }
 
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) && !defined(__clang__)
 
 #include <intrin.h>
 

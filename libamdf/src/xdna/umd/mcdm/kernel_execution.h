@@ -70,6 +70,10 @@ amdf_status_t amdf_windows_xdna_kernel_execution_submit(
 uint64_t amdf_windows_xdna_kernel_execution_query_progress(
     const amdf_windows_xdna_kernel_execution_t* execution);
 
+// Returns the device's observed terminal execution failure without polling.
+amdf_status_t amdf_windows_xdna_kernel_execution_query_terminal_status(
+    const amdf_windows_xdna_kernel_execution_t* execution);
+
 // Waits for one native submission with caller-selected active polling.
 amdf_status_t amdf_windows_xdna_kernel_execution_wait(
     amdf_windows_xdna_kernel_execution_t* execution, uint64_t native_submission,

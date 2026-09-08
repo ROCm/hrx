@@ -43,6 +43,8 @@ typedef struct amdf_kmt_api_t {
   PFND3DKMT_CREATEDEVICE create_device;
   // Destroys one logical KMT device.
   PFND3DKMT_DESTROYDEVICE destroy_device;
+  // Diagnoses device execution failure after a rejected native operation.
+  PFND3DKMT_GETDEVICESTATE get_device_state;
   // Creates the paging queue used by a logical device.
   PFND3DKMT_CREATEPAGINGQUEUE create_paging_queue;
   // Destroys one paging queue and its associated synchronization object.
