@@ -10,6 +10,7 @@
 
 #include "iree/hal/drivers/amdgpu/buffer.h"
 #include "iree/hal/drivers/amdgpu/device/dispatch.h"
+#include "iree/hal/drivers/amdgpu/device/grid_sync.h"
 #include "iree/hal/drivers/amdgpu/device/timestamp.h"
 #include "iree/hal/drivers/amdgpu/executable.h"
 #include "iree/hal/drivers/amdgpu/host_queue_policy.h"
@@ -19,6 +20,10 @@
 #include "iree/hal/drivers/amdgpu/profile_counters.h"
 #include "iree/hal/drivers/amdgpu/profile_traces.h"
 #include "iree/hal/drivers/amdgpu/util/aql_emitter.h"
+
+static_assert(sizeof(iree_amdgpu_grid_sync_info_t) <=
+                  sizeof(iree_hal_amdgpu_kernarg_block_t),
+              "grid sync info must fit in one kernarg ring block");
 
 typedef struct iree_hal_amdgpu_host_queue_dispatch_plan_t {
   // Executable dispatch descriptor selected for the queue's physical device.
@@ -39,6 +44,9 @@ typedef struct iree_hal_amdgpu_host_queue_dispatch_plan_t {
   uint32_t workgroup_cluster_count[3];
   // True when workgroup counts are read from a device buffer before dispatch.
   bool uses_indirect_parameters;
+  // Per-dispatch cooperative grid synchronization state. A zero |grid_count|
+  // means the dispatch requires no grid synchronization preparation.
+  iree_amdgpu_grid_sync_info_t grid_sync_info;
 } iree_hal_amdgpu_host_queue_dispatch_plan_t;
 
 static iree_status_t iree_hal_amdgpu_host_queue_validate_dispatch_flags(
@@ -365,6 +373,33 @@ static iree_status_t iree_hal_amdgpu_host_queue_validate_dispatch_kernargs(
   return iree_ok_status();
 }
 
+static bool iree_hal_amdgpu_host_queue_dispatch_has_implicit_args(
+    const iree_hal_amdgpu_host_queue_dispatch_plan_t* plan) {
+  if (plan->custom_layout) return plan->custom_layout->has_implicit_args;
+  return iree_any_bit_set(plan->kernarg_layout->flags,
+                          IREE_HAL_AMDGPU_KERNARG_LAYOUT_FLAG_IMPLICIT_ARGS);
+}
+
+static iree_status_t iree_hal_amdgpu_host_queue_prepare_dispatch_grid_sync_info(
+    const iree_hal_amdgpu_host_queue_t* queue,
+    const iree_hal_dispatch_config_t config,
+    iree_hal_amdgpu_host_queue_dispatch_plan_t* inout_plan) {
+  if (!iree_any_bit_set(queue->base.features,
+                        IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH) ||
+      !iree_hal_amdgpu_host_queue_dispatch_has_implicit_args(inout_plan)) {
+    return iree_ok_status();
+  }
+  if (IREE_UNLIKELY(inout_plan->uses_indirect_parameters)) {
+    return iree_make_status(
+        IREE_STATUS_UNIMPLEMENTED,
+        "cooperative AMDGPU dispatch does not support indirect workgroup "
+        "counts");
+  }
+  return iree_hal_amdgpu_grid_sync_info_initialize(
+      queue->grid_sync_strategy, config.workgroup_count,
+      inout_plan->kernel_args->workgroup_size, &inout_plan->grid_sync_info);
+}
+
 static iree_status_t iree_hal_amdgpu_host_queue_prepare_dispatch_plan(
     const iree_hal_amdgpu_host_queue_t* queue,
     iree_hal_executable_t* executable,
@@ -387,10 +422,12 @@ static iree_status_t iree_hal_amdgpu_host_queue_prepare_dispatch_plan(
   out_plan->uses_indirect_parameters =
       iree_hal_dispatch_uses_indirect_parameters(flags);
 
-  return iree_hal_amdgpu_host_queue_validate_dispatch_kernargs(
+  IREE_RETURN_IF_ERROR(iree_hal_amdgpu_host_queue_validate_dispatch_kernargs(
       queue, out_plan->descriptor, constants, bindings, flags,
       &out_plan->kernarg_layout, &out_plan->custom_layout,
-      &out_plan->kernarg_block_count, &out_plan->operation_resource_count);
+      &out_plan->kernarg_block_count, &out_plan->operation_resource_count));
+  return iree_hal_amdgpu_host_queue_prepare_dispatch_grid_sync_info(
+      queue, config, out_plan);
 }
 
 static iree_status_t iree_hal_amdgpu_host_queue_resolve_validated_binding_ptr(
@@ -601,7 +638,12 @@ static iree_status_t iree_hal_amdgpu_host_queue_submit_dispatch_packets(
     bool uses_custom_direct_arguments,
     iree_hal_amdgpu_host_queue_submission_flags_t submission_flags,
     bool* out_ready) {
-  const bool needs_pre_dispatch_packet = plan->uses_indirect_parameters;
+  const bool needs_grid_sync_info = plan->grid_sync_info.grid_count != 0;
+  const bool needs_gws_initialize =
+      needs_grid_sync_info &&
+      queue->grid_sync_strategy == IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_GWS;
+  const bool needs_pre_dispatch_packet =
+      plan->uses_indirect_parameters || needs_gws_initialize;
 
   uint64_t executable_id = 0;
   bool should_profile_dispatch = false;
@@ -695,11 +737,14 @@ static iree_status_t iree_hal_amdgpu_host_queue_submit_dispatch_packets(
           : 0u;
   const uint32_t pre_dispatch_kernarg_block_count =
       needs_pre_dispatch_packet ? 1u : 0u;
+  const uint32_t grid_sync_info_kernarg_block_count =
+      needs_grid_sync_info ? 1u : 0u;
   iree_hal_amdgpu_host_queue_kernel_submission_t submission;
   status = iree_hal_amdgpu_host_queue_try_begin_kernel_submission(
       queue, resolution, signal_semaphore_list, plan->operation_resource_count,
       payload_packet_count,
       pre_dispatch_kernarg_block_count + target_kernarg_block_count +
+          grid_sync_info_kernarg_block_count +
           profile_harvest_kernarg_block_count,
       out_ready, &submission);
   if (!iree_status_is_ok(status) || !*out_ready) {
@@ -741,11 +786,19 @@ static iree_status_t iree_hal_amdgpu_host_queue_submit_dispatch_packets(
       needs_pre_dispatch_packet ? kernarg_blocks[0].data : NULL;
   uint8_t* dispatch_kernarg_data =
       kernarg_blocks[pre_dispatch_kernarg_block_count].data;
+  iree_amdgpu_grid_sync_info_t* grid_sync_info =
+      needs_grid_sync_info
+          ? (iree_amdgpu_grid_sync_info_t*)
+                kernarg_blocks[pre_dispatch_kernarg_block_count +
+                               target_kernarg_block_count]
+                    .data
+          : NULL;
   uint8_t* profile_harvest_kernarg_data = NULL;
   if (profile_dispatch_packet) {
     iree_hal_amdgpu_kernarg_block_t* profile_harvest_kernarg_blocks =
         &kernarg_blocks[pre_dispatch_kernarg_block_count +
-                        target_kernarg_block_count];
+                        target_kernarg_block_count +
+                        grid_sync_info_kernarg_block_count];
     profile_harvest_kernarg_data = profile_harvest_kernarg_blocks->data;
   }
   const uint32_t placeholder_workgroup_count[3] = {0, 0, 0};
@@ -775,6 +828,12 @@ static iree_status_t iree_hal_amdgpu_host_queue_submit_dispatch_packets(
                  : NULL)
           : iree_hal_amdgpu_host_queue_native_implicit_args(
                 plan->kernarg_layout, dispatch_kernarg_data);
+  if (grid_sync_info) {
+    // The queue's epoch-reclaimed kernarg reservation gives every potentially
+    // overlapping dispatch distinct device-visible synchronization state.
+    *grid_sync_info = plan->grid_sync_info;
+    implicit_args->grid_sync_arg = (uint64_t)(uintptr_t)grid_sync_info;
+  }
   const iree_hsa_fence_scope_t dispatch_acquire_scope =
       iree_hal_amdgpu_host_queue_kernarg_acquire_scope(
           IREE_HSA_FENCE_SCOPE_AGENT);
@@ -813,7 +872,26 @@ static iree_status_t iree_hal_amdgpu_host_queue_submit_dispatch_packets(
       &dispatch_setup);
   uint16_t pre_dispatch_header = 0;
   uint16_t pre_dispatch_setup = 0;
-  if (needs_pre_dispatch_packet) {
+  if (needs_gws_initialize) {
+    // GWS resource zero is shared across cooperative grids. The barrier bit on
+    // this packet waits for the preceding grid and the target packet's barrier
+    // bit prevents it from starting before initialization completes.
+    iree_hal_amdgpu_device_grid_sync_gws_initialize_emplace(
+        &queue->transfer_context->kernels
+             ->iree_hal_amdgpu_device_grid_sync_gws_initialize,
+        plan->grid_sync_info.workgroup_count, &pre_dispatch_packet->dispatch,
+        pre_dispatch_kernarg_data);
+    pre_dispatch_setup = pre_dispatch_packet->dispatch.setup;
+    const iree_hsa_fence_scope_t pre_dispatch_acquire_scope =
+        iree_hal_amdgpu_host_queue_kernarg_acquire_scope(
+            IREE_HSA_FENCE_SCOPE_AGENT);
+    pre_dispatch_header = iree_hal_amdgpu_aql_make_header(
+        IREE_HSA_PACKET_TYPE_KERNEL_DISPATCH,
+        iree_hal_amdgpu_aql_packet_control_barrier(
+            iree_hal_amdgpu_host_queue_max_fence_scope(
+                pre_dispatch_acquire_scope, resolution->inline_acquire_scope),
+            IREE_HSA_FENCE_SCOPE_NONE));
+  } else if (plan->uses_indirect_parameters) {
     iree_hal_amdgpu_device_dispatch_emplace_indirect_params_patch(
         &queue->transfer_context->kernels
              ->iree_hal_amdgpu_device_dispatch_patch_indirect_params,
@@ -946,7 +1024,7 @@ static iree_status_t iree_hal_amdgpu_host_queue_submit_dispatch_packets(
         iree_hal_amdgpu_aql_packet_control_barrier(IREE_HSA_FENCE_SCOPE_AGENT,
                                                    IREE_HSA_FENCE_SCOPE_AGENT));
   }
-  if (!needs_pre_dispatch_packet) {
+  if (!plan->uses_indirect_parameters) {
     iree_hal_amdgpu_aql_ring_commit(dispatch_packet, dispatch_header,
                                     dispatch_setup);
   }
