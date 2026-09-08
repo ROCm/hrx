@@ -2096,8 +2096,8 @@ static iree_status_t iree_hal_streaming_graph_submit_block(
   switch (block->type) {
     case IREE_HAL_STREAMING_GRAPH_BLOCK_TYPE_EVENT_RECORD:
       return iree_hal_streaming_event_enqueue_record(
-          ptrs->attrs->event.event, stream, wait_semaphores, signal_semaphores,
-          record_point);
+          ptrs->attrs->event.event, stream->context, stream->queue,
+          wait_semaphores, signal_semaphores, record_point);
     case IREE_HAL_STREAMING_GRAPH_BLOCK_TYPE_EVENT_WAIT:
     case IREE_HAL_STREAMING_GRAPH_BLOCK_TYPE_QUEUE_BARRIER: {
       const iree_hal_queue_barrier_flags_t flags =

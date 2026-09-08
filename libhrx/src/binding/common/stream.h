@@ -49,6 +49,13 @@ iree_status_t iree_hal_streaming_stream_wait_streams(
     iree_hal_streaming_stream_t* stream,
     iree_hal_streaming_stream_t* const* sources, iree_host_size_t source_count);
 
+// Orders future work on |stream| after all |wait_semaphores| with one queue
+// barrier. The stream is flushed before the barrier is appended and must not
+// be capturing. The semaphore list is borrowed for the duration of the call.
+iree_status_t iree_hal_streaming_stream_wait_semaphores(
+    iree_hal_streaming_stream_t* stream,
+    iree_hal_semaphore_list_t wait_semaphores);
+
 // Enqueues a HAL host call at the current stream timeline point.
 // Synchronization: flushes pending stream commands before enqueueing.
 iree_status_t iree_hal_streaming_queue_host_call(

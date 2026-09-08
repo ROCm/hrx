@@ -826,6 +826,178 @@ iree_status_t iree_hal_streaming_stream_wait_stream(
   return iree_hal_streaming_stream_wait_streams(stream, &source_stream, 1);
 }
 
+iree_status_t iree_hal_streaming_stream_wait_semaphores(
+    iree_hal_streaming_stream_t* stream,
+    iree_hal_semaphore_list_t wait_semaphores) {
+  IREE_ASSERT_ARGUMENT(stream);
+  if (wait_semaphores.count == 0) return iree_ok_status();
+  if (IREE_UNLIKELY(!wait_semaphores.semaphores ||
+                    !wait_semaphores.payload_values)) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "stream wait semaphore list storage is null");
+  }
+
+  bool has_wait = false;
+  for (iree_host_size_t i = 0; i < wait_semaphores.count; ++i) {
+    if (IREE_UNLIKELY(!wait_semaphores.semaphores[i])) {
+      return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                              "stream wait semaphore is null");
+    }
+    has_wait |= wait_semaphores.payload_values[i] != 0;
+  }
+  if (!has_wait) return iree_ok_status();
+
+  // Reject known-invalid states before flushing any pending stream work. The
+  // checks repeat under the submission lock below because either state may
+  // change while the flush is in progress.
+  iree_slim_mutex_lock(&stream->mutex);
+  const bool is_attached = stream->context && stream->queue;
+  const bool is_capturing =
+      stream->capture_status != IREE_HAL_STREAMING_CAPTURE_STATUS_NONE;
+  iree_slim_mutex_unlock(&stream->mutex);
+  if (IREE_UNLIKELY(!is_attached)) {
+    return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
+                            "stream execution context has been destroyed");
+  }
+  if (IREE_UNLIKELY(is_capturing)) {
+    return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
+                            "stream is capturing");
+  }
+
+  IREE_TRACE_ZONE_BEGIN(z0);
+
+  iree_hal_semaphore_t*
+      inline_semaphores[IREE_HAL_STREAMING_INLINE_WAIT_DEPENDENCY_COUNT + 1];
+  uint64_t inline_values[IREE_HAL_STREAMING_INLINE_WAIT_DEPENDENCY_COUNT + 1];
+  iree_hal_semaphore_t** semaphore_storage = inline_semaphores;
+  uint64_t* value_storage = inline_values;
+  iree_status_t status = iree_ok_status();
+  iree_host_size_t required_capacity = 0;
+  if (IREE_UNLIKELY(!iree_host_size_checked_add(wait_semaphores.count, 1,
+                                                &required_capacity))) {
+    status = iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
+                              "stream wait semaphore count overflow");
+  }
+  const bool uses_heap_storage =
+      required_capacity > IREE_HAL_STREAMING_INLINE_WAIT_DEPENDENCY_COUNT + 1;
+  if (uses_heap_storage) {
+    iree_host_size_t semaphore_storage_size = 0;
+    iree_host_size_t value_storage_size = 0;
+    if (IREE_UNLIKELY(!iree_host_size_checked_mul(required_capacity,
+                                                  sizeof(*semaphore_storage),
+                                                  &semaphore_storage_size) ||
+                      !iree_host_size_checked_mul(required_capacity,
+                                                  sizeof(*value_storage),
+                                                  &value_storage_size))) {
+      status = iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
+                                "stream wait semaphore count overflow");
+    }
+    semaphore_storage = NULL;
+    value_storage = NULL;
+    if (iree_status_is_ok(status)) {
+      status =
+          iree_allocator_malloc(stream->host_allocator, semaphore_storage_size,
+                                (void**)&semaphore_storage);
+    }
+    if (iree_status_is_ok(status)) {
+      status = iree_allocator_malloc(stream->host_allocator, value_storage_size,
+                                     (void**)&value_storage);
+    }
+  }
+
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_streaming_stream_flush(stream);
+  }
+  if (iree_status_is_ok(status)) {
+    iree_slim_mutex_lock(&stream->mutex);
+    if (IREE_UNLIKELY(!stream->context || !stream->queue)) {
+      status = iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
+                                "stream execution context has been destroyed");
+    } else if (IREE_UNLIKELY(stream->capture_status !=
+                             IREE_HAL_STREAMING_CAPTURE_STATUS_NONE)) {
+      status = iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
+                                "stream is capturing");
+    }
+
+    // A wait on this stream's own current or earlier timeline point adds no
+    // ordering. Refuse a future point, which only this stream could signal and
+    // would therefore deadlock it, and count the external dependencies that
+    // require a barrier.
+    const uint64_t current_stream_value = stream->pending_value;
+    iree_host_size_t external_wait_count = 0;
+    for (iree_host_size_t i = 0;
+         i < wait_semaphores.count && iree_status_is_ok(status); ++i) {
+      iree_hal_semaphore_t* semaphore = wait_semaphores.semaphores[i];
+      const uint64_t value = wait_semaphores.payload_values[i];
+      if (value == 0) {
+        continue;
+      } else if (semaphore == stream->timeline_semaphore) {
+        // The stream is the sole signaler of its timeline. A point no later
+        // than its current tail is already covered by natural stream ordering;
+        // waiting on a future point would deadlock the stream against itself.
+        if (IREE_UNLIKELY(value > current_stream_value)) {
+          status = iree_make_status(
+              IREE_STATUS_FAILED_PRECONDITION,
+              "stream cannot wait on a future point of its own timeline");
+        }
+      } else {
+        ++external_wait_count;
+      }
+    }
+
+    uint64_t stream_wait_value = 0;
+    uint64_t stream_signal_value = 0;
+    if (iree_status_is_ok(status) && external_wait_count > 0) {
+      status = iree_hal_streaming_stream_reserve_next_value_locked(
+          stream, &stream_wait_value, &stream_signal_value);
+    }
+
+    iree_host_size_t wait_count = 0;
+    if (iree_status_is_ok(status) && external_wait_count > 0) {
+      if (stream_wait_value > 0) {
+        semaphore_storage[wait_count] = stream->timeline_semaphore;
+        value_storage[wait_count] = stream_wait_value;
+        ++wait_count;
+      }
+      for (iree_host_size_t i = 0; i < wait_semaphores.count; ++i) {
+        iree_hal_semaphore_t* semaphore = wait_semaphores.semaphores[i];
+        const uint64_t value = wait_semaphores.payload_values[i];
+        if (value > 0 && semaphore != stream->timeline_semaphore) {
+          semaphore_storage[wait_count] = semaphore;
+          value_storage[wait_count] = value;
+          ++wait_count;
+        }
+      }
+
+      const iree_hal_semaphore_list_t combined_waits = {
+          .count = wait_count,
+          .semaphores = semaphore_storage,
+          .payload_values = value_storage,
+      };
+      const iree_hal_semaphore_list_t signal = {
+          .count = 1,
+          .semaphores = &stream->timeline_semaphore,
+          .payload_values = &stream_signal_value,
+      };
+      status = iree_hal_queue_barrier(stream->queue, combined_waits, signal,
+                                      IREE_HAL_QUEUE_BARRIER_FLAG_NONE);
+      if (iree_status_is_ok(status)) {
+        stream->pending_value = stream_signal_value;
+        status = iree_hal_queue_flush(stream->queue);
+      }
+    }
+    iree_slim_mutex_unlock(&stream->mutex);
+  }
+
+  if (uses_heap_storage) {
+    iree_allocator_free(stream->host_allocator, value_storage);
+    iree_allocator_free(stream->host_allocator, semaphore_storage);
+  }
+
+  IREE_TRACE_ZONE_END(z0);
+  return status;
+}
+
 static iree_status_t iree_hal_streaming_stream_synchronize_impl(
     iree_hal_streaming_stream_t* stream, bool flush_context) {
   IREE_ASSERT_ARGUMENT(stream);

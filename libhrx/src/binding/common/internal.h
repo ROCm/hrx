@@ -278,6 +278,10 @@ struct iree_hal_streaming_context_t {
   // Number of allocated entries in |streams|.
   iree_host_size_t stream_capacity;
 
+  // Outstanding context wait timepoints inherited by newly registered
+  // streams. Immutable once published and guarded by |stream_list_mutex|.
+  iree_hal_fence_t* stream_wait_frontier;
+
   // Dedicated mutex for stream list access.
   iree_slim_mutex_t stream_list_mutex;
 
@@ -1626,7 +1630,9 @@ iree_status_t iree_hal_streaming_context_disable_peer_access(
 // zeroes the count under the list mutex and then walks the emptied extent and
 // frees the array without holding it. A registration landing in that window
 // writes into the array that walk is reading and about to free, and the
-// reference it takes for the list outlives both.
+// reference it takes for the list outlives both. Any outstanding context-wide
+// event waits are appended to |stream| before the call succeeds. A failure
+// leaves the stream unregistered.
 // Synchronization: thread-safe internal locking.
 iree_status_t iree_hal_streaming_context_register_stream(
     iree_hal_streaming_context_t* context, iree_hal_streaming_stream_t* stream);
@@ -1639,6 +1645,21 @@ iree_status_t iree_hal_streaming_context_register_stream(
 // Synchronization: thread-safe internal locking.
 void iree_hal_streaming_context_unregister_stream(
     iree_hal_streaming_context_t* context, iree_hal_streaming_stream_t* stream);
+
+// Records |event| after the captured tails of all streams currently registered
+// with |context|. Each stream is flushed before its tail is captured and the
+// fan-in record is submitted directly to the context's primary queue. The
+// event must have been created by |context|.
+iree_status_t iree_hal_streaming_context_record_event(
+    iree_hal_streaming_context_t* context, iree_hal_streaming_event_t* event);
+
+// Orders all current and future streams registered with |context| after the
+// point currently recorded on |event|. Current streams receive device-side
+// barriers and later registrations inherit an immutable pending frontier; the
+// call does not wait for host-visible completion. The event must have been
+// created by |context|.
+iree_status_t iree_hal_streaming_context_wait_event(
+    iree_hal_streaming_context_t* context, iree_hal_streaming_event_t* event);
 
 iree_status_t iree_hal_streaming_context_allocate_capture_id(
     iree_hal_streaming_context_t* context, unsigned long long* out_capture_id);
@@ -1923,18 +1944,23 @@ IREE_MUST_USE_RESULT iree_hal_streaming_graph_t*
 iree_hal_streaming_event_exchange_capture_graph(
     iree_hal_streaming_event_t* event, iree_hal_streaming_graph_t* graph);
 
-// Enqueues |event|'s record on |stream|'s queue at the point reached once
+// Records |event| after the current tails of every stream in |streams|. Each
+// stream must belong to the context that created |event| and none may be
+// capturing. The caller keeps the borrowed stream references live for the
+// duration of the call. The fan-in record is submitted directly on the
+// context's primary queue and retains no single recording stream.
+iree_status_t iree_hal_streaming_event_record_after_streams(
+    iree_hal_streaming_event_t* event,
+    iree_hal_streaming_stream_t* const* streams, iree_host_size_t stream_count);
+
+// Enqueues |event|'s record on |queue| at the point reached once
 // |wait_semaphores| is satisfied, signaling |signal_semaphores| there.
 //
-// |stream| must belong to |event|'s context; a record on a stream of any other
-// context is refused with IREE_STATUS_INCOMPATIBLE. The record's tick slot
-// comes from the stream's context pool and outlives the record on the point
-// the event holds, and nothing the point names keeps that pool alive: only the
-// reference the event holds on its own context does. This is the streaming
-// layer's own enforcement of the rule, covering any caller that has not
-// already decided it; every path that reaches here from a HIP entry point has
-// the question settled before the call, so that a refusal costs a graph launch
-// no partial submission.
+// |context| must be the context that created |event|. The record's tick slot
+// comes from that context's pool and outlives the record on the point the event
+// holds, and nothing the point names keeps that pool alive: only the reference
+// the event holds on its own context does. This is the streaming layer's own
+// enforcement of the rule, covering callers that have not already decided it.
 //
 // |point| arrives describing the timeline point that record signals and owning
 // nothing. On success it additionally names the slot the device writes this
@@ -1947,22 +1973,17 @@ iree_hal_streaming_event_exchange_capture_graph(
 // captures a tick: a slot that cannot be obtained fails the record rather than
 // leaving it silently untimed. Every other record enqueues a plain barrier.
 //
-// Both record paths enqueue through here, so whatever their callers decided,
-// neither can forget the substitution, seat a cross-context record, leak a
-// slot on a rejected enqueue, or produce a point owning only part of what it
-// names.
+// All submitted record paths enqueue through here, so none can forget the
+// timestamp substitution, seat a cross-context record, leak a slot on a
+// rejected enqueue, or produce a point owning only part of what it names.
 //
 // Synchronization: pool (the context's timestamp pool mutex is held while a
 // tick slot is acquired, and covers the device allocation a pool growth
-// performs). Runs under whichever lock the calling record path holds - the
-// stream mutex, which is a precondition because the body reads
-// stream->context and stream->queue from under it, and on the launch
-// path the mutex of the executable the launch was issued on, which is the one
-// held for a record inside a child graph too - with the pool mutex nested
-// inside both.
+// performs). Stream and graph callers hold their submission mutexes across the
+// call; a context-wide record has no single stream mutex to hold.
 IREE_MUST_USE_RESULT iree_status_t iree_hal_streaming_event_enqueue_record(
-    iree_hal_streaming_event_t* event, iree_hal_streaming_stream_t* stream,
-    iree_hal_semaphore_list_t wait_semaphores,
+    iree_hal_streaming_event_t* event, iree_hal_streaming_context_t* context,
+    iree_hal_queue_t* queue, iree_hal_semaphore_list_t wait_semaphores,
     iree_hal_semaphore_list_t signal_semaphores,
     iree_hal_streaming_recorded_point_t* point);
 

@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "common/internal.h"
+#include "iree/base/internal/math.h"
 
 //===----------------------------------------------------------------------===//
 // Event management
@@ -162,6 +163,142 @@ iree_hal_streaming_graph_t* iree_hal_streaming_event_exchange_capture_graph(
   return previous_graph;
 }
 
+iree_status_t iree_hal_streaming_event_record_after_streams(
+    iree_hal_streaming_event_t* event,
+    iree_hal_streaming_stream_t* const* streams,
+    iree_host_size_t stream_count) {
+  IREE_ASSERT_ARGUMENT(event);
+  if (IREE_UNLIKELY(stream_count > 0 && !streams)) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "stream list storage is null");
+  }
+
+  IREE_TRACE_ZONE_BEGIN(z0);
+
+  iree_hal_streaming_context_t* context = event->context;
+  iree_hal_semaphore_t** wait_semaphores = NULL;
+  uint64_t* wait_values = NULL;
+  iree_status_t status = iree_ok_status();
+  if (stream_count > 0) {
+    iree_host_size_t semaphore_storage_size = 0;
+    iree_host_size_t value_storage_size = 0;
+    if (IREE_UNLIKELY(
+            !iree_host_size_checked_mul(stream_count, sizeof(*wait_semaphores),
+                                        &semaphore_storage_size) ||
+            !iree_host_size_checked_mul(stream_count, sizeof(*wait_values),
+                                        &value_storage_size))) {
+      status = iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
+                                "event wait list size overflow");
+    }
+    if (iree_status_is_ok(status)) {
+      status =
+          iree_allocator_malloc(context->host_allocator, semaphore_storage_size,
+                                (void**)&wait_semaphores);
+    }
+    if (iree_status_is_ok(status)) {
+      status = iree_allocator_malloc(context->host_allocator,
+                                     value_storage_size, (void**)&wait_values);
+    }
+  }
+
+  iree_hal_semaphore_t* record_semaphore = NULL;
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_semaphore_create(
+        context->device, IREE_HAL_QUEUE_FAMILY_AFFINITY_ANY,
+        /*initial_value=*/0, IREE_HAL_SEMAPHORE_FLAG_NONE, &record_semaphore);
+  }
+
+  // Reject invalid membership and capture state before flushing any source.
+  for (iree_host_size_t i = 0; i < stream_count && iree_status_is_ok(status);
+       ++i) {
+    iree_hal_streaming_stream_t* stream = streams[i];
+    if (IREE_UNLIKELY(!stream)) {
+      status = iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                                "event record stream is null");
+      break;
+    }
+    iree_slim_mutex_lock(&stream->mutex);
+    const bool belongs_to_context = stream->context == context;
+    const bool is_capturing =
+        stream->capture_status != IREE_HAL_STREAMING_CAPTURE_STATUS_NONE;
+    iree_slim_mutex_unlock(&stream->mutex);
+    if (IREE_UNLIKELY(!belongs_to_context)) {
+      status = iree_make_status(IREE_STATUS_INCOMPATIBLE,
+                                "event record stream belongs to a different "
+                                "context");
+    } else if (IREE_UNLIKELY(is_capturing)) {
+      status = iree_make_status(
+          IREE_STATUS_FAILED_PRECONDITION,
+          "context event recording is unavailable during stream capture");
+    }
+  }
+
+  for (iree_host_size_t i = 0; i < stream_count && iree_status_is_ok(status);
+       ++i) {
+    status = iree_hal_streaming_stream_flush(streams[i]);
+  }
+
+  iree_host_size_t wait_count = 0;
+  for (iree_host_size_t i = 0; i < stream_count && iree_status_is_ok(status);
+       ++i) {
+    iree_hal_streaming_stream_t* stream = streams[i];
+    iree_slim_mutex_lock(&stream->mutex);
+    if (IREE_UNLIKELY(stream->context != context)) {
+      status = iree_make_status(IREE_STATUS_INCOMPATIBLE,
+                                "event record stream belongs to a different "
+                                "context");
+    } else if (IREE_UNLIKELY(stream->capture_status !=
+                             IREE_HAL_STREAMING_CAPTURE_STATUS_NONE)) {
+      status = iree_make_status(
+          IREE_STATUS_FAILED_PRECONDITION,
+          "context event recording is unavailable during stream capture");
+    } else if (stream->pending_value > 0) {
+      wait_semaphores[wait_count] = stream->timeline_semaphore;
+      wait_values[wait_count] = stream->pending_value;
+      ++wait_count;
+    }
+    iree_slim_mutex_unlock(&stream->mutex);
+  }
+
+  iree_hal_streaming_stream_t* previous_recording_stream = NULL;
+  iree_hal_streaming_graph_t* dropped_capture_graph = NULL;
+  if (iree_status_is_ok(status)) {
+    uint64_t record_value = 1;
+    const iree_hal_semaphore_list_t waits = {
+        .count = wait_count,
+        .semaphores = wait_semaphores,
+        .payload_values = wait_values,
+    };
+    const iree_hal_semaphore_list_t signals = {
+        .count = 1,
+        .semaphores = &record_semaphore,
+        .payload_values = &record_value,
+    };
+    iree_hal_streaming_recorded_point_t recorded_point = {
+        .semaphore = record_semaphore,
+        .value = record_value,
+    };
+    status = iree_hal_streaming_event_enqueue_record(
+        event, context, context->queue, waits, signals, &recorded_point);
+    if (iree_status_is_ok(status)) {
+      dropped_capture_graph =
+          iree_hal_streaming_event_commit_recorded_point(event, recorded_point);
+      previous_recording_stream =
+          iree_hal_streaming_event_exchange_recording_stream(event, NULL);
+      status = iree_hal_queue_flush(context->queue);
+    }
+  }
+
+  iree_hal_streaming_stream_release(previous_recording_stream);
+  iree_hal_streaming_graph_release(dropped_capture_graph);
+  iree_hal_semaphore_release(record_semaphore);
+  iree_allocator_free(context->host_allocator, wait_values);
+  iree_allocator_free(context->host_allocator, wait_semaphores);
+
+  IREE_TRACE_ZONE_END(z0);
+  return status;
+}
+
 // Returns whether |point| has been reached. A point naming no timeline has no
 // submitted record and reads as reached. Borrows |point|: the reference taken
 // when the point was acquired stays with the acquirer, which releases it.
@@ -198,11 +335,10 @@ iree_status_t iree_hal_streaming_event_query(iree_hal_streaming_event_t* event,
 }
 
 iree_status_t iree_hal_streaming_event_enqueue_record(
-    iree_hal_streaming_event_t* event, iree_hal_streaming_stream_t* stream,
-    iree_hal_semaphore_list_t wait_semaphores,
+    iree_hal_streaming_event_t* event, iree_hal_streaming_context_t* context,
+    iree_hal_queue_t* queue, iree_hal_semaphore_list_t wait_semaphores,
     iree_hal_semaphore_list_t signal_semaphores,
     iree_hal_streaming_recorded_point_t* point) {
-  iree_hal_streaming_context_t* context = stream->context;
   // The slot a timed record captures into is suballocated from |context|'s
   // pool and outlives the record on the point the event holds. Nothing the
   // point names keeps that pool alive - a slot reference is a count on the
@@ -214,8 +350,7 @@ iree_status_t iree_hal_streaming_event_enqueue_record(
   if (event->context != context) {
     return iree_make_status(
         IREE_STATUS_INCOMPATIBLE,
-        "an event can only be recorded on a stream of the context that "
-        "created it");
+        "an event can only be recorded with the context that created it");
   }
 
   const bool captures_tick =
@@ -230,12 +365,11 @@ iree_status_t iree_hal_streaming_event_enqueue_record(
 
   const iree_status_t status =
       slot ? iree_hal_queue_timestamp(
-                 stream->queue, wait_semaphores, signal_semaphores,
+                 queue, wait_semaphores, signal_semaphores,
                  iree_hal_streaming_event_timestamp_slot_buffer(slot),
                  iree_hal_streaming_event_timestamp_slot_offset(slot),
                  IREE_HAL_TIMESTAMP_FLAG_NONE)
-           : iree_hal_queue_barrier(stream->queue, wait_semaphores,
-                                    signal_semaphores,
+           : iree_hal_queue_barrier(queue, wait_semaphores, signal_semaphores,
                                     IREE_HAL_QUEUE_BARRIER_FLAG_NONE);
   if (!iree_status_is_ok(status)) {
     // A rejected enqueue leaves no write outstanding against the slot, which
@@ -328,7 +462,8 @@ iree_status_t iree_hal_streaming_event_record(
   iree_hal_streaming_stream_t* previous_stream = NULL;
   iree_hal_streaming_graph_t* dropped_capture_graph = NULL;
   status = iree_hal_streaming_event_enqueue_record(
-      event, stream, wait_semaphores, signal_semaphores, &recorded_point);
+      event, stream->context, stream->queue, wait_semaphores, signal_semaphores,
+      &recorded_point);
   if (iree_status_is_ok(status)) {
     // The accepted enqueue owns the value it signals, so the timeline advances
     // here and stays advanced even when the flush below fails.
