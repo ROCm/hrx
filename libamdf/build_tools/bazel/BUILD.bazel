@@ -13,4 +13,5 @@ exports_files([
     "cc_test.bzl",
     "cts.bzl",
     "library.bzl",
+    "windows_sidecar.bzl",
 ])

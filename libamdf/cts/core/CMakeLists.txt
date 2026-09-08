@@ -27,7 +27,7 @@ iree_cc_library(
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
-iree_cc_test(
+amdf_cts_test(
   NAME
     static
   SRCS
@@ -45,7 +45,7 @@ iree_cc_test(
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
-iree_cc_test(
+amdf_cts_test(
   NAME
     shared
   SRCS
@@ -65,7 +65,7 @@ iree_cc_test(
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
-iree_cc_test(
+amdf_cts_test(
   NAME
     dynamic
   SRCS
@@ -83,12 +83,6 @@ iree_cc_test(
   LABELS
     "iree-build-requirement=libamdf"
 )
-endif()
-
-if(WIN32 AND TEST libamdf/cts/core/shared)
-  set_property(TEST libamdf/cts/core/shared APPEND PROPERTY
-    ENVIRONMENT_MODIFICATION
-      "PATH=path_list_prepend:$<TARGET_FILE_DIR:amdf>")
 endif()
 
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###

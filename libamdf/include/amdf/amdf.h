@@ -153,6 +153,8 @@ typedef uint32_t amdf_extension_id_t;
 enum amdf_extension_id_e {
   /// XDNA endpoint qualification and execution services.
   AMDF_EXTENSION_XDNA = 1,
+  /// GPU endpoint qualification and execution services.
+  AMDF_EXTENSION_GPU = 2,
 };
 
 /// Common prefix of every extensible input structure.

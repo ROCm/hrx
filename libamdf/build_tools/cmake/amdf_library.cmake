@@ -46,7 +46,7 @@ function(amdf_library)
     _RULE
     ""
     "NAME;WINDOWS_DEF_FILE"
-    "COMPONENTS"
+    "COMPONENTS;RUNTIME_DATA"
     ${ARGN}
   )
   if(NOT _RULE_NAME)
@@ -139,6 +139,10 @@ function(amdf_library)
     PRIVATE
       ${_LINK_DEPS}
   )
+  iree_add_data_dependencies(
+    NAME ${_RULE_NAME}
+    DATA ${_RULE_RUNTIME_DATA}
+  )
   target_include_directories(${_RULE_NAME}
     PUBLIC
       "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
@@ -171,6 +175,10 @@ function(amdf_library)
   target_link_libraries(${_STATIC_TARGET}
     PUBLIC
       ${_LINK_DEPS}
+  )
+  iree_add_data_dependencies(
+    NAME ${_STATIC_TARGET}
+    DATA ${_RULE_RUNTIME_DATA}
   )
   target_include_directories(${_STATIC_TARGET}
     PUBLIC

@@ -10,6 +10,10 @@
 
 #include "libamdf/src/endpoint.h"
 
+#if defined(AMDF_HAVE_GPU)
+#include "libamdf/src/gpu/extension.h"
+#endif  // AMDF_HAVE_GPU
+
 #if defined(AMDF_HAVE_XDNA)
 #include "libamdf/src/xdna/endpoint_profile.h"
 #include "libamdf/src/xdna/extension.h"
@@ -22,6 +26,8 @@ amdf_status_t AMDF_CALL amdf_provider_endpoint_open(
   if (!amdf_status_is_ok(status)) {
     return status;
   }
+
+  amdf_extension_initialize_endpoint(*out_endpoint);
 
   amdf_queue_family_info_t queue_families[AMDF_ENDPOINT_QUEUE_FAMILY_CAPACITY] =
       {0};
@@ -48,6 +54,11 @@ amdf_status_t AMDF_CALL amdf_extension_query(amdf_extension_id_t extension_id,
   }
 
   switch (extension_id) {
+#if defined(AMDF_HAVE_GPU)
+    case AMDF_EXTENSION_GPU:
+      return amdf_gpu_extension_query(minimum_version, maximum_version,
+                                      out_extension_api);
+#endif  // AMDF_HAVE_GPU
 #if defined(AMDF_HAVE_XDNA)
     case AMDF_EXTENSION_XDNA:
       return amdf_xdna_extension_query(minimum_version, maximum_version,
@@ -58,11 +69,30 @@ amdf_status_t AMDF_CALL amdf_extension_query(amdf_extension_id_t extension_id,
   }
 }
 
+void amdf_extension_initialize_endpoint(amdf_endpoint_t* endpoint) {
+  const amdf_endpoint_info_t* endpoint_info =
+      amdf_endpoint_get_cached_info(endpoint);
+  switch (endpoint_info->engine_kind) {
+#if defined(AMDF_HAVE_GPU)
+    case AMDF_ENGINE_KIND_GPU:
+      amdf_gpu_extension_initialize_endpoint(endpoint);
+      break;
+#endif  // AMDF_HAVE_GPU
+    default:
+      break;
+  }
+}
+
 uint32_t amdf_extension_query_endpoint_queue_families(
     const amdf_endpoint_info_t* endpoint_info,
     const amdf_platform_endpoint_t* platform_endpoint, uint32_t capacity,
     amdf_queue_family_info_t* out_families) {
   switch (endpoint_info->engine_kind) {
+#if defined(AMDF_HAVE_GPU)
+    case AMDF_ENGINE_KIND_GPU:
+      return amdf_gpu_extension_query_endpoint_queue_families(
+          endpoint_info, capacity, out_families);
+#endif  // AMDF_HAVE_GPU
 #if defined(AMDF_HAVE_XDNA)
     case AMDF_ENGINE_KIND_XDNA:
       return amdf_xdna_extension_query_endpoint_queue_families(

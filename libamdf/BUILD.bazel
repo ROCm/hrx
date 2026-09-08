@@ -20,8 +20,10 @@ iree_setup_c_src_root(
 )
 set(IREE_IMPLICIT_DEFS_CC_DEPS)
 
+include("${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_cts.cmake")
 include("${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_library.cmake")
 include("${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_package.cmake")
+include("${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_windows_sidecar.cmake")
 """,
 )
 
@@ -29,9 +31,16 @@ amdf_library(
     name = "amdf",
     hdrs = [
         "include/amdf/amdf.h",
+        "include/amdf/gpu.h",
         "include/amdf/xdna.h",
     ],
     components = ["//libamdf/src/provider"],
+    runtime_data = select({
+        "//libamdf/config/family:gpu": [
+            "//libamdf/src/gpu/umd/wddm/wkmi:runtime",
+        ],
+        "//conditions:default": [],
+    }),
     target_compatible_with = ["@platforms//os:windows"],
     win_def_file = "//libamdf/build_tools/cmake:amdf_exports.def",
 )

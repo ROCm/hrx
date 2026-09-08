@@ -12,6 +12,9 @@ package(
 
 test_suite(
     name = "all",
-    tests = ["//libamdf/cts/core"],
+    tests = [
+        "//libamdf/cts/core",
+        "//libamdf/cts/gpu",
+    ],
     visibility = ["//visibility:public"],
 )

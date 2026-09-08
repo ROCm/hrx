@@ -9,6 +9,7 @@
 #include <assert.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "libamdf/src/child_tracker.h"
 #include "libamdf/src/instance.h"
@@ -22,6 +23,12 @@ struct amdf_endpoint_t {
   amdf_platform_endpoint_t* platform;
   // Immutable properties cached while opening the platform endpoint.
   amdf_endpoint_info_t info;
+  // Immutable engine profile copied during provider qualification.
+  void* engine_profile;
+  // Cached result of the engine-profile qualification attempt.
+  amdf_status_t engine_profile_status;
+  // Whether an engine extension resolved `engine_profile_status`.
+  bool engine_profile_resolved;
   // Immutable endpoint-local native queue families.
   struct {
     // Records owned inline for the lifetime of this endpoint.
@@ -90,6 +97,44 @@ amdf_platform_endpoint_t* amdf_endpoint_get_platform(
   return endpoint->platform;
 }
 
+void amdf_endpoint_store_engine_profile(amdf_endpoint_t* endpoint,
+                                        const void* profile,
+                                        size_t profile_byte_length) {
+  assert(!endpoint->engine_profile_resolved);
+  endpoint->engine_profile = malloc(profile_byte_length);
+  if (endpoint->engine_profile == NULL) {
+    endpoint->engine_profile_status =
+        amdf_make_api_status(AMDF_STATUS_CODE_RESOURCE_EXHAUSTED);
+  } else {
+    memcpy(endpoint->engine_profile, profile, profile_byte_length);
+    endpoint->engine_profile_status = AMDF_STATUS_OK;
+  }
+  endpoint->engine_profile_resolved = true;
+}
+
+void amdf_endpoint_store_engine_profile_error(amdf_endpoint_t* endpoint,
+                                              amdf_status_t status) {
+  assert(!endpoint->engine_profile_resolved);
+  assert(!amdf_status_is_ok(status));
+  endpoint->engine_profile_status = status;
+  endpoint->engine_profile_resolved = true;
+}
+
+amdf_status_t amdf_endpoint_query_engine_profile(
+    const amdf_endpoint_t* endpoint, amdf_engine_kind_t expected_engine_kind,
+    const void** out_profile) {
+  *out_profile = NULL;
+  if (endpoint->info.engine_kind != expected_engine_kind ||
+      !endpoint->engine_profile_resolved) {
+    return amdf_make_api_status(AMDF_STATUS_CODE_UNSUPPORTED);
+  }
+  if (!amdf_status_is_ok(endpoint->engine_profile_status)) {
+    return endpoint->engine_profile_status;
+  }
+  *out_profile = endpoint->engine_profile;
+  return AMDF_STATUS_OK;
+}
+
 amdf_status_t amdf_endpoint_register_device(amdf_endpoint_t* endpoint) {
   return amdf_child_tracker_register(&endpoint->children);
 }
@@ -153,6 +198,7 @@ amdf_status_t AMDF_CALL amdf_endpoint_close(amdf_endpoint_t* endpoint) {
   const amdf_status_t status = amdf_platform_endpoint_close(endpoint->platform);
   if (amdf_status_is_ok(status)) {
     amdf_instance_unregister_endpoint(endpoint->instance);
+    free(endpoint->engine_profile);
     free(endpoint);
   }
   return status;

@@ -19,6 +19,7 @@ def amdf_library(
         components,
         hdrs,
         win_def_file,
+        runtime_data = None,
         target_compatible_with = None,
         visibility = None):
     """Composes package-owned components into the public libamdf ABI.
@@ -28,11 +29,13 @@ def amdf_library(
       components: Production library targets included in the distribution.
       hdrs: Public headers installed and exposed through `:headers`.
       win_def_file: Windows module-definition file naming exported symbols.
+      runtime_data: Private runtime libraries required by the implementation.
       target_compatible_with: Constraints required by the composed provider.
       visibility: Bazel visibility shared by the public targets.
     """
     if visibility == None:
         visibility = ["//visibility:public"]
+    runtime_data = runtime_data or []
     private_visibility = ["//libamdf:__pkg__"]
     policy = apply_build_requirements({}, [LIBAMDF])
     compatible_with = policy["target_compatible_with"] + (target_compatible_with or [])
@@ -45,8 +48,14 @@ def amdf_library(
         includes = ["include"],
         visibility = visibility,
     )
+    native.filegroup(
+        name = name + "_runtime",
+        srcs = runtime_data,
+        visibility = ["//libamdf:__subpackages__"],
+    )
     amdf_cc_library(
         name = name + "_static",
+        data = runtime_data,
         target_compatible_with = target_compatible_with,
         visibility = visibility,
         deps = components,
@@ -97,6 +106,7 @@ def amdf_library(
     )
     amdf_cc_library(
         name = name,
+        data = runtime_data,
         defines = ["AMDF_SHARED_LIBRARY=1"],
         target_compatible_with = target_compatible_with,
         visibility = visibility,

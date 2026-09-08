@@ -65,12 +65,37 @@ class AmdfBuildFileFunctions(bazel_to_cmake_converter.BuildFileFunctions):
         )
         self.cc_test(deps=(deps or []) + ["//libamdf:headers"], **kwargs)
 
+    def amdf_windows_sidecar_library(self, **kwargs):
+        kwargs = dict(kwargs)
+        kwargs["target_compatible_with"] = (
+            kwargs.get("target_compatible_with") or []
+        ) + [
+            "@platforms//cpu:x86_64",
+            "@platforms//os:windows",
+        ]
+        body_start = len(self._converter.body)
+        self.amdf_cc_binary(**kwargs)
+        emitted_body = self._converter.body[body_start:]
+        self._converter.body = self._converter.body[:body_start]
+        self._converter.body += emitted_body.replace(
+            "iree_cc_binary(",
+            "amdf_windows_sidecar_library(",
+            1,
+        )
+
+    def iree_dynamic_library_bundle(self, **kwargs):
+        # CMake colocates private companions with the public library, matching
+        # the installed layout. Bazel's runfiles tree requires the explicit
+        # environment bindings carried by this rule.
+        del kwargs
+
     def amdf_library(
         self,
         name,
         components,
         hdrs,
         win_def_file,
+        runtime_data=None,
         **kwargs,
     ):
         kwargs = self._apply_amdf_cmake_policy(kwargs)
@@ -84,6 +109,13 @@ class AmdfBuildFileFunctions(bazel_to_cmake_converter.BuildFileFunctions):
         ] = f"$<TARGET_FILE:{name}>"
         name_block = self._convert_string_arg_block("NAME", name, quote=False)
         components_block = self._convert_target_list_block("COMPONENTS", components)
+        runtime_data_block, runtime_data_select_block = (
+            self._convert_platform_select_deps(
+                name,
+                runtime_data,
+                block_name="RUNTIME_DATA",
+            )
+        )
         del hdrs
         win_def_file_block = self._convert_srcs_block(
             [win_def_file],
@@ -99,8 +131,10 @@ class AmdfBuildFileFunctions(bazel_to_cmake_converter.BuildFileFunctions):
         self._converter.header += "\n"
 
         self._emit_platform_guard_begin(target_compatible_with)
+        self._converter.body += runtime_data_select_block
         self._converter.body += (
-            f"amdf_library(\n{name_block}{components_block}{win_def_file_block})\n\n"
+            f"amdf_library(\n{name_block}{components_block}{runtime_data_block}"
+            f"{win_def_file_block})\n\n"
         )
         self._emit_platform_guard_end(target_compatible_with)
 
@@ -118,7 +152,19 @@ class AmdfBuildFileFunctions(bazel_to_cmake_converter.BuildFileFunctions):
             "//third_party:google_test",
         ]
         test_main = ["//libamdf/cts/util:test_main.cc"]
-        self.amdf_cc_test(
+
+        def emit_cts_test(**test_kwargs):
+            body_start = len(self._converter.body)
+            self.amdf_cc_test(**test_kwargs)
+            emitted_body = self._converter.body[body_start:]
+            self._converter.body = self._converter.body[:body_start]
+            self._converter.body += emitted_body.replace(
+                "iree_cc_test(",
+                "amdf_cts_test(",
+                1,
+            )
+
+        emit_cts_test(
             name="static",
             srcs=test_main,
             tags=tags,
@@ -129,7 +175,7 @@ class AmdfBuildFileFunctions(bazel_to_cmake_converter.BuildFileFunctions):
             ],
             **kwargs,
         )
-        self.amdf_cc_test(
+        emit_cts_test(
             name="shared",
             srcs=test_main,
             data=["//libamdf:amdf_shared_artifact"],
@@ -141,7 +187,7 @@ class AmdfBuildFileFunctions(bazel_to_cmake_converter.BuildFileFunctions):
             ],
             **kwargs,
         )
-        self.amdf_cc_test(
+        emit_cts_test(
             name="dynamic",
             srcs=test_main,
             args=["--amdf_library=$(rootpath //libamdf:amdf_shared_artifact)"],
@@ -149,14 +195,6 @@ class AmdfBuildFileFunctions(bazel_to_cmake_converter.BuildFileFunctions):
             tags=tags,
             deps=common_deps + ["//libamdf/cts/util:dynamic_provider"],
             **kwargs,
-        )
-        package_path = self._package_name()
-        self._converter.body += (
-            f"if(WIN32 AND TEST {package_path}/shared)\n"
-            f"  set_property(TEST {package_path}/shared APPEND PROPERTY\n"
-            f"    ENVIRONMENT_MODIFICATION\n"
-            f'      "PATH=path_list_prepend:$<TARGET_FILE_DIR:amdf>")\n'
-            f"endif()\n\n"
         )
 
 
@@ -176,6 +214,9 @@ PROJECT_CONFIG = bazel_to_cmake_config.ProjectConfig(
         "//libamdf:amdf_shared_artifact": ["amdf::amdf"],
         "//libamdf:amdf_static": ["amdf::amdf_static"],
         "//libamdf:headers": ["amdf::headers"],
+        "//libamdf/src/gpu/umd/wddm/wkmi:runtime": [
+            "libamdf::src::gpu::umd::wddm::wkmi::amdf_wkmi_bridge",
+        ],
     },
     convert_unmatched_target=convert_unmatched_target,
 )

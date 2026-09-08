@@ -25,6 +25,9 @@ amdf_status_t AMDF_CALL amdf_extension_query(amdf_extension_id_t extension_id,
                                              uint32_t maximum_version,
                                              const void** out_extension_api);
 
+// Resolves immutable engine state for one newly opened endpoint.
+void amdf_extension_initialize_endpoint(amdf_endpoint_t* endpoint);
+
 // Writes the queue families fully constructible for one opened endpoint.
 uint32_t amdf_extension_query_endpoint_queue_families(
     const amdf_endpoint_info_t* endpoint_info,

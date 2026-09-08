@@ -6,20 +6,29 @@ unloadable library while leaving executable formats, command construction,
 scheduling, and memory policy in the calling runtime.
 
 The base public surface is `include/amdf/amdf.h`. `amdf_query_api` negotiates an
-ABI version and returns an immutable API table. Optional family surfaces such
-as `include/amdf/xdna.h` are negotiated from that table according to what was
-compiled into the library, independent of the hardware currently present.
-Querying either table performs no allocation, system call, device discovery,
-dependent-library load, or other observable initialization.
+ABI version and returns an immutable API table. Optional family surfaces in
+`include/amdf/gpu.h` and `include/amdf/xdna.h` are negotiated from that table
+according to what was compiled into the library, independent of the hardware
+currently present. Querying any table performs no allocation, system call,
+device discovery, dependent-library load, or other observable initialization.
 
-An explicit provider instance owns all dependent native libraries and can
-enumerate fixed-stride summaries of independently selectable AMD execution
-endpoints. Opening an endpoint caches immutable identity for later GPU or XDNA
-qualification without creating a device, address space, paging queue,
-allocation, executable, or hardware queue. The Windows provider implements
-this query-only layer with public KMT adapter APIs. Builds without a native
-platform provider expose the public headers but do not produce provider
+An explicit provider instance owns the native platform state retained across
+calls and can enumerate fixed-stride summaries of independently selectable AMD
+execution endpoints. Opening an endpoint caches immutable identity and available
+family-specific qualification without creating a device, address space,
+paging queue, allocation, executable, or hardware queue. The Windows provider
+implements this query-only layer with public KMT adapter APIs. Builds without a
+native platform provider expose the public headers but do not produce provider
 artifacts.
+
+On x86-64 Windows, the GPU extension qualifies an already opened KMT adapter
+through a private `amdf_wkmi_bridge.dll` runtime companion. The bridge contains
+the pinned binary-only WKMI C++ and CRT ABI behind a versioned C table, retains
+no adapter state, and unloads before endpoint open returns. GPU information
+queries copy the cached exact GFX identity, ASIC revision, active compute
+geometry, LDS limit, and XCC topology without loading a library or entering the
+driver. GPU endpoints advertise no queue families; this surface performs
+qualification only.
 
 Each opened endpoint also reports a dense immutable set of native queue
 families. A family identifies its accepted command representation (PM4, SDMA,
@@ -67,6 +76,9 @@ The build produces two link modes from one implementation:
 - `//libamdf:amdf_static` and `amdf::amdf_static` consume the static library.
 - `//libamdf:amdf_shared_artifact` names the loadable DLL or shared object for
   clients that resolve `amdf_query_api` at runtime.
+
+Windows GPU distributions install the private WKMI bridge beside `amdf.dll`.
+It is neither a public link input nor part of the libamdf ABI.
 
 `AMDF_BUILD` controls the CMake subtree and defaults to the value of
 `IREE_HAL_DRIVER_AMDGPU`. The Bazel equivalent is

@@ -10,6 +10,7 @@
 #include <stdlib.h>
 
 #include "amdf/amdf.h"
+#include "amdf/gpu.h"
 #include "amdf/xdna.h"
 
 static void amdf_example_report_status(const char* operation,
@@ -83,6 +84,21 @@ int main(void) {
   }
 
   const void* extension_api = NULL;
+  status =
+      api->query_extension(AMDF_EXTENSION_GPU, AMDF_GPU_EXTENSION_VERSION_1,
+                           AMDF_GPU_EXTENSION_VERSION_LATEST, &extension_api);
+  const amdf_gpu_api_t* gpu_api = NULL;
+  if (amdf_status_is_ok(status)) {
+    gpu_api = (const amdf_gpu_api_t*)extension_api;
+  } else if (amdf_status_domain(status) == AMDF_STATUS_DOMAIN_API &&
+             amdf_status_code(status) == AMDF_STATUS_CODE_UNSUPPORTED) {
+    status = AMDF_STATUS_OK;
+  } else {
+    amdf_example_report_status("query_extension(GPU)", status);
+    return 1;
+  }
+
+  extension_api = NULL;
   status =
       api->query_extension(AMDF_EXTENSION_XDNA, AMDF_XDNA_EXTENSION_VERSION_1,
                            AMDF_XDNA_EXTENSION_VERSION_LATEST, &extension_api);
@@ -173,6 +189,32 @@ int main(void) {
         } else {
           amdf_example_report_status("endpoint_query_queue_family_info",
                                      status);
+        }
+      }
+      if (amdf_status_is_ok(status) && gpu_api != NULL &&
+          info.engine_kind == AMDF_ENGINE_KIND_GPU) {
+        amdf_gpu_endpoint_info_t gpu_info = {
+            .type = AMDF_STRUCTURE_TYPE_GPU_ENDPOINT_INFO,
+            .structure_size = sizeof(gpu_info),
+        };
+        status = gpu_api->endpoint_query_info(endpoint, &gpu_info);
+        if (amdf_status_is_ok(status)) {
+          printf("    gfx=%" PRIu32 ".%" PRIu32 ".%" PRIu32
+                 " asic-revision=%" PRIu32 " wave=%" PRIu32
+                 " compute-units=%" PRIu32 " waves/cu=%" PRIu32
+                 " scratch-waves/cu=%" PRIu32 " lds=%" PRIu64 "\n",
+                 gpu_info.gfx_ip.major, gpu_info.gfx_ip.minor,
+                 gpu_info.gfx_ip.stepping, gpu_info.asic_revision,
+                 gpu_info.compute.wavefront_size,
+                 gpu_info.compute.compute_unit_count,
+                 gpu_info.compute.maximum_wave_count_per_compute_unit,
+                 gpu_info.compute.maximum_scratch_wave_count_per_compute_unit,
+                 gpu_info.compute.local_data_share_byte_length);
+          printf("    xcc=%" PRIu32 " shader-engines/xcc=%" PRIu32 "\n",
+                 gpu_info.topology.xcc_count,
+                 gpu_info.topology.shader_engine_count_per_xcc);
+        } else {
+          amdf_example_report_status("GPU endpoint_query_info", status);
         }
       }
       if (amdf_status_is_ok(status) && xdna_api != NULL &&

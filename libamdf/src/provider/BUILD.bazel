@@ -20,12 +20,18 @@ amdf_cc_library(
     ],
     hdrs = ["extension.h"],
     defines = select({
+        "//libamdf/config/family:gpu": ["AMDF_HAVE_GPU=1"],
+        "//conditions:default": [],
+    }) + select({
         "//libamdf/config/family:xdna": ["AMDF_HAVE_XDNA=1"],
         "//conditions:default": [],
     }),
     target_compatible_with = ["@platforms//os:windows"],
     visibility = ["//libamdf:__pkg__"],
     deps = ["//libamdf/src:core"] + select({
+        "//libamdf/config/family:gpu": ["//libamdf/src/gpu"],
+        "//conditions:default": [],
+    }) + select({
         "//libamdf/config/family:xdna": ["//libamdf/src/xdna"],
         "//conditions:default": [],
     }),

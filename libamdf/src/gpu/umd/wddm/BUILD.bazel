@@ -1,0 +1,34 @@
+# Copyright 2026 The IREE Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+load("//libamdf/build_tools/bazel:cc.bzl", "amdf_cc_library")
+
+package(
+    default_visibility = ["//visibility:private"],
+    features = ["layering_check"],
+    licenses = ["notice"],  # Apache 2.0
+)
+
+amdf_cc_library(
+    name = "endpoint_profile",
+    srcs = ["endpoint_profile.c"],
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//libamdf/src/gpu/umd:__pkg__"],
+    deps = [
+        "//libamdf/src/gpu:endpoint_profile",
+        "//libamdf/src/gpu/umd:endpoint_profile",
+        "//libamdf/src/gpu/umd/wddm/wkmi:endpoint_properties",
+        "//libamdf/src/gpu/umd/wddm/wkmi:loader",
+        "//libamdf/src/platform/windows:endpoint",
+    ],
+)
+
+amdf_cc_library(
+    name = "wddm",
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//libamdf/src/gpu/umd:__pkg__"],
+    deps = [":endpoint_profile"],
+)

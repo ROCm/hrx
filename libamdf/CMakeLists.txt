@@ -12,8 +12,10 @@ iree_setup_c_src_root(
 )
 set(IREE_IMPLICIT_DEFS_CC_DEPS)
 
+include("${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_cts.cmake")
 include("${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_library.cmake")
 include("${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_package.cmake")
+include("${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_windows_sidecar.cmake")
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
 amdf_declare_library(
@@ -25,11 +27,17 @@ endif()
 iree_add_all_subdirs()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD)
+set(_amdf_platform_runtime_data "")
+if(AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA)
+  list(APPEND _amdf_platform_runtime_data libamdf::src::gpu::umd::wddm::wkmi::amdf_wkmi_bridge)
+endif()
 amdf_library(
   NAME
     amdf
   COMPONENTS
     libamdf::src::provider
+  RUNTIME_DATA
+    ${_amdf_platform_runtime_data}
   WINDOWS_DEF_FILE
     "${PROJECT_SOURCE_DIR}/libamdf/build_tools/cmake/amdf_exports.def"
 )

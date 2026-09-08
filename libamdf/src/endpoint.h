@@ -7,6 +7,8 @@
 #ifndef AMDF_SRC_ENDPOINT_H_
 #define AMDF_SRC_ENDPOINT_H_
 
+#include <stddef.h>
+
 #include "amdf/amdf.h"
 #include "libamdf/src/platform/endpoint.h"
 
@@ -44,6 +46,20 @@ const amdf_endpoint_info_t* amdf_endpoint_get_cached_info(
 
 // Returns the borrowed platform endpoint.
 amdf_platform_endpoint_t* amdf_endpoint_get_platform(amdf_endpoint_t* endpoint);
+
+// Copies one immutable engine profile or caches the allocation failure.
+void amdf_endpoint_store_engine_profile(amdf_endpoint_t* endpoint,
+                                        const void* profile,
+                                        size_t profile_byte_length);
+
+// Caches a terminal engine-profile qualification failure.
+void amdf_endpoint_store_engine_profile_error(amdf_endpoint_t* endpoint,
+                                              amdf_status_t status);
+
+// Returns the cached profile for |expected_engine_kind| or its exact failure.
+amdf_status_t amdf_endpoint_query_engine_profile(
+    const amdf_endpoint_t* endpoint, amdf_engine_kind_t expected_engine_kind,
+    const void** out_profile);
 
 // Registers a materialized device borrowing this endpoint.
 amdf_status_t amdf_endpoint_register_device(amdf_endpoint_t* endpoint);

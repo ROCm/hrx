@@ -28,11 +28,13 @@ def amdf_cts_test_suite(
         "//libamdf/cts/util:provider_headers",
         "//third_party:google_test",
     ]
+    runtime_data = ["//libamdf:amdf_runtime"]
     test_main = ["//libamdf/cts/util:test_main.cc"]
 
     amdf_cc_test(
         name = "static",
         srcs = test_main,
+        data = runtime_data,
         tags = tags,
         target_compatible_with = target_compatible_with,
         deps = common_deps + [
@@ -43,7 +45,7 @@ def amdf_cts_test_suite(
     amdf_cc_test(
         name = "shared",
         srcs = test_main,
-        data = ["//libamdf:amdf_shared_artifact"],
+        data = ["//libamdf:amdf_shared_artifact"] + runtime_data,
         tags = tags,
         target_compatible_with = target_compatible_with,
         deps = common_deps + [
@@ -57,7 +59,7 @@ def amdf_cts_test_suite(
         args = [
             "--amdf_library=$(rootpath //libamdf:amdf_shared_artifact)",
         ],
-        data = ["//libamdf:amdf_shared_artifact"],
+        data = ["//libamdf:amdf_shared_artifact"] + runtime_data,
         tags = tags,
         target_compatible_with = target_compatible_with,
         deps = common_deps + ["//libamdf/cts/util:dynamic_provider"],
