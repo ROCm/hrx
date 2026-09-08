@@ -432,7 +432,7 @@ def iree_amdgpu_binary(
         **kwargs
     )
 
-def _iree_amdgpu_hip_binary(
+def iree_amdgpu_hip_binary(
         name,
         target,
         arch,
@@ -556,7 +556,7 @@ def iree_amdgpu_binary_variants(
             iree_amdgpu_target_label_fragment(code_object_target),
         )
         if source_format == "hip":
-            _iree_amdgpu_hip_binary(
+            iree_amdgpu_hip_binary(
                 name = binary_name,
                 target = target,
                 arch = code_object_target,

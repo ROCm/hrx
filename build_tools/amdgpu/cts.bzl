@@ -6,7 +6,11 @@
 
 """AMDGPU HAL CTS executable testdata rules."""
 
-load("//build_tools/amdgpu:binary.bzl", "iree_amdgpu_binary")
+load(
+    "//build_tools/amdgpu:binary.bzl",
+    "iree_amdgpu_binary",
+    "iree_amdgpu_hip_binary",
+)
 load(
     "//build_tools/amdgpu:selectors.bzl",
     "iree_amdgpu_target_label_fragment",
@@ -95,6 +99,7 @@ def iree_amdgpu_hal_cts_testdata(
         backend_name = "amdgpu",
         target_family = "amdgpu",
         target = "amdgcn-amd-amdhsa",
+        source_format = "freestanding_c",
         deps = [],
         internal_hdrs = [],
         internalize = True,
@@ -112,6 +117,8 @@ def iree_amdgpu_hal_cts_testdata(
       backend_name: CTS backend name.
       target_family: HAL executable target family.
       target: LLVM target triple.
+      source_format: Device source compilation pipeline. See
+        `iree_amdgpu_binary`.
       deps: Bitcode archives passed to each generated executable. Labels may
         use `{AMDGPU_CODE_OBJECT_TARGET}` or
         `{AMDGPU_CODE_OBJECT_TARGET_FRAGMENT}` placeholders to refer to the
@@ -122,6 +129,11 @@ def iree_amdgpu_hal_cts_testdata(
       testonly: Whether generated targets are test-only.
       tags: Tags applied to generated device binaries and libraries.
     """
+    if source_format not in ["freestanding_c", "hip"]:
+        fail("unsupported AMDGPU CTS source format: %s" % (source_format,))
+    if source_format == "hip" and (deps or internal_hdrs or not internalize):
+        fail("HIP CTS sources do not support deps, internal_hdrs, or internalize=False")
+
     target_settings = iree_amdgpu_target_selector_config_settings(
         name = "%s_target" % name,
         flag = target_selectors_flag,
@@ -140,19 +152,31 @@ def iree_amdgpu_hal_cts_testdata(
             stem = _source_stem(src)
             binary_name = "%s_%s_%s" % (name, target_fragment, stem)
             binary_out = "%s_%s/%s.bin" % (name, target_fragment, stem)
-            iree_amdgpu_binary(
-                name = binary_name,
-                target = target,
-                arch = code_object_target,
-                srcs = [src],
-                deps = _target_deps(deps, code_object_target),
-                internal_hdrs = internal_hdrs,
-                internalize = internalize,
-                out = binary_out,
-                testonly = testonly,
-                tags = tags,
-                target_compatible_with = target_compatible_with,
-            )
+            if source_format == "hip":
+                iree_amdgpu_hip_binary(
+                    name = binary_name,
+                    target = target,
+                    arch = code_object_target,
+                    srcs = [src],
+                    out = binary_out,
+                    testonly = testonly,
+                    tags = tags,
+                    target_compatible_with = target_compatible_with,
+                )
+            else:
+                iree_amdgpu_binary(
+                    name = binary_name,
+                    target = target,
+                    arch = code_object_target,
+                    srcs = [src],
+                    deps = _target_deps(deps, code_object_target),
+                    internal_hdrs = internal_hdrs,
+                    internalize = internalize,
+                    out = binary_out,
+                    testonly = testonly,
+                    tags = tags,
+                    target_compatible_with = target_compatible_with,
+                )
             target_srcs.append(":%s" % binary_name)
 
         data_name = "%s_%s_data" % (name, target_fragment)

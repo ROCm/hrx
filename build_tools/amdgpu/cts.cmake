@@ -37,6 +37,7 @@ endfunction()
 # TARGET_NAME: CTS executable target prefix.
 # IDENTIFIER: C identifier prefix for generated TOC functions.
 # BACKEND_NAME: CTS backend name. Defaults to "amdgpu".
+# SOURCE_FORMAT: Device source compilation pipeline. See iree_amdgpu_binary.
 # SRCS: C sources. Each source basename maps to `<basename>.bin` in the CTS
 #       executable-data table of contents.
 # DEPS: Bitcode archives passed to each generated executable. Entries may use
@@ -52,7 +53,7 @@ function(iree_amdgpu_hal_cts_testdata)
   cmake_parse_arguments(
     _RULE
     "TESTONLY"
-    "NAME;TARGET;TARGET_NAME;IDENTIFIER;BACKEND_NAME;TARGET_FAMILY;INTERNALIZE"
+    "NAME;TARGET;TARGET_NAME;IDENTIFIER;BACKEND_NAME;TARGET_FAMILY;INTERNALIZE;SOURCE_FORMAT"
     "TARGETS;SRCS;DEPS;INTERNAL_HDRS;COPTS;LINKOPTS"
     ${ARGN}
   )
@@ -78,8 +79,28 @@ function(iree_amdgpu_hal_cts_testdata)
   if(NOT _RULE_TARGET_FAMILY)
     set(_RULE_TARGET_FAMILY "amdgpu")
   endif()
+  if(NOT DEFINED _RULE_SOURCE_FORMAT)
+    set(_RULE_SOURCE_FORMAT "freestanding_c")
+  elseif(NOT _RULE_SOURCE_FORMAT STREQUAL "freestanding_c" AND
+         NOT _RULE_SOURCE_FORMAT STREQUAL "hip")
+    message(FATAL_ERROR
+      "Unsupported AMDGPU CTS SOURCE_FORMAT: ${_RULE_SOURCE_FORMAT}")
+  endif()
+  if(_RULE_SOURCE_FORMAT STREQUAL "hip" AND
+     (_RULE_DEPS OR _RULE_INTERNAL_HDRS OR _RULE_LINKOPTS OR
+      DEFINED _RULE_INTERNALIZE))
+    message(FATAL_ERROR
+      "HIP CTS sources do not support DEPS, INTERNAL_HDRS, LINKOPTS, or "
+      "INTERNALIZE")
+  endif()
 
-  if(NOT IREE_HAL_AMDGPU_DEVICE_TOOLCHAIN_AVAILABLE)
+  set(_DEVICE_SOURCE_AVAILABLE
+    "${IREE_HAL_AMDGPU_DEVICE_TOOLCHAIN_AVAILABLE}")
+  if(_RULE_SOURCE_FORMAT STREQUAL "hip")
+    set(_DEVICE_SOURCE_AVAILABLE
+      "${IREE_HAL_AMDGPU_DEVICE_TOOLCHAIN_HIP_AVAILABLE}")
+  endif()
+  if(NOT _DEVICE_SOURCE_AVAILABLE)
     set(_TESTONLY_ARG)
     if(_RULE_TESTONLY)
       set(_TESTONLY_ARG TESTONLY)
@@ -125,27 +146,44 @@ function(iree_amdgpu_hal_cts_testdata)
       get_filename_component(_SRC_STEM "${_SRC}" NAME_WE)
       set(_BINARY_NAME "${_RULE_NAME}_${_TARGET_FRAGMENT}_${_SRC_STEM}")
       set(_BINARY_OUT "${_RULE_NAME}_${_TARGET_FRAGMENT}/${_SRC_STEM}.bin")
-      iree_amdgpu_binary(
-        NAME
-          "${_BINARY_NAME}"
-        OUT
-          "${_BINARY_OUT}"
-        TARGET
-          "${_RULE_TARGET}"
-        ARCH
-          "${_CODE_OBJECT_TARGET}"
-        SRCS
-          "${_SRC}"
-        DEPS
-          ${_TARGET_DEPS}
-        INTERNAL_HDRS
-          ${_RULE_INTERNAL_HDRS}
-        COPTS
-          ${_RULE_COPTS}
-        LINKOPTS
-          ${_RULE_LINKOPTS}
-        ${_INTERNALIZE_ARG}
-      )
+      if(_RULE_SOURCE_FORMAT STREQUAL "hip")
+        _iree_amdgpu_hip_binary(
+          NAME
+            "${_BINARY_NAME}"
+          OUT
+            "${_BINARY_OUT}"
+          TARGET
+            "${_RULE_TARGET}"
+          ARCH
+            "${_CODE_OBJECT_TARGET}"
+          SRCS
+            "${_SRC}"
+          COPTS
+            ${_RULE_COPTS}
+        )
+      else()
+        iree_amdgpu_binary(
+          NAME
+            "${_BINARY_NAME}"
+          OUT
+            "${_BINARY_OUT}"
+          TARGET
+            "${_RULE_TARGET}"
+          ARCH
+            "${_CODE_OBJECT_TARGET}"
+          SRCS
+            "${_SRC}"
+          DEPS
+            ${_TARGET_DEPS}
+          INTERNAL_HDRS
+            ${_RULE_INTERNAL_HDRS}
+          COPTS
+            ${_RULE_COPTS}
+          LINKOPTS
+            ${_RULE_LINKOPTS}
+          ${_INTERNALIZE_ARG}
+        )
+      endif()
       list(APPEND _TARGET_SRCS "${_BINARY_OUT}")
     endforeach()
 
