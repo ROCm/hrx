@@ -102,6 +102,30 @@ endif()
 if(IREE_HAL_DRIVER_AMDGPU)
 iree_amdgpu_hal_cts_testdata(
   NAME
+    cooperative_testdata_amdgpu
+  TARGET
+    amdgcn-amd-amdhsa
+  TARGETS
+    ${IREE_HAL_AMDGPU_TARGETS}
+  TARGET_NAME
+    amdgpu_cooperative
+  IDENTIFIER
+    "iree_cts_cooperative_testdata_amdgpu"
+  BACKEND_NAME
+    "amdgpu"
+  TARGET_FAMILY
+    "amdgpu"
+  SRCS
+    "testdata/cooperative_dispatch_test.c"
+  SOURCE_FORMAT
+    hip
+  TESTONLY
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_amdgpu_hal_cts_testdata(
+  NAME
     asan_executable_testdata_amdgpu
   TARGET
     amdgcn-amd-amdhsa
@@ -285,6 +309,45 @@ iree_cc_library(
   TESTONLY
   ALWAYSLINK
   PUBLIC
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_library(
+  NAME
+    cooperative_dispatch_test
+  SRCS
+    "cooperative_dispatch_test.cc"
+  DEPS
+    iree::hal
+    iree::hal::cts::util::test_base
+    iree::testing::gtest
+  TESTONLY
+  ALWAYSLINK
+  PUBLIC
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_test(
+  NAME
+    cooperative_dispatch_tests
+  SRCS
+    "${PROJECT_SOURCE_DIR}/runtime/src/iree/hal/cts/util/test_main.cc"
+  DEPS
+    ::backends
+    ::cooperative_dispatch_test
+    ::cooperative_testdata_amdgpu
+    iree::base::tooling::flags
+    iree::hal::cts::util::registry
+    iree::hal::cts::util::test_base
+    iree::testing::gtest
+  LABELS
+    "iree-build-requirement=runtime.hal.amdgpu"
+    "iree-run-requirement=runtime.resource.amd_gpu"
+    "runtime-resource=amd-gpu"
+  RESOURCE_GROUP
+    iree-hal-drivers-amdgpu-tests
 )
 endif()
 

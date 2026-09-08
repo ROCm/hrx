@@ -90,6 +90,16 @@ iree_amdgpu_hal_cts_testdata(
 )
 
 iree_amdgpu_hal_cts_testdata(
+    name = "cooperative_testdata_amdgpu",
+    srcs = ["testdata/cooperative_dispatch_test.c"],
+    identifier = "iree_cts_cooperative_testdata_amdgpu",
+    source_format = "hip",
+    tags = ["manual"],
+    target_name = "amdgpu_cooperative",
+    target_selectors_flag = "//runtime/src/iree/hal/drivers/amdgpu:targets",
+)
+
+iree_amdgpu_hal_cts_testdata(
     name = "asan_executable_testdata_amdgpu",
     srcs = [
         "testdata/asan_executable_test.c",
@@ -211,6 +221,32 @@ iree_runtime_cc_library(
         "//runtime/src/iree/testing:gtest",
     ],
     alwayslink = True,
+)
+
+iree_runtime_cc_library(
+    name = "cooperative_dispatch_test",
+    testonly = True,
+    srcs = ["cooperative_dispatch_test.cc"],
+    deps = [
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/cts/util:test_base",
+        "//runtime/src/iree/testing:gtest",
+    ],
+    alwayslink = True,
+)
+
+iree_runtime_cc_test(
+    name = "cooperative_dispatch_tests",
+    srcs = ["//runtime/src/iree/hal/cts/util:test_main.cc"],
+    deps = [
+        ":backends",
+        ":cooperative_dispatch_test",
+        ":cooperative_testdata_amdgpu",
+        "//runtime/src/iree/base/tooling:flags",
+        "//runtime/src/iree/hal/cts/util:registry",
+        "//runtime/src/iree/hal/cts/util:test_base",
+        "//runtime/src/iree/testing:gtest",
+    ],
 )
 
 iree_runtime_cc_test(

@@ -1,0 +1,294 @@
+// Copyright 2026 The IREE Authors
+//
+// Licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+// Hardware-backed CTS coverage for AMDGPU cooperative dispatches.
+
+#include <cstdint>
+#include <vector>
+
+#include "iree/hal/cts/util/test_base.h"
+
+namespace iree::hal::cts {
+namespace {
+
+using ::testing::Each;
+
+class AmdgpuCooperativeDispatchTest : public CtsTestBase<> {
+ protected:
+  void SetUp() override {
+    CtsTestBase::SetUp();
+    if (HasFatalFailure() || IsSkipped()) return;
+
+    const iree_hal_device_queue_spec_t* queue_spec =
+        iree_hal_device_spec_queues(iree_hal_device_spec(device_));
+    for (iree_host_size_t family_ordinal = 0;
+         family_ordinal < queue_spec->family_count; ++family_ordinal) {
+      const iree_hal_queue_family_spec_t* candidate_family_spec =
+          &queue_spec->families[family_ordinal];
+      if (!iree_all_bits_set(candidate_family_spec->role_flags,
+                             IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH) ||
+          !iree_all_bits_set(
+              candidate_family_spec->supported_queue_features,
+              IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH) ||
+          !iree_all_bits_set(
+              candidate_family_spec->flags,
+              IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION)) {
+        continue;
+      }
+      queue_family_ = iree_hal_device_queue_family(
+          device_, (iree_hal_queue_family_ordinal_t)family_ordinal);
+      family_spec_ = candidate_family_spec;
+      break;
+    }
+    if (!queue_family_) {
+      GTEST_SKIP() << "device has no dynamically acquirable cooperative "
+                      "dispatch queue family";
+    }
+
+    iree_hal_queue_params_t queue_params;
+    iree_hal_queue_params_initialize(&queue_params);
+    queue_params.features = IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH;
+    IREE_ASSERT_OK(iree_hal_device_acquire_queue(
+        device_, queue_family_, &queue_params, cooperative_queue_.out()));
+
+    iree_hal_executable_target_selection_result_t target_result;
+    IREE_ASSERT_OK(SelectExecutableTarget(queue_family_, &target_result));
+    if (target_result.outcome ==
+        IREE_HAL_EXECUTABLE_TARGET_SELECTION_OUTCOME_NO_MATCH) {
+      GTEST_SKIP() << "cooperative CTS payload target is not executable by "
+                      "the selected queue family";
+    }
+    ASSERT_EQ(target_result.outcome,
+              IREE_HAL_EXECUTABLE_TARGET_SELECTION_OUTCOME_SELECTED);
+    IREE_ASSERT_OK(LoadExecutable(
+        queue_family_, target_result.target, IREE_HAL_EXECUTABLE_LOAD_FLAG_NONE,
+        executable_data(IREE_SV("cooperative_dispatch_test.bin")),
+        executable_.out()));
+  }
+
+  void TearDown() override {
+    executable_.reset();
+    cooperative_queue_.reset();
+    family_spec_ = nullptr;
+    queue_family_ = nullptr;
+    CtsTestBase::TearDown();
+  }
+
+  // Number of workgroups participating in each cooperative grid.
+  static constexpr uint32_t kWorkgroupCount = 4;
+  // Number of workitems participating in each workgroup.
+  static constexpr uint32_t kWorkgroupSize = 64;
+
+  static uint32_t ExpectedSum(uint32_t incarnation) {
+    return kWorkgroupCount * incarnation +
+           (kWorkgroupCount * (kWorkgroupCount - 1)) / 2;
+  }
+
+  static iree_hal_dispatch_config_t DispatchConfig() {
+    iree_hal_dispatch_config_t config =
+        iree_hal_make_static_dispatch_config(kWorkgroupCount, 1, 1);
+    config.workgroup_size[0] = kWorkgroupSize;
+    config.workgroup_size[1] = 1;
+    config.workgroup_size[2] = 1;
+    return config;
+  }
+
+  void DispatchAndExpectGrid(iree_hal_queue_t* queue,
+                             uint32_t incarnation) {
+    Ref<iree_hal_buffer_t> scratch_buffer;
+    Ref<iree_hal_buffer_t> output_buffer;
+    IREE_ASSERT_OK(CreateZeroedDeviceBuffer(kWorkgroupCount * sizeof(uint32_t),
+                                            scratch_buffer.out()));
+    IREE_ASSERT_OK(CreateZeroedDeviceBuffer(kWorkgroupCount * sizeof(uint32_t),
+                                            output_buffer.out()));
+
+    const uint32_t constants[] = {incarnation, kWorkgroupCount};
+    const iree_hal_buffer_ref_t binding_values[] = {
+        iree_hal_make_buffer_ref(scratch_buffer, 0, IREE_HAL_WHOLE_BUFFER),
+        iree_hal_make_buffer_ref(output_buffer, 0, IREE_HAL_WHOLE_BUFFER),
+    };
+    const iree_hal_buffer_ref_list_t bindings = {
+        /*.count=*/IREE_ARRAYSIZE(binding_values),
+        /*.values=*/binding_values,
+    };
+    SemaphoreList completion(device_, {0}, {1});
+    IREE_ASSERT_OK(iree_hal_queue_dispatch(
+        queue, iree_hal_semaphore_list_empty(), completion, executable_,
+        iree_hal_executable_function_from_index(0), DispatchConfig(),
+        iree_make_const_byte_span(constants, sizeof(constants)), bindings,
+        IREE_HAL_DISPATCH_FLAG_COOPERATIVE));
+    IREE_ASSERT_OK(iree_hal_semaphore_list_wait(
+        completion, iree_infinite_timeout(), IREE_ASYNC_WAIT_FLAG_NONE));
+
+    EXPECT_THAT(ReadBufferData<uint32_t>(output_buffer),
+                Each(ExpectedSum(incarnation)));
+  }
+
+  // Borrowed family used to acquire and program the cooperative queue.
+  const iree_hal_queue_family_t* queue_family_ = nullptr;
+  // Immutable specification for |queue_family_|.
+  const iree_hal_queue_family_spec_t* family_spec_ = nullptr;
+  // Dynamically acquired cooperative hardware queue.
+  Ref<iree_hal_queue_t> cooperative_queue_;
+  // Executable containing the OCKL grid synchronization probe.
+  Ref<iree_hal_executable_t> executable_;
+};
+
+TEST_P(AmdgpuCooperativeDispatchTest, DirectGridSynchronization) {
+  constexpr uint32_t kIncarnation = 100;
+  DispatchAndExpectGrid(cooperative_queue_, kIncarnation);
+}
+
+TEST_P(AmdgpuCooperativeDispatchTest, ExplicitCompleteResourceSetDispatches) {
+  ASSERT_GT(family_spec_->execution_resource_count, 0u);
+  std::vector<iree_hal_queue_execution_resource_ordinal_t> resource_ordinals(
+      family_spec_->execution_resource_count);
+  for (iree_host_size_t i = 0; i < resource_ordinals.size(); ++i) {
+    resource_ordinals[i] = (iree_hal_queue_execution_resource_ordinal_t)i;
+  }
+  iree_hal_queue_params_t params;
+  iree_hal_queue_params_initialize(&params);
+  params.features = IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH;
+  params.execution_resources.count = resource_ordinals.size();
+  params.execution_resources.ordinals = resource_ordinals.data();
+
+  Ref<iree_hal_queue_t> queue;
+  IREE_ASSERT_OK(iree_hal_device_acquire_queue(device_, queue_family_, &params,
+                                               queue.out()));
+  const iree_hal_queue_execution_resource_list_t achieved_resources =
+      iree_hal_queue_execution_resources(queue);
+  EXPECT_EQ(0u, achieved_resources.count);
+  EXPECT_EQ(nullptr, achieved_resources.ordinals);
+
+  constexpr uint32_t kIncarnation = 125;
+  DispatchAndExpectGrid(queue, kIncarnation);
+}
+
+TEST_P(AmdgpuCooperativeDispatchTest, PartialResourceSetIsRejected) {
+  std::vector<uint32_t> selected_group_counts(
+      family_spec_->execution_resource_group_count, 0);
+  std::vector<iree_hal_queue_execution_resource_ordinal_t> resource_ordinals;
+  for (iree_host_size_t i = 0; i < family_spec_->execution_resource_count;
+       ++i) {
+    const iree_hal_queue_execution_resource_group_ordinal_t group_ordinal =
+        family_spec_->execution_resources[i].group_ordinal;
+    ASSERT_LT(group_ordinal, selected_group_counts.size());
+    if (selected_group_counts[group_ordinal] <
+        family_spec_->execution_resource_groups[group_ordinal]
+            .minimum_selected_resource_count) {
+      resource_ordinals.push_back(
+          (iree_hal_queue_execution_resource_ordinal_t)i);
+      ++selected_group_counts[group_ordinal];
+    }
+  }
+  if (resource_ordinals.empty() && family_spec_->execution_resource_count > 1) {
+    resource_ordinals.push_back(0);
+  }
+  if (resource_ordinals.empty() ||
+      resource_ordinals.size() == family_spec_->execution_resource_count) {
+    GTEST_SKIP() << "queue family has no valid partial resource set";
+  }
+
+  iree_hal_queue_params_t params;
+  iree_hal_queue_params_initialize(&params);
+  params.features = IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH;
+  params.execution_resources.count = resource_ordinals.size();
+  params.execution_resources.ordinals = resource_ordinals.data();
+  Ref<iree_hal_queue_t> queue;
+  IREE_EXPECT_STATUS_IS(IREE_STATUS_UNIMPLEMENTED,
+                        iree_hal_device_acquire_queue(device_, queue_family_,
+                                                      &params, queue.out()));
+}
+
+TEST_P(AmdgpuCooperativeDispatchTest,
+       ReusableCommandBufferExecutionsHaveIndependentGridState) {
+  constexpr uint32_t kIncarnation = 200;
+  const uint32_t constants[] = {kIncarnation, kWorkgroupCount};
+  const iree_hal_buffer_ref_t binding_refs[] = {
+      iree_hal_make_indirect_buffer_ref(/*buffer_slot=*/0, 0,
+                                        IREE_HAL_WHOLE_BUFFER),
+      iree_hal_make_indirect_buffer_ref(/*buffer_slot=*/1, 0,
+                                        IREE_HAL_WHOLE_BUFFER),
+  };
+  const iree_hal_buffer_ref_list_t bindings = {
+      /*.count=*/IREE_ARRAYSIZE(binding_refs),
+      /*.values=*/binding_refs,
+  };
+
+  Ref<iree_hal_command_buffer_t> command_buffer;
+  IREE_ASSERT_OK(iree_hal_command_buffer_create(
+      device_, queue_family_, IREE_HAL_COMMAND_BUFFER_MODE_DEFAULT,
+      IREE_HAL_COMMAND_CATEGORY_DISPATCH,
+      /*binding_capacity=*/IREE_ARRAYSIZE(binding_refs), command_buffer.out()));
+  IREE_ASSERT_OK(iree_hal_command_buffer_begin(command_buffer));
+  IREE_ASSERT_OK(iree_hal_command_buffer_dispatch(
+      command_buffer, executable_, iree_hal_executable_function_from_index(0),
+      DispatchConfig(), iree_make_const_byte_span(constants, sizeof(constants)),
+      bindings, IREE_HAL_DISPATCH_FLAG_COOPERATIVE));
+  IREE_ASSERT_OK(iree_hal_command_buffer_end(command_buffer));
+
+  Ref<iree_hal_buffer_t> first_scratch_buffer;
+  Ref<iree_hal_buffer_t> first_output_buffer;
+  Ref<iree_hal_buffer_t> second_scratch_buffer;
+  Ref<iree_hal_buffer_t> second_output_buffer;
+  IREE_ASSERT_OK(CreateZeroedDeviceBuffer(kWorkgroupCount * sizeof(uint32_t),
+                                          first_scratch_buffer.out()));
+  IREE_ASSERT_OK(CreateZeroedDeviceBuffer(kWorkgroupCount * sizeof(uint32_t),
+                                          first_output_buffer.out()));
+  IREE_ASSERT_OK(CreateZeroedDeviceBuffer(kWorkgroupCount * sizeof(uint32_t),
+                                          second_scratch_buffer.out()));
+  IREE_ASSERT_OK(CreateZeroedDeviceBuffer(kWorkgroupCount * sizeof(uint32_t),
+                                          second_output_buffer.out()));
+
+  const iree_hal_buffer_binding_t first_binding_values[] = {
+      {first_scratch_buffer, 0, IREE_HAL_WHOLE_BUFFER},
+      {first_output_buffer, 0, IREE_HAL_WHOLE_BUFFER},
+  };
+  const iree_hal_buffer_binding_table_t first_binding_table = {
+      /*.count=*/IREE_ARRAYSIZE(first_binding_values),
+      /*.bindings=*/first_binding_values,
+  };
+  const iree_hal_buffer_binding_t second_binding_values[] = {
+      {second_scratch_buffer, 0, IREE_HAL_WHOLE_BUFFER},
+      {second_output_buffer, 0, IREE_HAL_WHOLE_BUFFER},
+  };
+  const iree_hal_buffer_binding_table_t second_binding_table = {
+      /*.count=*/IREE_ARRAYSIZE(second_binding_values),
+      /*.bindings=*/second_binding_values,
+  };
+
+  SemaphoreList completions(device_, {0, 0}, {1, 1});
+  const iree_hal_semaphore_list_t first_signal = {
+      /*.count=*/1,
+      /*.semaphores=*/completions.semaphores.data(),
+      /*.payload_values=*/completions.payload_values.data(),
+  };
+  const iree_hal_semaphore_list_t second_signal = {
+      /*.count=*/1,
+      /*.semaphores=*/completions.semaphores.data() + 1,
+      /*.payload_values=*/completions.payload_values.data() + 1,
+  };
+  // No dependency edge orders these submissions. Each execution of the same
+  // command buffer must therefore carry its own grid synchronization state.
+  IREE_ASSERT_OK(iree_hal_queue_execute(
+      cooperative_queue_, iree_hal_semaphore_list_empty(), first_signal,
+      command_buffer, first_binding_table, IREE_HAL_QUEUE_EXECUTE_FLAG_NONE));
+  IREE_ASSERT_OK(iree_hal_queue_execute(
+      cooperative_queue_, iree_hal_semaphore_list_empty(), second_signal,
+      command_buffer, second_binding_table, IREE_HAL_QUEUE_EXECUTE_FLAG_NONE));
+  IREE_ASSERT_OK(iree_hal_semaphore_list_wait(
+      completions, iree_infinite_timeout(), IREE_ASYNC_WAIT_FLAG_NONE));
+
+  EXPECT_THAT(ReadBufferData<uint32_t>(first_output_buffer),
+              Each(ExpectedSum(kIncarnation)));
+  EXPECT_THAT(ReadBufferData<uint32_t>(second_output_buffer),
+              Each(ExpectedSum(kIncarnation)));
+}
+
+CTS_REGISTER_EXECUTABLE_TEST_SUITE(AmdgpuCooperativeDispatchTest);
+
+}  // namespace
+}  // namespace iree::hal::cts
