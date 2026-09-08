@@ -615,18 +615,6 @@ HIPAPI hipError_t hipDevSmResourceSplit(
   return hipErrorNotSupported;
 }
 
-HIPAPI hipError_t hipDevSmResourceSplitByCount(
-    hipDevResource* result, unsigned int* nbGroups, const hipDevResource* input,
-    hipDevResource* remainder, unsigned int flags, unsigned int minCount) {
-  (void)result;
-  (void)nbGroups;
-  (void)input;
-  (void)remainder;
-  (void)flags;
-  (void)minCount;
-  return hipErrorNotSupported;
-}
-
 HIPAPI hipError_t hipDeviceComputeCapability(int* major, int* minor,
                                              hipDevice_t device) {
   (void)major;

@@ -303,3 +303,366 @@ hipError_t iree_hip_execution_resource_resolve_sm(
   *out_set = set;
   return hipSuccess;
 }
+
+static hipError_t iree_hip_execution_resource_consume_status(
+    iree_status_t status) {
+  const iree_status_code_t status_code = iree_status_code(status);
+  iree_status_free(status);
+  switch (status_code) {
+    case IREE_STATUS_RESOURCE_EXHAUSTED:
+      return hipErrorOutOfMemory;
+    case IREE_STATUS_INVALID_ARGUMENT:
+    case IREE_STATUS_OUT_OF_RANGE:
+      return hipErrorInvalidResourceConfiguration;
+    case IREE_STATUS_UNIMPLEMENTED:
+      return hipErrorNotSupported;
+    default:
+      return hipErrorUnknown;
+  }
+}
+
+static iree_host_size_t iree_hip_execution_resource_count_group_resources(
+    const iree_hal_queue_family_spec_t* family_spec,
+    const iree_hal_streaming_execution_resource_set_t* set,
+    iree_host_size_t group_ordinal) {
+  iree_host_size_t count = 0;
+  for (iree_host_size_t i = 0; i < set->resources.count; ++i) {
+    const iree_hal_queue_execution_resource_ordinal_t resource_ordinal =
+        set->resources.ordinals[i];
+    count += family_spec->execution_resources[resource_ordinal].group_ordinal ==
+             group_ordinal;
+  }
+  return count;
+}
+
+// Tracks one input resource while planning disjoint output partitions.
+typedef enum iree_hip_execution_resource_plan_state_e {
+  // The resource has not been assigned to any partition.
+  IREE_HIP_EXECUTION_RESOURCE_PLAN_STATE_AVAILABLE = 0,
+  // The resource is assigned to the partition currently being planned.
+  IREE_HIP_EXECUTION_RESOURCE_PLAN_STATE_SELECTED = 1,
+  // The resource has been emitted into a completed partition.
+  IREE_HIP_EXECUTION_RESOURCE_PLAN_STATE_CONSUMED = 2,
+} iree_hip_execution_resource_plan_state_t;
+
+hipError_t iree_hip_execution_resource_split_sm_by_count(
+    iree_hal_streaming_device_t* device,
+    const iree_hal_streaming_execution_resource_set_t* input_set,
+    const hipDevResource* input, unsigned int flags, unsigned int minimum_count,
+    hipDevResource* out_resources, unsigned int* inout_group_count,
+    hipDevResource* out_remainder) {
+  const unsigned int known_flags = hipDevSmResourceSplitIgnoreSmCoscheduling |
+                                   hipDevSmResourceSplitMaxPotentialClusterSize;
+  if (flags & ~known_flags) return hipErrorInvalidValue;
+  if (flags != 0) {
+    // Ignoring coscheduling changes the selectable granule, while maximizing
+    // cluster size requires topology not represented by the current HAL
+    // family facts. Neither flag may degrade into a successful no-op.
+    return hipErrorNotSupported;
+  }
+
+  if (minimum_count > input->sm.smCount) return hipErrorInvalidValue;
+
+  hipError_t result = hipSuccess;
+
+  const iree_hal_queue_family_t* queue_family = iree_hal_device_queue_family(
+      device->hal_device, input_set->queue_family_ordinal);
+  if (!queue_family) return hipErrorInvalidResourceConfiguration;
+  const iree_hal_queue_family_spec_t* family_spec =
+      iree_hal_queue_family_spec(queue_family);
+  const iree_host_size_t input_resource_count = input_set->resources.count;
+  if (input_resource_count == 0) {
+    return hipErrorInvalidResourceConfiguration;
+  }
+
+  // HIP measures equal partitions in raw execution units while HAL families
+  // select indivisible resources. Without additional topology facts, only
+  // uniform resource widths can guarantee equal exact partitions.
+  const iree_hal_queue_execution_resource_ordinal_t first_resource_ordinal =
+      input_set->resources.ordinals[0];
+  const uint32_t execution_units_per_resource =
+      family_spec->execution_resources[first_resource_ordinal]
+          .execution_unit_count;
+  for (iree_host_size_t i = 1; i < input_resource_count; ++i) {
+    const iree_hal_queue_execution_resource_ordinal_t resource_ordinal =
+        input_set->resources.ordinals[i];
+    if (family_spec->execution_resources[resource_ordinal]
+            .execution_unit_count != execution_units_per_resource) {
+      return hipErrorNotSupported;
+    }
+  }
+
+  // Bound the partition count by both total capacity and the resources each
+  // family constraint group requires in every exact set.
+  iree_host_size_t minimum_resources_per_partition = 0;
+  iree_host_size_t possible_partition_count = input_resource_count;
+  for (iree_host_size_t group_ordinal = 0;
+       group_ordinal < family_spec->execution_resource_group_count;
+       ++group_ordinal) {
+    const iree_host_size_t selected_resource_count =
+        iree_hip_execution_resource_count_group_resources(
+            family_spec, input_set, group_ordinal);
+    const uint32_t minimum_selected_resource_count =
+        family_spec->execution_resource_groups[group_ordinal]
+            .minimum_selected_resource_count;
+    minimum_resources_per_partition += minimum_selected_resource_count;
+    if (minimum_selected_resource_count != 0) {
+      possible_partition_count =
+          iree_min(possible_partition_count,
+                   selected_resource_count / minimum_selected_resource_count);
+    }
+  }
+
+  const uint64_t requested_execution_unit_count =
+      iree_max((uint64_t)minimum_count, (uint64_t)input->sm.minSmPartitionSize);
+  iree_host_size_t resources_per_partition =
+      (iree_host_size_t)((requested_execution_unit_count +
+                          execution_units_per_resource - 1) /
+                         execution_units_per_resource);
+  resources_per_partition =
+      iree_max(resources_per_partition, minimum_resources_per_partition);
+  if (resources_per_partition == 0 ||
+      resources_per_partition > input_resource_count) {
+    return hipErrorInvalidResourceConfiguration;
+  }
+  possible_partition_count = iree_min(
+      possible_partition_count, input_resource_count / resources_per_partition);
+
+  iree_host_size_t actual_partition_count =
+      out_resources ? iree_min((iree_host_size_t)*inout_group_count,
+                               possible_partition_count)
+                    : possible_partition_count;
+  if (out_remainder) {
+    // A returned remainder is itself usable for queue acquisition. Reduce the
+    // output count until every group minimum can also be retained there.
+    while (actual_partition_count > 0) {
+      const iree_host_size_t remainder_resource_count =
+          input_resource_count -
+          actual_partition_count * resources_per_partition;
+      if (remainder_resource_count == 0) break;
+
+      bool has_valid_remainder = true;
+      for (iree_host_size_t group_ordinal = 0;
+           group_ordinal < family_spec->execution_resource_group_count;
+           ++group_ordinal) {
+        const iree_host_size_t selected_resource_count =
+            iree_hip_execution_resource_count_group_resources(
+                family_spec, input_set, group_ordinal);
+        const uint32_t minimum_selected_resource_count =
+            family_spec->execution_resource_groups[group_ordinal]
+                .minimum_selected_resource_count;
+        const iree_host_size_t required_resource_count =
+            (actual_partition_count + 1) * minimum_selected_resource_count;
+        if (selected_resource_count < required_resource_count) {
+          has_valid_remainder = false;
+          break;
+        }
+      }
+      if (has_valid_remainder) break;
+      --actual_partition_count;
+    }
+  }
+  if (!out_resources) {
+    *inout_group_count = (unsigned int)actual_partition_count;
+    return hipSuccess;
+  }
+
+  const iree_allocator_t host_allocator =
+      device->execution_resource_table.host_allocator;
+  iree_host_size_t* available_resource_counts_by_group = NULL;
+  iree_hip_execution_resource_plan_state_t* resource_states = NULL;
+  iree_hal_queue_execution_resource_ordinal_t* planned_ordinals = NULL;
+  hipDevResource* planned_partitions = NULL;
+  iree_status_t status = iree_allocator_malloc_array(
+      host_allocator, family_spec->execution_resource_group_count,
+      sizeof(*available_resource_counts_by_group),
+      (void**)&available_resource_counts_by_group);
+  if (iree_status_is_ok(status)) {
+    status = iree_allocator_malloc_array(host_allocator, input_resource_count,
+                                         sizeof(*resource_states),
+                                         (void**)&resource_states);
+  }
+  if (iree_status_is_ok(status)) {
+    status = iree_allocator_malloc_array(host_allocator, input_resource_count,
+                                         sizeof(*planned_ordinals),
+                                         (void**)&planned_ordinals);
+  }
+  if (iree_status_is_ok(status) && actual_partition_count != 0) {
+    status = iree_allocator_malloc_array(host_allocator, actual_partition_count,
+                                         sizeof(*planned_partitions),
+                                         (void**)&planned_partitions);
+  }
+  if (!iree_status_is_ok(status)) {
+    result = iree_hip_execution_resource_consume_status(status);
+  }
+
+  if (result == hipSuccess) {
+    memset(resource_states, 0, input_resource_count * sizeof(*resource_states));
+    for (iree_host_size_t group_ordinal = 0;
+         group_ordinal < family_spec->execution_resource_group_count;
+         ++group_ordinal) {
+      available_resource_counts_by_group[group_ordinal] =
+          iree_hip_execution_resource_count_group_resources(
+              family_spec, input_set, group_ordinal);
+    }
+  }
+
+  const iree_host_size_t remainder_resource_count =
+      input_resource_count - actual_partition_count * resources_per_partition;
+  const bool preserve_remainder_constraints =
+      out_remainder && remainder_resource_count != 0;
+  // Satisfy every group minimum first, then fill the equal-size partition from
+  // any group with capacity beyond all later partitions and the remainder.
+  for (iree_host_size_t output_index = 0;
+       output_index < actual_partition_count && result == hipSuccess;
+       ++output_index) {
+    iree_host_size_t selected_count = 0;
+    for (iree_host_size_t group_ordinal = 0;
+         group_ordinal < family_spec->execution_resource_group_count &&
+         result == hipSuccess;
+         ++group_ordinal) {
+      const uint32_t minimum_selected_resource_count =
+          family_spec->execution_resource_groups[group_ordinal]
+              .minimum_selected_resource_count;
+      for (uint32_t selection_index = 0;
+           selection_index < minimum_selected_resource_count;
+           ++selection_index) {
+        iree_host_size_t selected_index = input_resource_count;
+        for (iree_host_size_t i = 0; i < input_resource_count; ++i) {
+          const iree_hal_queue_execution_resource_ordinal_t resource_ordinal =
+              input_set->resources.ordinals[i];
+          if (resource_states[i] ==
+                  IREE_HIP_EXECUTION_RESOURCE_PLAN_STATE_AVAILABLE &&
+              family_spec->execution_resources[resource_ordinal]
+                      .group_ordinal == group_ordinal) {
+            selected_index = i;
+            break;
+          }
+        }
+        if (selected_index == input_resource_count) {
+          result = hipErrorInvalidResourceConfiguration;
+          break;
+        }
+        resource_states[selected_index] =
+            IREE_HIP_EXECUTION_RESOURCE_PLAN_STATE_SELECTED;
+        --available_resource_counts_by_group[group_ordinal];
+        ++selected_count;
+      }
+    }
+
+    while (selected_count < resources_per_partition && result == hipSuccess) {
+      iree_host_size_t selected_index = input_resource_count;
+      for (iree_host_size_t i = 0; i < input_resource_count; ++i) {
+        if (resource_states[i] !=
+            IREE_HIP_EXECUTION_RESOURCE_PLAN_STATE_AVAILABLE) {
+          continue;
+        }
+        const iree_hal_queue_execution_resource_ordinal_t resource_ordinal =
+            input_set->resources.ordinals[i];
+        const iree_host_size_t group_ordinal =
+            family_spec->execution_resources[resource_ordinal].group_ordinal;
+        const iree_host_size_t remaining_partition_count =
+            actual_partition_count - output_index - 1 +
+            (preserve_remainder_constraints ? 1 : 0);
+        const iree_host_size_t reserved_resource_count =
+            remaining_partition_count *
+            family_spec->execution_resource_groups[group_ordinal]
+                .minimum_selected_resource_count;
+        if (available_resource_counts_by_group[group_ordinal] <=
+            reserved_resource_count) {
+          continue;
+        }
+        selected_index = i;
+        break;
+      }
+      if (selected_index == input_resource_count) {
+        result = hipErrorInvalidResourceConfiguration;
+        break;
+      }
+      const iree_hal_queue_execution_resource_ordinal_t resource_ordinal =
+          input_set->resources.ordinals[selected_index];
+      resource_states[selected_index] =
+          IREE_HIP_EXECUTION_RESOURCE_PLAN_STATE_SELECTED;
+      --available_resource_counts_by_group
+          [family_spec->execution_resources[resource_ordinal].group_ordinal];
+      ++selected_count;
+    }
+
+    iree_host_size_t emitted_count = 0;
+    for (iree_host_size_t i = 0;
+         i < input_resource_count && result == hipSuccess; ++i) {
+      if (resource_states[i] !=
+          IREE_HIP_EXECUTION_RESOURCE_PLAN_STATE_SELECTED) {
+        continue;
+      }
+      planned_ordinals[output_index * resources_per_partition +
+                       emitted_count++] = input_set->resources.ordinals[i];
+      resource_states[i] = IREE_HIP_EXECUTION_RESOURCE_PLAN_STATE_CONSUMED;
+    }
+    if (emitted_count != resources_per_partition) {
+      result = hipErrorInvalidResourceConfiguration;
+    }
+  }
+
+  iree_host_size_t emitted_remainder_count = 0;
+  if (result == hipSuccess) {
+    const iree_host_size_t remainder_offset =
+        actual_partition_count * resources_per_partition;
+    for (iree_host_size_t i = 0; i < input_resource_count; ++i) {
+      if (resource_states[i] !=
+          IREE_HIP_EXECUTION_RESOURCE_PLAN_STATE_AVAILABLE) {
+        continue;
+      }
+      planned_ordinals[remainder_offset + emitted_remainder_count++] =
+          input_set->resources.ordinals[i];
+    }
+    if (emitted_remainder_count != remainder_resource_count) {
+      result = hipErrorInvalidResourceConfiguration;
+    }
+  }
+
+  for (iree_host_size_t i = 0;
+       i < actual_partition_count && result == hipSuccess; ++i) {
+    status = iree_hip_execution_resource_create_sm(
+        device, queue_family,
+        (iree_hal_queue_execution_resource_list_t){
+            .count = resources_per_partition,
+            .ordinals = &planned_ordinals[i * resources_per_partition],
+        },
+        hipDevSmResourceGroupDefault, &planned_partitions[i]);
+    if (!iree_status_is_ok(status)) {
+      result = iree_hip_execution_resource_consume_status(status);
+    }
+  }
+
+  hipDevResource planned_remainder = {0};
+  planned_remainder.type = hipDevResourceTypeInvalid;
+  if (result == hipSuccess && out_remainder && remainder_resource_count != 0) {
+    status = iree_hip_execution_resource_create_sm(
+        device, queue_family,
+        (iree_hal_queue_execution_resource_list_t){
+            .count = remainder_resource_count,
+            .ordinals = &planned_ordinals[actual_partition_count *
+                                          resources_per_partition],
+        },
+        hipDevSmResourceGroupDefault, &planned_remainder);
+    if (!iree_status_is_ok(status)) {
+      result = iree_hip_execution_resource_consume_status(status);
+    }
+  }
+
+  if (result == hipSuccess) {
+    if (actual_partition_count != 0) {
+      memcpy(out_resources, planned_partitions,
+             actual_partition_count * sizeof(*out_resources));
+    }
+    if (out_remainder) *out_remainder = planned_remainder;
+    *inout_group_count = (unsigned int)actual_partition_count;
+  }
+
+  iree_allocator_free(host_allocator, planned_partitions);
+  iree_allocator_free(host_allocator, planned_ordinals);
+  iree_allocator_free(host_allocator, resource_states);
+  iree_allocator_free(host_allocator, available_resource_counts_by_group);
+  return result;
+}

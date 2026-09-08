@@ -3087,6 +3087,36 @@ HIPAPI hipError_t hipDeviceGetDevResource(hipDevice_t device,
   return hipSuccess;
 }
 
+HIPAPI hipError_t hipDevSmResourceSplitByCount(hipDevResource* result,
+                                               unsigned int* group_count,
+                                               const hipDevResource* input,
+                                               hipDevResource* remainder,
+                                               unsigned int flags,
+                                               unsigned int minimum_count) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (!group_count || !input) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(hipErrorInvalidValue);
+  }
+  hipError_t init_result = iree_hip_ensure_initialized();
+  if (init_result != hipSuccess) {
+    IREE_TRACE_ZONE_END(z0);
+    HIP_RETURN_ERROR(init_result);
+  }
+
+  iree_hal_streaming_device_t* device = NULL;
+  const iree_hal_streaming_execution_resource_set_t* input_set = NULL;
+  hipError_t split_result =
+      iree_hip_execution_resource_resolve_sm(input, &device, &input_set);
+  if (split_result == hipSuccess) {
+    split_result = iree_hip_execution_resource_split_sm_by_count(
+        device, input_set, input, flags, minimum_count, result, group_count,
+        remainder);
+  }
+  IREE_TRACE_ZONE_END(z0);
+  HIP_RETURN_ERROR(split_result);
+}
+
 static hipError_t iree_hip_graph_memory_device(
     int device, iree_hal_streaming_device_t** out_device) {
   if (out_device) *out_device = NULL;

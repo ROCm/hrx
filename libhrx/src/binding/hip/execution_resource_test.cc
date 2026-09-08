@@ -27,7 +27,7 @@ static constexpr iree_hal_queue_execution_resource_group_spec_t
         {/*.minimum_selected_resource_count=*/1},
 };
 static constexpr iree_hal_queue_execution_resource_spec_t
-    kExecutionResources[] = {
+    kVariableExecutionResources[] = {
         {/*.group_ordinal=*/0,
          /*.first_execution_unit_ordinal=*/0,
          /*.execution_unit_count=*/2},
@@ -40,6 +40,33 @@ static constexpr iree_hal_queue_execution_resource_spec_t
         {/*.group_ordinal=*/1,
          /*.first_execution_unit_ordinal=*/8,
          /*.execution_unit_count=*/6},
+};
+static constexpr iree_hal_queue_execution_resource_spec_t
+    kUniformExecutionResources[] = {
+        {/*.group_ordinal=*/0,
+         /*.first_execution_unit_ordinal=*/0,
+         /*.execution_unit_count=*/2},
+        {/*.group_ordinal=*/1,
+         /*.first_execution_unit_ordinal=*/2,
+         /*.execution_unit_count=*/2},
+        {/*.group_ordinal=*/0,
+         /*.first_execution_unit_ordinal=*/4,
+         /*.execution_unit_count=*/2},
+        {/*.group_ordinal=*/1,
+         /*.first_execution_unit_ordinal=*/6,
+         /*.execution_unit_count=*/2},
+        {/*.group_ordinal=*/0,
+         /*.first_execution_unit_ordinal=*/8,
+         /*.execution_unit_count=*/2},
+        {/*.group_ordinal=*/1,
+         /*.first_execution_unit_ordinal=*/10,
+         /*.execution_unit_count=*/2},
+        {/*.group_ordinal=*/0,
+         /*.first_execution_unit_ordinal=*/12,
+         /*.execution_unit_count=*/2},
+        {/*.group_ordinal=*/1,
+         /*.first_execution_unit_ordinal=*/14,
+         /*.execution_unit_count=*/2},
 };
 
 static iree_hal_device_spec_t* CreateDeviceSpec() {
@@ -70,29 +97,53 @@ static iree_hal_device_spec_t* CreateDeviceSpec() {
       /*.physical_devices=*/&physical_device,
       /*.flags=*/IREE_HAL_DEVICE_IDENTITY_FLAG_NONE,
   };
-  const iree_hal_queue_family_spec_t queue_family = {
-      /*.name=*/IREE_SV("dispatch"),
-      /*.provisioned_queue_count=*/0,
-      /*.priority_count=*/IREE_ARRAYSIZE(kQueuePriorities),
-      /*.priorities=*/kQueuePriorities,
-      /*.execution_unit_count=*/14,
-      /*.execution_resource_group_count=*/
-      IREE_ARRAYSIZE(kExecutionResourceGroups),
-      /*.execution_resource_groups=*/kExecutionResourceGroups,
-      /*.execution_resource_count=*/IREE_ARRAYSIZE(kExecutionResources),
-      /*.execution_resources=*/kExecutionResources,
-      /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
-      /*.timestamp_valid_bits=*/0,
-      /*.timestamp_frequency_hz=*/0,
-      /*.physical_device_affinity=*/1,
-      /*.role_flags=*/IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH,
-      /*.atomic_capabilities=*/{},
-      /*.zero_compute_atomic_capabilities=*/{},
-      /*.flags=*/IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION,
+  const iree_hal_queue_family_spec_t queue_families[] = {
+      {
+          /*.name=*/IREE_SV("variable-dispatch"),
+          /*.provisioned_queue_count=*/0,
+          /*.priority_count=*/IREE_ARRAYSIZE(kQueuePriorities),
+          /*.priorities=*/kQueuePriorities,
+          /*.execution_unit_count=*/14,
+          /*.execution_resource_group_count=*/
+          IREE_ARRAYSIZE(kExecutionResourceGroups),
+          /*.execution_resource_groups=*/kExecutionResourceGroups,
+          /*.execution_resource_count=*/
+          IREE_ARRAYSIZE(kVariableExecutionResources),
+          /*.execution_resources=*/kVariableExecutionResources,
+          /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
+          /*.timestamp_valid_bits=*/0,
+          /*.timestamp_frequency_hz=*/0,
+          /*.physical_device_affinity=*/1,
+          /*.role_flags=*/IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH,
+          /*.atomic_capabilities=*/{},
+          /*.zero_compute_atomic_capabilities=*/{},
+          /*.flags=*/IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION,
+      },
+      {
+          /*.name=*/IREE_SV("uniform-dispatch"),
+          /*.provisioned_queue_count=*/0,
+          /*.priority_count=*/IREE_ARRAYSIZE(kQueuePriorities),
+          /*.priorities=*/kQueuePriorities,
+          /*.execution_unit_count=*/16,
+          /*.execution_resource_group_count=*/
+          IREE_ARRAYSIZE(kExecutionResourceGroups),
+          /*.execution_resource_groups=*/kExecutionResourceGroups,
+          /*.execution_resource_count=*/
+          IREE_ARRAYSIZE(kUniformExecutionResources),
+          /*.execution_resources=*/kUniformExecutionResources,
+          /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
+          /*.timestamp_valid_bits=*/0,
+          /*.timestamp_frequency_hz=*/0,
+          /*.physical_device_affinity=*/1,
+          /*.role_flags=*/IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH,
+          /*.atomic_capabilities=*/{},
+          /*.zero_compute_atomic_capabilities=*/{},
+          /*.flags=*/IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION,
+      },
   };
   const iree_hal_device_queue_spec_t queues = {
-      /*.family_count=*/1,
-      /*.families=*/&queue_family,
+      /*.family_count=*/IREE_ARRAYSIZE(queue_families),
+      /*.families=*/queue_families,
   };
   const iree_hal_device_spec_params_t params = {
       /*.identity=*/&identity,
@@ -131,8 +182,26 @@ class ExecutionResourceTest : public ::testing::Test {
     iree_hal_device_release(hal_device_);
   }
 
-  const iree_hal_queue_family_t* queue_family() const {
+  hipError_t SplitSmByCount(hipDevResource* out_resources,
+                            unsigned int* inout_group_count,
+                            const hipDevResource* input,
+                            hipDevResource* out_remainder, unsigned int flags,
+                            unsigned int minimum_count) {
+    const iree_hal_streaming_execution_resource_set_t* input_set = nullptr;
+    hipError_t result = iree_hip_execution_resource_resolve_sm_for_device(
+        input, &device_, &input_set);
+    if (result != hipSuccess) return result;
+    return iree_hip_execution_resource_split_sm_by_count(
+        &device_, input_set, input, flags, minimum_count, out_resources,
+        inout_group_count, out_remainder);
+  }
+
+  const iree_hal_queue_family_t* variable_queue_family() const {
     return iree_hal_device_queue_family(hal_device_, 0);
+  }
+
+  const iree_hal_queue_family_t* uniform_queue_family() const {
+    return iree_hal_device_queue_family(hal_device_, 1);
   }
 
   iree_hal_device_t* hal_device_ = nullptr;
@@ -142,7 +211,7 @@ class ExecutionResourceTest : public ::testing::Test {
 TEST_F(ExecutionResourceTest, CreatesCopyableResourcesFromExactSets) {
   hipDevResource full_resource;
   IREE_ASSERT_OK(iree_hip_execution_resource_create_sm(
-      &device_, queue_family(), {/*.count=*/0, /*.ordinals=*/nullptr},
+      &device_, variable_queue_family(), {/*.count=*/0, /*.ordinals=*/nullptr},
       hipDevSmResourceGroupDefault, &full_resource));
   EXPECT_EQ(full_resource.type, hipDevResourceTypeSm);
   EXPECT_EQ(full_resource.sm.smCount, 14u);
@@ -157,13 +226,14 @@ TEST_F(ExecutionResourceTest, CreatesCopyableResourcesFromExactSets) {
                 &copied_resource, &device_, &full_set),
             hipSuccess);
   ASSERT_NE(full_set, nullptr);
-  EXPECT_EQ(full_set->resources.count, IREE_ARRAYSIZE(kExecutionResources));
+  EXPECT_EQ(full_set->resources.count,
+            IREE_ARRAYSIZE(kVariableExecutionResources));
 
   const iree_hal_queue_execution_resource_ordinal_t partition_ordinals[] = {1,
                                                                             3};
   hipDevResource partition_resource;
   IREE_ASSERT_OK(iree_hip_execution_resource_create_sm(
-      &device_, queue_family(),
+      &device_, variable_queue_family(),
       {/*.count=*/IREE_ARRAYSIZE(partition_ordinals),
        /*.ordinals=*/partition_ordinals},
       hipDevSmResourceGroupBackfill, &partition_resource));
@@ -181,18 +251,18 @@ TEST_F(ExecutionResourceTest, RejectsStaleAndTamperedCopies) {
   hipDevResource unchanged_resource;
   std::memset(&unchanged_resource, 0xA5, sizeof(unchanged_resource));
   const hipDevResource expected_unchanged_resource = unchanged_resource;
-  EXPECT_THAT(
-      iree_hip_execution_resource_create_sm(
-          &device_, queue_family(), {/*.count=*/0, /*.ordinals=*/nullptr},
-          /*flags=*/2, &unchanged_resource),
-      StatusIs(StatusCode::kInvalidArgument));
+  EXPECT_THAT(iree_hip_execution_resource_create_sm(
+                  &device_, variable_queue_family(),
+                  {/*.count=*/0, /*.ordinals=*/nullptr}, /*flags=*/2,
+                  &unchanged_resource),
+              StatusIs(StatusCode::kInvalidArgument));
   EXPECT_EQ(std::memcmp(&unchanged_resource, &expected_unchanged_resource,
                         sizeof(unchanged_resource)),
             0);
 
   hipDevResource stale_resource;
   IREE_ASSERT_OK(iree_hip_execution_resource_create_sm(
-      &device_, queue_family(), {/*.count=*/0, /*.ordinals=*/nullptr},
+      &device_, variable_queue_family(), {/*.count=*/0, /*.ordinals=*/nullptr},
       hipDevSmResourceGroupDefault, &stale_resource));
 
   iree_hal_streaming_execution_resource_table_deinitialize(
@@ -210,7 +280,7 @@ TEST_F(ExecutionResourceTest, RejectsStaleAndTamperedCopies) {
 
   hipDevResource tampered_resource;
   IREE_ASSERT_OK(iree_hip_execution_resource_create_sm(
-      &device_, queue_family(), {/*.count=*/0, /*.ordinals=*/nullptr},
+      &device_, variable_queue_family(), {/*.count=*/0, /*.ordinals=*/nullptr},
       hipDevSmResourceGroupDefault, &tampered_resource));
   ++tampered_resource.sm.smCount;
   EXPECT_EQ(iree_hip_execution_resource_resolve_sm_for_device(
@@ -228,6 +298,182 @@ TEST_F(ExecutionResourceTest, RejectsStaleAndTamperedCopies) {
   EXPECT_EQ(
       resolved_set,
       reinterpret_cast<const iree_hal_streaming_execution_resource_set_t*>(1));
+}
+
+TEST_F(ExecutionResourceTest, SplitsUniformResourcesIntoExactDisjointSets) {
+  hipDevResource full_resource;
+  IREE_ASSERT_OK(iree_hip_execution_resource_create_sm(
+      &device_, uniform_queue_family(), {/*.count=*/0, /*.ordinals=*/nullptr},
+      hipDevSmResourceGroupDefault, &full_resource));
+
+  hipDevResource untouched_remainder = {};
+  std::memset(&untouched_remainder, 0xA5, sizeof(untouched_remainder));
+  const hipDevResource expected_untouched_remainder = untouched_remainder;
+  unsigned int partition_count = 1;
+  EXPECT_EQ(SplitSmByCount(
+                /*out_resources=*/nullptr, &partition_count, &full_resource,
+                &untouched_remainder, /*flags=*/0, /*minimum_count=*/5),
+            hipSuccess);
+  EXPECT_EQ(partition_count, 2u);
+  EXPECT_EQ(std::memcmp(&untouched_remainder, &expected_untouched_remainder,
+                        sizeof(untouched_remainder)),
+            0);
+
+  hipDevResource requested_partition;
+  unsigned int requested_partition_count = 1;
+  ASSERT_EQ(
+      SplitSmByCount(&requested_partition, &requested_partition_count,
+                     &full_resource, /*out_remainder=*/nullptr, /*flags=*/0,
+                     /*minimum_count=*/5),
+      hipSuccess);
+  EXPECT_EQ(requested_partition_count, 1u);
+  EXPECT_EQ(requested_partition.sm.smCount, 6u);
+
+  hipDevResource partitions[4];
+  hipDevResource remainder;
+  partition_count = IREE_ARRAYSIZE(partitions);
+  ASSERT_EQ(
+      SplitSmByCount(partitions, &partition_count, &full_resource, &remainder,
+                     /*flags=*/0, /*minimum_count=*/5),
+      hipSuccess);
+  ASSERT_EQ(partition_count, 2u);
+  for (iree_host_size_t i = 0; i < partition_count; ++i) {
+    EXPECT_EQ(partitions[i].type, hipDevResourceTypeSm);
+    EXPECT_EQ(partitions[i].sm.smCount, 6u);
+    EXPECT_EQ(partitions[i].sm.minSmPartitionSize, 4u);
+    EXPECT_EQ(partitions[i].sm.smCoscheduledAlignment, 2u);
+    EXPECT_EQ(partitions[i].sm.flags, hipDevSmResourceGroupDefault);
+  }
+  EXPECT_EQ(remainder.type, hipDevResourceTypeSm);
+  EXPECT_EQ(remainder.sm.smCount, 4u);
+  EXPECT_EQ(remainder.sm.minSmPartitionSize, 4u);
+  EXPECT_EQ(remainder.sm.smCoscheduledAlignment, 2u);
+
+  bool seen_ordinals[IREE_ARRAYSIZE(kUniformExecutionResources)] = {};
+  auto record_exact_set = [&](const hipDevResource* resource) {
+    const iree_hal_streaming_execution_resource_set_t* set = nullptr;
+    EXPECT_EQ(iree_hip_execution_resource_resolve_sm_for_device(resource,
+                                                                &device_, &set),
+              hipSuccess);
+    ASSERT_NE(set, nullptr);
+    iree_host_size_t group_counts[IREE_ARRAYSIZE(kExecutionResourceGroups)] =
+        {};
+    for (iree_host_size_t i = 0; i < set->resources.count; ++i) {
+      const iree_hal_queue_execution_resource_ordinal_t ordinal =
+          set->resources.ordinals[i];
+      ASSERT_LT(ordinal, IREE_ARRAYSIZE(kUniformExecutionResources));
+      EXPECT_FALSE(seen_ordinals[ordinal]);
+      seen_ordinals[ordinal] = true;
+      ++group_counts[kUniformExecutionResources[ordinal].group_ordinal];
+    }
+    for (iree_host_size_t i = 0; i < IREE_ARRAYSIZE(kExecutionResourceGroups);
+         ++i) {
+      EXPECT_GE(group_counts[i],
+                kExecutionResourceGroups[i].minimum_selected_resource_count);
+    }
+  };
+  for (iree_host_size_t i = 0; i < partition_count; ++i) {
+    record_exact_set(&partitions[i]);
+  }
+  record_exact_set(&remainder);
+  for (bool seen_ordinal : seen_ordinals) EXPECT_TRUE(seen_ordinal);
+}
+
+TEST_F(ExecutionResourceTest, PreservesConstraintGroupsInRemainder) {
+  const iree_hal_queue_execution_resource_ordinal_t input_ordinals[] = {0, 1, 2,
+                                                                        3, 4};
+  hipDevResource input_resource;
+  IREE_ASSERT_OK(iree_hip_execution_resource_create_sm(
+      &device_, uniform_queue_family(),
+      {/*.count=*/IREE_ARRAYSIZE(input_ordinals),
+       /*.ordinals=*/input_ordinals},
+      hipDevSmResourceGroupDefault, &input_resource));
+
+  hipDevResource untouched_remainder = {};
+  unsigned int discovered_partition_count = 99;
+  ASSERT_EQ(SplitSmByCount(
+                /*out_resources=*/nullptr, &discovered_partition_count,
+                &input_resource, &untouched_remainder, /*flags=*/0,
+                /*minimum_count=*/4),
+            hipSuccess);
+  EXPECT_EQ(discovered_partition_count, 1u);
+
+  hipDevResource partitions[2];
+  std::memset(partitions, 0xA5, sizeof(partitions));
+  const hipDevResource expected_unused_partition = partitions[1];
+  hipDevResource remainder;
+  unsigned int partition_count = IREE_ARRAYSIZE(partitions);
+  ASSERT_EQ(SplitSmByCount(partitions, &partition_count, &input_resource,
+                           &remainder, /*flags=*/0, /*minimum_count=*/4),
+            hipSuccess);
+  ASSERT_EQ(partition_count, 1u);
+  EXPECT_EQ(partitions[0].sm.smCount, 4u);
+  EXPECT_EQ(remainder.sm.smCount, 6u);
+  EXPECT_EQ(std::memcmp(&partitions[1], &expected_unused_partition,
+                        sizeof(partitions[1])),
+            0);
+
+  const iree_hal_streaming_execution_resource_set_t* partition_set = nullptr;
+  ASSERT_EQ(iree_hip_execution_resource_resolve_sm_for_device(
+                &partitions[0], &device_, &partition_set),
+            hipSuccess);
+  const iree_hal_streaming_execution_resource_set_t* remainder_set = nullptr;
+  ASSERT_EQ(iree_hip_execution_resource_resolve_sm_for_device(
+                &remainder, &device_, &remainder_set),
+            hipSuccess);
+  ASSERT_NE(partition_set, nullptr);
+  ASSERT_NE(remainder_set, nullptr);
+  EXPECT_EQ(partition_set->resources.count + remainder_set->resources.count,
+            IREE_ARRAYSIZE(input_ordinals));
+}
+
+TEST_F(ExecutionResourceTest, RejectsUnsupportedSplitWithoutPublishing) {
+  hipDevResource uniform_resource;
+  IREE_ASSERT_OK(iree_hip_execution_resource_create_sm(
+      &device_, uniform_queue_family(), {/*.count=*/0, /*.ordinals=*/nullptr},
+      hipDevSmResourceGroupDefault, &uniform_resource));
+  hipDevResource variable_resource;
+  IREE_ASSERT_OK(iree_hip_execution_resource_create_sm(
+      &device_, variable_queue_family(), {/*.count=*/0, /*.ordinals=*/nullptr},
+      hipDevSmResourceGroupDefault, &variable_resource));
+
+  auto expect_failure_without_publication = [&](const hipDevResource* input,
+                                                unsigned int flags,
+                                                unsigned int minimum_count,
+                                                hipError_t expected_result) {
+    hipDevResource partitions[2];
+    std::memset(partitions, 0xA5, sizeof(partitions));
+    hipDevResource expected_partitions[2];
+    std::memcpy(expected_partitions, partitions, sizeof(partitions));
+    hipDevResource remainder;
+    std::memset(&remainder, 0x5A, sizeof(remainder));
+    const hipDevResource expected_remainder = remainder;
+    unsigned int partition_count = IREE_ARRAYSIZE(partitions);
+    const unsigned int expected_partition_count = partition_count;
+
+    EXPECT_EQ(SplitSmByCount(partitions, &partition_count, input, &remainder,
+                             flags, minimum_count),
+              expected_result);
+    EXPECT_EQ(partition_count, expected_partition_count);
+    EXPECT_EQ(std::memcmp(partitions, expected_partitions, sizeof(partitions)),
+              0);
+    EXPECT_EQ(std::memcmp(&remainder, &expected_remainder, sizeof(remainder)),
+              0);
+  };
+
+  expect_failure_without_publication(&uniform_resource,
+                                     hipDevSmResourceSplitIgnoreSmCoscheduling,
+                                     /*minimum_count=*/4, hipErrorNotSupported);
+  expect_failure_without_publication(
+      &uniform_resource, hipDevSmResourceSplitMaxPotentialClusterSize,
+      /*minimum_count=*/4, hipErrorNotSupported);
+  expect_failure_without_publication(&uniform_resource, /*flags=*/4,
+                                     /*minimum_count=*/4, hipErrorInvalidValue);
+  expect_failure_without_publication(
+      &uniform_resource, /*flags=*/0,
+      /*minimum_count=*/uniform_resource.sm.smCount + 1, hipErrorInvalidValue);
+  expect_failure_without_publication(&variable_resource, /*flags=*/0,
+                                     /*minimum_count=*/4, hipErrorNotSupported);
 }
 
 }  // namespace

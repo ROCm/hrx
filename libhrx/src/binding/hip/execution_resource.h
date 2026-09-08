@@ -42,6 +42,22 @@ hipError_t iree_hip_execution_resource_resolve_sm(
     const hipDevResource* resource, iree_hal_streaming_device_t** out_device,
     const iree_hal_streaming_execution_resource_set_t** out_set);
 
+// Splits resolved |input_set| into equal-size disjoint exact SM resources.
+//
+// |input| must be the resource value already resolved to |device| and
+// |input_set|. A NULL |out_resources| performs discovery and writes the maximum
+// possible group count to |inout_group_count|. Otherwise |inout_group_count|
+// supplies output capacity and receives the number produced. When
+// |out_remainder| is non-NULL the partition count is reduced as needed so a
+// nonempty remainder is also an exact usable set. All outputs are unchanged on
+// failure.
+hipError_t iree_hip_execution_resource_split_sm_by_count(
+    iree_hal_streaming_device_t* device,
+    const iree_hal_streaming_execution_resource_set_t* input_set,
+    const hipDevResource* input, unsigned int flags, unsigned int minimum_count,
+    hipDevResource* out_resources, unsigned int* inout_group_count,
+    hipDevResource* out_remainder);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif
