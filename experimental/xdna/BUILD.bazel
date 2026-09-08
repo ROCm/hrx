@@ -4,7 +4,7 @@
 # See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-load(":build_defs.bzl", "xdna_cc_library", "xdna_cc_test")
+load(":build_defs.bzl", "xdna_cc_binary", "xdna_cc_library", "xdna_cc_test", "xdna_execution_test_suite")
 
 package(
     default_visibility = ["//visibility:private"],
@@ -102,4 +102,37 @@ xdna_cc_library(
     srcs = ["fake_provider.cc"],
     hdrs = ["fake_provider.h"],
     deps = ["//libamdf:headers"],
+)
+
+xdna_execution_test_suite(
+    name = "cli_test",
+    manifests = ["iree-xdna-run.test.json"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:windows": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    tools = {"iree-xdna-run": ":iree-xdna-run"},
+)
+
+xdna_cc_binary(
+    name = "iree-xdna-run",
+    srcs = ["iree-xdna-run.c"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:windows": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":amdf_status",
+        ":executable",
+        ":prepared_command",
+        "//libamdf:amdf_static",
+        "//libamdf:headers",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/tooling:flags",
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/drivers/amd/xdna/image/aie2p:strix_halo",
+        "//runtime/src/iree/io:file_handle",
+    ],
 )

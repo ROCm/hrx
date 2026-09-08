@@ -141,4 +141,38 @@ iree_cc_library(
 )
 endif()
 
+if(AMDF_BUILD AND AMDF_FAMILY_XDNA AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows"))
+iree_execution_test_suite(
+  NAME
+    cli_test
+  MANIFESTS
+    "iree-xdna-run.test.json"
+  TOOLS
+    "iree-xdna-run=::iree-xdna-run"
+  LABELS
+    "iree-build-requirement=libamdf"
+    "iree-build-requirement=libamdf.xdna"
+)
+endif()
+
+if(AMDF_BUILD AND AMDF_FAMILY_XDNA AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows"))
+iree_cc_binary(
+  NAME
+    iree-xdna-run
+  SRCS
+    "iree-xdna-run.c"
+  DEPS
+    ::amdf_status
+    ::executable
+    ::prepared_command
+    amdf::amdf_static
+    amdf::headers
+    iree::base
+    iree::base::tooling::flags
+    iree::hal
+    iree::hal::drivers::amd::xdna::image::aie2p::strix_halo
+    iree::io::file_handle
+)
+endif()
+
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###
