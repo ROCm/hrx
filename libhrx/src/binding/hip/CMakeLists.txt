@@ -107,6 +107,30 @@ endif()
 
 iree_cc_library(
   NAME
+    execution_resource
+  HDRS
+    "api.h"
+    "execution_resource.h"
+  SRCS
+    "execution_resource.c"
+  DEPS
+    iree::base
+    iree::hal
+    libhrx::src::binding::common
+    libhrx::src::binding::common::execution_resource
+    libhrx_defs
+  INCLUDES
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../libhrx>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../libhrx>"
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
     launch_params
   HDRS
     "api.h"
@@ -182,6 +206,22 @@ iree_cc_library(
   PUBLIC
 )
 endif()
+
+iree_cc_test(
+  NAME
+    execution_resource_test
+  SRCS
+    "execution_resource_test.cc"
+  DEPS
+    ::execution_resource
+    iree::base
+    iree::hal
+    iree::hal::testing::mock_device
+    iree::testing::gtest
+    iree::testing::gtest_main
+    libhrx::src::binding::common
+    libhrx_defs
+)
 
 iree_cc_test(
   NAME

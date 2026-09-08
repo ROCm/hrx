@@ -88,6 +88,26 @@ hrx_cc_library(
 )
 
 hrx_cc_library(
+    name = "execution_resource",
+    srcs = ["execution_resource.c"],
+    hdrs = [
+        "api.h",
+        "execution_resource.h",
+    ],
+    includes = [
+        "../..",
+        "../../../include",
+        "../../libhrx",
+    ],
+    deps = [
+        "//libhrx/src/binding/common",
+        "//libhrx/src/binding/common:execution_resource",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+    ],
+)
+
+hrx_cc_library(
     name = "launch_params",
     srcs = ["launch_params.c"],
     hdrs = [
@@ -151,6 +171,20 @@ hrx_cc_shared_library(
         "//runtime/src/iree/base",
         "//runtime/src/iree/base/threading",
         "//runtime/src/iree/hal",
+    ],
+)
+
+hrx_cc_test(
+    name = "execution_resource_test",
+    srcs = ["execution_resource_test.cc"],
+    deps = [
+        ":execution_resource",
+        "//libhrx/src/binding/common",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/testing:mock_device",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
     ],
 )
 
