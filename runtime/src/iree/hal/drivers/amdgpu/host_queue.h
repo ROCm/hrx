@@ -19,6 +19,7 @@
 #include "iree/hal/drivers/amdgpu/abi/tsan.h"
 #include "iree/hal/drivers/amdgpu/device/blit.h"
 #include "iree/hal/drivers/amdgpu/device/grid_sync.h"
+#include "iree/hal/drivers/amdgpu/dispatch_concurrency.h"
 #include "iree/hal/drivers/amdgpu/queue_execution_resources.h"
 #include "iree/hal/drivers/amdgpu/queue_scope.h"
 #include "iree/hal/drivers/amdgpu/util/aql_ring.h"
@@ -213,6 +214,9 @@ typedef struct iree_hal_amdgpu_host_queue_params_t {
     // Stable execution-resource topology used to lower exact queue parameters.
     const iree_hal_amdgpu_queue_execution_resource_topology_t*
         execution_resource_topology;
+    // Immutable physical-device dispatch concurrency capabilities.
+    const iree_hal_amdgpu_dispatch_concurrency_capabilities_t*
+        dispatch_concurrency_capabilities;
     // Optional stable opaque device address copied into hostcall arguments.
     void* hostcall_buffer;
     // Component that consumes packets written to the AQL ring.
@@ -311,6 +315,14 @@ typedef struct iree_hal_amdgpu_host_queue_t {
   const iree_hal_amdgpu_libhsa_t* libhsa;
   // Logical device owning this queue. Not retained.
   iree_hal_device_t* logical_device;
+  // Physical-device execution-resource topology. Borrowed for the queue
+  // lifetime.
+  const iree_hal_amdgpu_queue_execution_resource_topology_t*
+      execution_resource_topology;
+  // Physical-device dispatch concurrency capabilities. Borrowed for the queue
+  // lifetime.
+  const iree_hal_amdgpu_dispatch_concurrency_capabilities_t*
+      dispatch_concurrency_capabilities;
   // Stable opaque hostcall device address for this queue, or NULL.
   void* hostcall_buffer;
   // Proactor used to arm async semaphore/timepoint waits. Borrowed from the

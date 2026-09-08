@@ -12,6 +12,7 @@
 #include "iree/async/notification.h"
 #include "iree/base/threading/thread.h"
 #include "iree/hal/drivers/amdgpu/device/tsan.h"
+#include "iree/hal/drivers/amdgpu/executable.h"
 #include "iree/hal/drivers/amdgpu/feedback_state.h"
 #include "iree/hal/drivers/amdgpu/host_queue_atomic.h"
 #include "iree/hal/drivers/amdgpu/host_queue_blit.h"
@@ -892,6 +893,10 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
                             &out_queue->base);
   out_queue->libhsa = params->hardware.libhsa;
   out_queue->logical_device = params->coordination.logical_device;
+  out_queue->execution_resource_topology =
+      params->hardware.execution_resource_topology;
+  out_queue->dispatch_concurrency_capabilities =
+      params->hardware.dispatch_concurrency_capabilities;
   out_queue->hostcall_buffer = params->hardware.hostcall_buffer;
   out_queue->proactor = params->coordination.proactor;
   out_queue->frontier_tracker = params->coordination.frontier_tracker;
@@ -2295,14 +2300,40 @@ static iree_status_t iree_hal_amdgpu_host_queue_query_dispatch_concurrency(
     iree_hal_queue_dispatch_concurrency_flags_t flags,
     iree_hal_queue_dispatch_concurrency_t* out_concurrency) {
   IREE_HAL_ASSERT_TYPE(base_queue, &iree_hal_amdgpu_host_queue_vtable);
-  (void)executable;
-  (void)function;
-  (void)params;
+  iree_hal_amdgpu_host_queue_t* queue =
+      (iree_hal_amdgpu_host_queue_t*)base_queue;
   (void)flags;
-  (void)out_concurrency;
-  return iree_make_status(
-      IREE_STATUS_UNIMPLEMENTED,
-      "AMDGPU queue dispatch concurrency queries are not implemented");
+
+  const iree_hal_amdgpu_executable_dispatch_descriptor_t* descriptor = NULL;
+  IREE_RETURN_IF_ERROR(
+      iree_hal_amdgpu_executable_lookup_dispatch_descriptor_for_queue_ordinal(
+          executable, function, queue->physical_queue_ordinal, &descriptor));
+  IREE_RETURN_IF_ERROR(
+      iree_hal_amdgpu_executable_dispatch_limits_validate_workgroup_size(
+          &descriptor->limits, params.workgroup_size));
+
+  const iree_hal_amdgpu_dispatch_concurrency_inputs_t inputs = {
+      .capabilities = queue->dispatch_concurrency_capabilities,
+      .execution_resource_topology = queue->execution_resource_topology,
+      .execution_resources = iree_hal_queue_execution_resources(base_queue),
+      .queue_features = iree_hal_queue_features(base_queue),
+      .kernel_descriptor = descriptor->kernel_descriptor,
+      .workgroup_cluster_size =
+          {
+              descriptor->kernel_args.workgroup_cluster_size[0],
+              descriptor->kernel_args.workgroup_cluster_size[1],
+              descriptor->kernel_args.workgroup_cluster_size[2],
+          },
+      .maximum_dynamic_workgroup_local_memory_size =
+          descriptor->limits.maximum_dynamic_workgroup_local_memory_size,
+  };
+  iree_hal_queue_dispatch_concurrency_t concurrency;
+  iree_status_t status = iree_hal_amdgpu_calculate_dispatch_concurrency(
+      &inputs, params, &concurrency);
+  if (iree_status_is_ok(status)) {
+    *out_concurrency = concurrency;
+  }
+  return status;
 }
 
 static iree_status_t iree_hal_amdgpu_host_queue_dispatch(

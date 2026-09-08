@@ -856,6 +856,18 @@ iree_hal_amdgpu_physical_device_initialize_device_execution(
       IREE_LIBHSA(libhsa), device_agent,
       (hsa_agent_info_t)HSA_AMD_AGENT_INFO_MAX_WAVES_PER_CU,
       &maximum_waves_per_compute_unit));
+  uint32_t simd_count_per_compute_unit = 0;
+  const hsa_status_t simd_count_status = iree_hsa_agent_get_info_raw(
+      libhsa, device_agent,
+      (hsa_agent_info_t)HSA_AMD_AGENT_INFO_NUM_SIMDS_PER_CU,
+      &simd_count_per_compute_unit);
+  if (simd_count_status == HSA_STATUS_ERROR_INVALID_ARGUMENT) {
+    simd_count_per_compute_unit = 0;
+  } else if (IREE_UNLIKELY(simd_count_status != HSA_STATUS_SUCCESS)) {
+    return iree_status_from_hsa_status(__FILE__, __LINE__, simd_count_status,
+                                       "hsa_agent_get_info",
+                                       "querying SIMD count per compute unit");
+  }
   const uint32_t group_segment_max_size =
       IREE_HAL_AMDGPU_PHYSICAL_DEVICE_GROUP_SEGMENT_MAX_SIZE_DEFAULT;
 
@@ -882,6 +894,17 @@ iree_hal_amdgpu_physical_device_initialize_device_execution(
         "ordinal %" PRIhsz,
         device_ordinal);
   }
+  if (simd_count_status == HSA_STATUS_SUCCESS &&
+      IREE_UNLIKELY(
+          simd_count_per_compute_unit == 0 ||
+          maximum_waves_per_compute_unit % simd_count_per_compute_unit != 0)) {
+    return iree_make_status(
+        IREE_STATUS_FAILED_PRECONDITION,
+        "HSA reported %u maximum waves across %u SIMDs for device agent "
+        "ordinal %" PRIhsz,
+        maximum_waves_per_compute_unit, simd_count_per_compute_unit,
+        device_ordinal);
+  }
   uint32_t partition_count = 0;
   IREE_RETURN_IF_ERROR(iree_hsa_agent_get_info(
       IREE_LIBHSA(libhsa), device_agent,
@@ -892,8 +915,15 @@ iree_hal_amdgpu_physical_device_initialize_device_execution(
           compute_unit_count, partition_count,
           &out_physical_device->queue_execution_resources));
   out_physical_device->wavefront_size = wavefront_size;
-  out_physical_device->maximum_waves_per_compute_unit =
-      maximum_waves_per_compute_unit;
+  out_physical_device->dispatch_concurrency_capabilities =
+      (iree_hal_amdgpu_dispatch_concurrency_capabilities_t){
+          .target_kind =
+              out_physical_device->agent_target->primary_isa.identity.kind,
+          .gfxip_version =
+              out_physical_device->agent_target->primary_isa.identity.version,
+          .maximum_waves_per_compute_unit = maximum_waves_per_compute_unit,
+          .simd_count_per_compute_unit = simd_count_per_compute_unit,
+      };
   out_physical_device->group_segment_max_size = group_segment_max_size;
   iree_hal_amdgpu_device_buffer_transfer_context_initialize(
       &out_physical_device->device_kernels, compute_unit_count, wavefront_size,
@@ -957,6 +987,43 @@ iree_hal_amdgpu_physical_device_initialize_queue_execution_strategy(
       hsa_supports_cooperative_queues &&
       out_physical_device->grid_sync_strategy !=
           IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_NONE;
+  if (out_physical_device->supports_cooperative_dispatch) {
+    uint32_t cooperative_compute_unit_count = 0;
+    const hsa_status_t cooperative_compute_unit_count_status =
+        iree_hsa_agent_get_info_raw(
+            &system->libhsa, device_agent,
+            (hsa_agent_info_t)HSA_AMD_AGENT_INFO_COOPERATIVE_COMPUTE_UNIT_COUNT,
+            &cooperative_compute_unit_count);
+    if (cooperative_compute_unit_count_status ==
+        HSA_STATUS_ERROR_INVALID_ARGUMENT) {
+      cooperative_compute_unit_count = 0;
+    } else if (IREE_UNLIKELY(cooperative_compute_unit_count_status !=
+                             HSA_STATUS_SUCCESS)) {
+      return iree_status_from_hsa_status(
+          __FILE__, __LINE__, cooperative_compute_unit_count_status,
+          "hsa_agent_get_info", "querying cooperative compute unit count");
+    } else {
+      out_physical_device->dispatch_concurrency_capabilities
+          .has_cooperative_compute_unit_count = true;
+    }
+    if (out_physical_device->grid_sync_strategy ==
+            IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_GWS &&
+        gfxip_version.major == 9 && gfxip_version.minor == 0 &&
+        gfxip_version.stepping == 10) {
+      // gfx90a GWS schedules complete 8-CU groups and reserves one group for
+      // forward progress. Clamp the reported count so both full-agent and
+      // already-restricted HSA reports produce the architecture-safe bound.
+      const uint32_t grouped_compute_unit_count =
+          out_physical_device->queue_execution_resources.execution_unit_count &
+          ~UINT32_C(7);
+      const uint32_t maximum_gws_compute_unit_count =
+          grouped_compute_unit_count >= 8 ? grouped_compute_unit_count - 8 : 0;
+      cooperative_compute_unit_count = iree_min(cooperative_compute_unit_count,
+                                                maximum_gws_compute_unit_count);
+    }
+    out_physical_device->dispatch_concurrency_capabilities
+        .cooperative_compute_unit_count = cooperative_compute_unit_count;
+  }
   return iree_ok_status();
 }
 
@@ -1118,7 +1185,8 @@ iree_status_t iree_hal_amdgpu_physical_device_initialize(
         .execution_unit_count =
             out_physical_device->queue_execution_resources.execution_unit_count,
         .maximum_resident_subgroup_count =
-            out_physical_device->maximum_waves_per_compute_unit,
+            out_physical_device->dispatch_concurrency_capabilities
+                .maximum_waves_per_compute_unit,
     };
     status = iree_hal_amdgpu_hostcall_provider_state_create(
         hostcall_provider, logical_device, libhsa, device_agent,
@@ -1291,6 +1359,8 @@ static void iree_hal_amdgpu_physical_device_initialize_host_queue_construction(
               .gpu_agent = physical_device->device_agent,
               .execution_resource_topology =
                   &physical_device->queue_execution_resources,
+              .dispatch_concurrency_capabilities =
+                  &physical_device->dispatch_concurrency_capabilities,
               .hostcall_buffer =
                   iree_hal_amdgpu_physical_device_hostcall_buffer(
                       physical_device),

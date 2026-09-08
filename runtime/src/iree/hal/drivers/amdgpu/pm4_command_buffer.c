@@ -1892,13 +1892,13 @@ static iree_status_t iree_hal_amdgpu_pm4_command_buffer_record_dispatch(
       command_buffer, executable,
       uses_indirect_parameters ? config.workgroup_count_ref.buffer : NULL,
       bindings));
-  if (IREE_UNLIKELY(descriptor->pm4_group_segment_fixed_size !=
+  if (IREE_UNLIKELY(descriptor->kernel_descriptor->group_segment_fixed_size !=
                     descriptor->kernel_args.group_segment_size)) {
     return iree_make_status(
         IREE_STATUS_UNIMPLEMENTED,
         "PM4 command-buffer dynamic LDS is not implemented; descriptor LDS "
         "size %" PRIu32 " differs from dispatch group segment size %" PRIu32,
-        descriptor->pm4_group_segment_fixed_size,
+        descriptor->kernel_descriptor->group_segment_fixed_size,
         descriptor->kernel_args.group_segment_size);
   }
 

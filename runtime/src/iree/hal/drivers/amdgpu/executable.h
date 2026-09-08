@@ -10,6 +10,7 @@
 #include "iree/base/api.h"
 #include "iree/hal/api.h"
 #include "iree/hal/drivers/amdgpu/abi/kernel_args.h"
+#include "iree/hal/drivers/amdgpu/abi/kernel_descriptor.h"
 #include "iree/hal/drivers/amdgpu/device/dispatch.h"
 #include "iree/hal/drivers/amdgpu/kernarg_layout.h"
 #include "iree/hal/drivers/amdgpu/physical_device_capabilities.h"
@@ -76,14 +77,15 @@ typedef struct iree_hal_amdgpu_executable_dispatch_descriptor_t {
   iree_hal_amdgpu_dispatch_dimension_limits_t workgroup_cluster_count_limits;
   // Physical device ordinal owning |workgroup_cluster_count_limits|.
   iree_host_size_t physical_device_ordinal;
+  // Exact AMDHSA descriptor in the HSA loader's stable host mapping. The
+  // executable owns the loader object and therefore outlives this borrow.
+  const iree_hal_amdgpu_kernel_descriptor_t* kernel_descriptor;
   // PM4 launch state for the default executable workgroup size.
   iree_hal_amdgpu_pm4_dispatch_launch_state_t pm4_launch_state;
   // PM4 setup packet dwords for |pm4_launch_state|.
   uint32_t pm4_setup_dwords[IREE_HAL_AMDGPU_PM4_DISPATCH_SETUP_DWORD_COUNT];
   // Number of valid dwords in |pm4_setup_dwords|.
   uint32_t pm4_setup_dword_count;
-  // AMDHSA descriptor fixed group segment byte size validated for PM4 launch.
-  uint32_t pm4_group_segment_fixed_size;
   // True when this export has no reflected parameter metadata and may only be
   // launched with a caller-provided native kernarg buffer.
   bool custom_direct_only;

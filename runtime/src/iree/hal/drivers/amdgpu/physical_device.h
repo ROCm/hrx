@@ -12,6 +12,7 @@
 #include "iree/hal/drivers/amdgpu/buffer.h"
 #include "iree/hal/drivers/amdgpu/device/atomic_pm4.h"
 #include "iree/hal/drivers/amdgpu/device/blit_pm4.h"
+#include "iree/hal/drivers/amdgpu/dispatch_concurrency.h"
 #include "iree/hal/drivers/amdgpu/host_queue.h"
 #include "iree/hal/drivers/amdgpu/host_queue_staging.h"
 #include "iree/hal/drivers/amdgpu/physical_device_capabilities.h"
@@ -233,10 +234,11 @@ typedef struct iree_hal_amdgpu_physical_device_t {
   uint32_t host_numa_node;
   // Queue execution-resource topology derived for this GPU agent.
   iree_hal_amdgpu_queue_execution_resource_topology_t queue_execution_resources;
+  // Immutable facts used by exact queue dispatch concurrency queries.
+  iree_hal_amdgpu_dispatch_concurrency_capabilities_t
+      dispatch_concurrency_capabilities;
   // Native wavefront size reported by HSA for this GPU agent.
   uint32_t wavefront_size;
-  // Maximum resident wave count per compute unit reported by HSA.
-  uint32_t maximum_waves_per_compute_unit;
   // Maximum group segment byte length used for dispatch and sanitizer sizing.
   uint32_t group_segment_max_size;
   // Device-side timestamp tick rate in hz, from

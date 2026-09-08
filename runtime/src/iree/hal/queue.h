@@ -720,6 +720,7 @@ iree_hal_queue_host_call(iree_hal_queue_t* queue,
 // work executing concurrently. It reports the architectural concurrency of
 // the exact loaded |function| and |params| across the immutable execution
 // resources available to |queue|.
+// Dynamically backed resources such as private/scratch memory are excluded.
 //
 // Scheduling domains are homogeneous partitions chosen by the implementation
 // for this executable configuration. They have no stable identity, cannot be

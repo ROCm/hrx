@@ -202,6 +202,36 @@ TEST_P(AmdgpuQueueExecutionResourceTest,
                      function_info.maximum_workgroup_invocations)
           : kGfx942MaximumWorkgroupInvocations;
 
+  const iree_hal_queue_dispatch_concurrency_params_t concurrency_params = {
+      /*.workgroup_size=*/{workgroup_size, 1, 1},
+      /*.dynamic_workgroup_local_memory=*/0,
+  };
+  iree_hal_queue_dispatch_concurrency_t full_concurrency;
+  iree_hal_queue_dispatch_concurrency_t first_concurrency;
+  iree_hal_queue_dispatch_concurrency_t second_concurrency;
+  IREE_ASSERT_OK(iree_hal_queue_query_dispatch_concurrency(
+      dispatch_queue_, executable_, iree_hal_executable_function_from_index(0),
+      concurrency_params, IREE_HAL_QUEUE_DISPATCH_CONCURRENCY_FLAG_NONE,
+      &full_concurrency));
+  IREE_ASSERT_OK(iree_hal_queue_query_dispatch_concurrency(
+      first_queue, executable_, iree_hal_executable_function_from_index(0),
+      concurrency_params, IREE_HAL_QUEUE_DISPATCH_CONCURRENCY_FLAG_NONE,
+      &first_concurrency));
+  IREE_ASSERT_OK(iree_hal_queue_query_dispatch_concurrency(
+      second_queue, executable_, iree_hal_executable_function_from_index(0),
+      concurrency_params, IREE_HAL_QUEUE_DISPATCH_CONCURRENCY_FLAG_NONE,
+      &second_concurrency));
+  EXPECT_EQ(full_concurrency.scheduling_domain_count,
+            family_spec_->execution_resource_count);
+  EXPECT_EQ(first_concurrency.scheduling_domain_count, first_resources.size());
+  EXPECT_EQ(second_concurrency.scheduling_domain_count,
+            second_resources.size());
+  EXPECT_GT(full_concurrency.maximum_concurrent_workgroup_count_per_domain, 0u);
+  EXPECT_EQ(first_concurrency.maximum_concurrent_workgroup_count_per_domain,
+            full_concurrency.maximum_concurrent_workgroup_count_per_domain);
+  EXPECT_EQ(second_concurrency.maximum_concurrent_workgroup_count_per_domain,
+            full_concurrency.maximum_concurrent_workgroup_count_per_domain);
+
   std::vector<uint32_t> first_observations;
   std::vector<uint32_t> second_observations;
   IREE_ASSERT_OK(ObserveExecutionUnitIds(first_queue, workgroup_count,

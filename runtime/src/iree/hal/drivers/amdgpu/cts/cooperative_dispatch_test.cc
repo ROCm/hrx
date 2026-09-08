@@ -1,3 +1,4 @@
+
 // Copyright 2026 The IREE Authors
 //
 // Licensed under the Apache License v2.0 with LLVM Exceptions.
@@ -82,30 +83,36 @@ class AmdgpuCooperativeDispatchTest : public CtsTestBase<> {
   // Number of workitems participating in each workgroup.
   static constexpr uint32_t kWorkgroupSize = 64;
 
-  static uint32_t ExpectedSum(uint32_t incarnation) {
-    return kWorkgroupCount * incarnation +
-           (kWorkgroupCount * (kWorkgroupCount - 1)) / 2;
+  static uint64_t ExpectedSum(uint32_t workgroup_count, uint32_t incarnation) {
+    return (uint64_t)workgroup_count * incarnation +
+           ((uint64_t)workgroup_count * (workgroup_count - 1)) / 2;
   }
 
-  static iree_hal_dispatch_config_t DispatchConfig() {
+  static iree_hal_dispatch_config_t DispatchConfig(
+      uint32_t workgroup_count, uint32_t dynamic_workgroup_local_memory = 0) {
     iree_hal_dispatch_config_t config =
-        iree_hal_make_static_dispatch_config(kWorkgroupCount, 1, 1);
+        iree_hal_make_static_dispatch_config(workgroup_count, 1, 1);
     config.workgroup_size[0] = kWorkgroupSize;
     config.workgroup_size[1] = 1;
     config.workgroup_size[2] = 1;
+    config.dynamic_workgroup_local_memory = dynamic_workgroup_local_memory;
     return config;
   }
 
-  void DispatchAndExpectGrid(iree_hal_queue_t* queue,
+  void DispatchAndExpectGrid(iree_hal_queue_t* queue, uint32_t workgroup_count,
+                             uint32_t dynamic_workgroup_local_memory,
                              uint32_t incarnation) {
+    ASSERT_GT(workgroup_count, 0u);
     Ref<iree_hal_buffer_t> scratch_buffer;
     Ref<iree_hal_buffer_t> output_buffer;
-    IREE_ASSERT_OK(CreateZeroedDeviceBuffer(kWorkgroupCount * sizeof(uint32_t),
-                                            scratch_buffer.out()));
-    IREE_ASSERT_OK(CreateZeroedDeviceBuffer(kWorkgroupCount * sizeof(uint32_t),
-                                            output_buffer.out()));
+    IREE_ASSERT_OK(CreateZeroedDeviceBuffer(
+        (iree_device_size_t)workgroup_count * sizeof(uint32_t),
+        scratch_buffer.out()));
+    IREE_ASSERT_OK(CreateZeroedDeviceBuffer(
+        (iree_device_size_t)workgroup_count * sizeof(uint32_t),
+        output_buffer.out()));
 
-    const uint32_t constants[] = {incarnation, kWorkgroupCount};
+    const uint32_t constants[] = {incarnation, workgroup_count};
     const iree_hal_buffer_ref_t binding_values[] = {
         iree_hal_make_buffer_ref(scratch_buffer, 0, IREE_HAL_WHOLE_BUFFER),
         iree_hal_make_buffer_ref(output_buffer, 0, IREE_HAL_WHOLE_BUFFER),
@@ -117,14 +124,17 @@ class AmdgpuCooperativeDispatchTest : public CtsTestBase<> {
     SemaphoreList completion(device_, {0}, {1});
     IREE_ASSERT_OK(iree_hal_queue_dispatch(
         queue, iree_hal_semaphore_list_empty(), completion, executable_,
-        iree_hal_executable_function_from_index(0), DispatchConfig(),
+        iree_hal_executable_function_from_index(0),
+        DispatchConfig(workgroup_count, dynamic_workgroup_local_memory),
         iree_make_const_byte_span(constants, sizeof(constants)), bindings,
         IREE_HAL_DISPATCH_FLAG_COOPERATIVE));
     IREE_ASSERT_OK(iree_hal_semaphore_list_wait(
         completion, iree_infinite_timeout(), IREE_ASYNC_WAIT_FLAG_NONE));
 
+    const uint64_t expected_sum = ExpectedSum(workgroup_count, incarnation);
+    ASSERT_LE(expected_sum, UINT32_MAX);
     EXPECT_THAT(ReadBufferData<uint32_t>(output_buffer),
-                Each(ExpectedSum(incarnation)));
+                Each((uint32_t)expected_sum));
   }
 
   // Borrowed family used to acquire and program the cooperative queue.
@@ -139,7 +149,8 @@ class AmdgpuCooperativeDispatchTest : public CtsTestBase<> {
 
 TEST_P(AmdgpuCooperativeDispatchTest, DirectGridSynchronization) {
   constexpr uint32_t kIncarnation = 100;
-  DispatchAndExpectGrid(cooperative_queue_, kIncarnation);
+  DispatchAndExpectGrid(cooperative_queue_, kWorkgroupCount,
+                        /*dynamic_workgroup_local_memory=*/0, kIncarnation);
 }
 
 TEST_P(AmdgpuCooperativeDispatchTest, ExplicitCompleteResourceSetDispatches) {
@@ -164,7 +175,8 @@ TEST_P(AmdgpuCooperativeDispatchTest, ExplicitCompleteResourceSetDispatches) {
   EXPECT_EQ(nullptr, achieved_resources.ordinals);
 
   constexpr uint32_t kIncarnation = 125;
-  DispatchAndExpectGrid(queue, kIncarnation);
+  DispatchAndExpectGrid(queue, kWorkgroupCount,
+                        /*dynamic_workgroup_local_memory=*/0, kIncarnation);
 }
 
 TEST_P(AmdgpuCooperativeDispatchTest, PartialResourceSetIsRejected) {
@@ -203,6 +215,50 @@ TEST_P(AmdgpuCooperativeDispatchTest, PartialResourceSetIsRejected) {
                                                       &params, queue.out()));
 }
 
+TEST_P(AmdgpuCooperativeDispatchTest, ReportedMaximumGridSynchronizes) {
+  iree_hal_executable_function_info_t function_info = {};
+  IREE_ASSERT_OK(iree_hal_executable_function_info(
+      executable_, iree_hal_executable_function_from_index(0), &function_info));
+  ASSERT_TRUE(iree_any_bit_set(
+      function_info.resource_usage.provided_flags,
+      IREE_HAL_EXECUTABLE_FUNCTION_RESOURCE_FLAG_WORKGROUP_LOCAL_MEMORY));
+
+  const iree_hal_device_dispatch_spec_t* dispatch_spec =
+      iree_hal_device_spec_dispatch(iree_hal_device_spec(device_));
+  ASSERT_NE(dispatch_spec, nullptr);
+  ASSERT_GE(dispatch_spec->execution.maximum_workgroup_local_memory_size,
+            function_info.resource_usage.fixed_workgroup_local_memory_size);
+  const uint64_t dynamic_workgroup_local_memory =
+      dispatch_spec->execution.maximum_workgroup_local_memory_size -
+      function_info.resource_usage.fixed_workgroup_local_memory_size;
+  ASSERT_LE(dynamic_workgroup_local_memory, UINT32_MAX);
+
+  const iree_hal_queue_dispatch_concurrency_params_t params = {
+      /*.workgroup_size=*/{kWorkgroupSize, 1, 1},
+      /*.dynamic_workgroup_local_memory=*/
+      (uint32_t)dynamic_workgroup_local_memory,
+  };
+  iree_hal_queue_dispatch_concurrency_t concurrency;
+  iree_status_t status = iree_hal_queue_query_dispatch_concurrency(
+      cooperative_queue_, executable_,
+      iree_hal_executable_function_from_index(0), params,
+      IREE_HAL_QUEUE_DISPATCH_CONCURRENCY_FLAG_NONE, &concurrency);
+  if (iree_status_code(status) == IREE_STATUS_UNIMPLEMENTED) {
+    iree_status_free(status);
+    GTEST_SKIP() << "cooperative queue cannot report exact dispatch "
+                    "concurrency";
+  }
+  IREE_ASSERT_OK(status);
+  const uint64_t workgroup_count =
+      iree_hal_queue_dispatch_concurrency_total_workgroup_count(concurrency);
+  ASSERT_GT(workgroup_count, 0u);
+  ASSERT_LE(workgroup_count, UINT32_MAX);
+
+  constexpr uint32_t kIncarnation = 300;
+  DispatchAndExpectGrid(cooperative_queue_, (uint32_t)workgroup_count,
+                        (uint32_t)dynamic_workgroup_local_memory, kIncarnation);
+}
+
 TEST_P(AmdgpuCooperativeDispatchTest,
        ReusableCommandBufferExecutionsHaveIndependentGridState) {
   constexpr uint32_t kIncarnation = 200;
@@ -226,8 +282,9 @@ TEST_P(AmdgpuCooperativeDispatchTest,
   IREE_ASSERT_OK(iree_hal_command_buffer_begin(command_buffer));
   IREE_ASSERT_OK(iree_hal_command_buffer_dispatch(
       command_buffer, executable_, iree_hal_executable_function_from_index(0),
-      DispatchConfig(), iree_make_const_byte_span(constants, sizeof(constants)),
-      bindings, IREE_HAL_DISPATCH_FLAG_COOPERATIVE));
+      DispatchConfig(kWorkgroupCount),
+      iree_make_const_byte_span(constants, sizeof(constants)), bindings,
+      IREE_HAL_DISPATCH_FLAG_COOPERATIVE));
   IREE_ASSERT_OK(iree_hal_command_buffer_end(command_buffer));
 
   Ref<iree_hal_buffer_t> first_scratch_buffer;
@@ -283,9 +340,9 @@ TEST_P(AmdgpuCooperativeDispatchTest,
       completions, iree_infinite_timeout(), IREE_ASYNC_WAIT_FLAG_NONE));
 
   EXPECT_THAT(ReadBufferData<uint32_t>(first_output_buffer),
-              Each(ExpectedSum(kIncarnation)));
+              Each((uint32_t)ExpectedSum(kWorkgroupCount, kIncarnation)));
   EXPECT_THAT(ReadBufferData<uint32_t>(second_output_buffer),
-              Each(ExpectedSum(kIncarnation)));
+              Each((uint32_t)ExpectedSum(kWorkgroupCount, kIncarnation)));
 }
 
 CTS_REGISTER_EXECUTABLE_TEST_SUITE(AmdgpuCooperativeDispatchTest);
