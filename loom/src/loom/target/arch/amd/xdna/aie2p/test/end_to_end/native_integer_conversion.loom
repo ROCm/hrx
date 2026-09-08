@@ -2,6 +2,18 @@ aie2p.target<array> @array_target
 
 aie2p.target<core> @core_target
 
+pipeline.def<kernel> public retain target(@array_target) @fptosi_bf16x16_i32x16_array() launch(%input: buffer, %output: buffer) {
+  %worker_lanes = index.constant 1 : index
+  %base = index.constant 0 : offset
+  %workers = group.create %worker_lanes : index -> group
+  %input_view = buffer.view %input[%base] : buffer -> view<16xbf16>
+  %output_view = buffer.view %output[%base] : buffer -> view<16xi32>
+  %input_tile = pipeline.read %input_view on %workers : view<16xbf16>, group -> pipeline.flow<tile<16xbf16>>
+  %result = pipeline.stage @fptosi_bf16x16_i32x16 on %workers(%input_tile) : (group, pipeline.flow<tile<16xbf16>>) -> (pipeline.flow<tile<16xi32>>)
+  pipeline.write %result to %output_view : pipeline.flow<tile<16xi32>>, view<16xi32>
+  pipeline.return
+}
+
 pipeline.def<kernel> public retain target(@array_target) @extsi_i16x16_i32x16_array() launch(%input: buffer, %output: buffer) {
   %worker_lanes = index.constant 1 : index
   %base = index.constant 0 : offset
@@ -60,6 +72,17 @@ pipeline.def<kernel> public retain target(@array_target) @bitpack_i8x128_i4x128_
   %result = pipeline.stage @bitpack_i8x128_i4x128 on %workers(%input_tile) : (group, pipeline.flow<tile<128xi8>>) -> (pipeline.flow<tile<64xi8>>)
   pipeline.write %result to %output_view : pipeline.flow<tile<64xi8>>, view<64xi8>
   pipeline.return
+}
+
+func.def target(@core_target) @fptosi_bf16x16_i32x16(%input: buffer, %output: buffer) {
+  %input_aligned, %output_aligned = buffer.assume.alignment %input, %output {minimum_alignment = 64} : buffer, buffer
+  %base = index.constant 0 : offset
+  %input_view = buffer.view %input_aligned[%base] : buffer -> view<16xbf16>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<16xi32>
+  %input_value = vector.load %input_view[0] : view<16xbf16> -> vector<16xbf16>
+  %result = vector.fptosi %input_value : vector<16xbf16> to vector<16xi32>
+  vector.store %result, %output_view[0] : vector<16xi32>, view<16xi32>
+  func.return
 }
 
 func.def target(@core_target) @extsi_i16x16_i32x16(%input: buffer, %output: buffer) {

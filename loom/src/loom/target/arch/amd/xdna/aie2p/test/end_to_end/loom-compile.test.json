@@ -281,14 +281,17 @@
             "\"backend\":\"xdna\"",
             "\"artifact_format\":\"elf\"",
             "\"status\":{\"code\":0,\"name\":\"OK\"}",
-            "\"entries\":{\"count\":10",
+            "\"entries\":{\"count\":12",
+            "\"function\":\"fptosi_bf16x16_i32x16\"",
             "\"function\":\"extsi_i16x32_i64x32\"",
             "\"function\":\"bitpack_i8x128_i4x128_array$worker$0\"",
+            "\"plan_key\":\"exact_bfloat16x16_to_signed_i32x16\"",
             "\"plan_key\":\"native_signed_i16x16_to_i32x16\"",
             "\"plan_key\":\"native_unsigned_i8x64_to_i32x64\"",
             "\"plan_key\":\"native_signed_i16x32_to_i64x32\"",
             "\"plan_key\":\"native_trunc_i16x32_to_i8x32\"",
             "\"plan_key\":\"native_bitpack_i8x128_to_i4x128\"",
+            "\"conversion_count\":1",
             "\"spill_count\":0",
             "\"allocation_materialized_copy_count\":0"
           ]
