@@ -16,7 +16,11 @@ package(
 amdf_cc_library(
     name = "gpu_tests",
     testonly = True,
-    srcs = ["gpu_extension_test.cc"],
+    srcs = [
+        "gpu_device_fixture.h",
+        "gpu_extension_test.cc",
+        "memory_test.cc",
+    ],
     deps = [
         "//libamdf/cts/util:provider_headers",
         "//third_party:google_test",

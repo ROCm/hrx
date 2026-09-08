@@ -12,16 +12,46 @@ iree_add_all_subdirs()
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
 iree_cc_library(
   NAME
-    device
+    device_state
   HDRS
     "device.h"
-  SRCS
-    "device.c"
   DEPS
     amdf::headers
     libamdf::src::gpu::umd::device
-    libamdf::src::platform::windows::endpoint
+    libamdf::src::gpu::umd::wddm::wkmi::adapter
     libamdf::src::platform::windows::kmt_api
+  PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
+iree_cc_library(
+  NAME
+    memory
+  HDRS
+    "memory.h"
+  SRCS
+    "memory.c"
+  DEPS
+    ::device_state
+    amdf::headers
+    libamdf::src::gpu::umd::memory
+    libamdf::src::platform::windows::host_cache
+  PUBLIC
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
+iree_cc_library(
+  NAME
+    device
+  SRCS
+    "device.c"
+  DEPS
+    ::device_state
+    ::memory
+    amdf::headers
+    libamdf::src::platform::windows::endpoint
   PUBLIC
 )
 endif()
@@ -36,8 +66,8 @@ iree_cc_library(
     amdf::headers
     libamdf::src::gpu::endpoint_profile
     libamdf::src::gpu::umd::endpoint_profile
+    libamdf::src::gpu::umd::wddm::wkmi::adapter
     libamdf::src::gpu::umd::wddm::wkmi::endpoint_properties
-    libamdf::src::gpu::umd::wddm::wkmi::loader
     libamdf::src::platform::windows::endpoint
   PUBLIC
 )

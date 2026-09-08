@@ -21,6 +21,23 @@ iree_cc_library(
 )
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
+iree_cc_library(
+  NAME
+    adapter
+  HDRS
+    "adapter.h"
+  SRCS
+    "adapter.c"
+  DEPS
+    ::bridge_api
+    ::loader
+    amdf::headers
+    libamdf::src::platform::windows::kmt_api
+  PUBLIC
+)
+endif()
+
 if(IREE_ARCH STREQUAL "x86_64" AND CMAKE_SYSTEM_NAME STREQUAL "Windows" AND AMDF_BUILD AND (AMDF_FAMILY_RDNA OR AMDF_FAMILY_CDNA))
 amdf_windows_sidecar_library(
   NAME

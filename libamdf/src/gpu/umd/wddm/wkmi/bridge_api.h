@@ -42,7 +42,14 @@ enum amdf_wkmi_bridge_result_e {
   AMDF_WKMI_BRIDGE_RESULT_RESOURCE_EXHAUSTED = 5,
   // The binary dependency failed without a representable native status.
   AMDF_WKMI_BRIDGE_RESULT_INTERNAL = 6,
+  // Caller storage cannot hold the complete result.
+  AMDF_WKMI_BRIDGE_RESULT_BUFFER_TOO_SMALL = 7,
+  // A scalar input cannot be represented by the native interface.
+  AMDF_WKMI_BRIDGE_RESULT_OUT_OF_RANGE = 8,
 };
+
+// Opaque parsed adapter state retained entirely inside the bridge.
+typedef struct amdf_wkmi_bridge_gpu_adapter_t amdf_wkmi_bridge_gpu_adapter_t;
 
 // Provider properties returned for one qualified physical GPU adapter.
 typedef struct amdf_wkmi_bridge_gpu_properties_t {
@@ -78,6 +85,52 @@ _Static_assert(sizeof(amdf_wkmi_bridge_gpu_properties_t) == 48,
                "WKMI GPU property ABI must remain stable");
 #endif
 
+// Physical allocation domain consumed by pinned WKMI.
+typedef uint32_t amdf_wkmi_bridge_gpu_allocation_domain_t;
+enum amdf_wkmi_bridge_gpu_allocation_domain_e {
+  // Driver-owned system memory backed by the supplied host storage.
+  AMDF_WKMI_BRIDGE_GPU_ALLOCATION_DOMAIN_SYSTEM = 1,
+  // Device-local memory placed at the supplied GPU virtual address.
+  AMDF_WKMI_BRIDGE_GPU_ALLOCATION_DOMAIN_LOCAL = 2,
+  // Caller-owned host pages registered with the GPU.
+  AMDF_WKMI_BRIDGE_GPU_ALLOCATION_DOMAIN_REGISTERED_HOST = 3,
+};
+
+// Private WKMI allocation behavior bits.
+typedef uint32_t amdf_wkmi_bridge_gpu_allocation_flags_t;
+enum amdf_wkmi_bridge_gpu_allocation_flag_bits_e {
+  // Requests fine-grained host/device coherence.
+  AMDF_WKMI_BRIDGE_GPU_ALLOCATION_FLAG_FINE_GRAIN = 1u << 0,
+  // Marks directly published user-mode queue storage.
+  AMDF_WKMI_BRIDGE_GPU_ALLOCATION_FLAG_QUEUE_STORAGE = 1u << 1,
+};
+
+// Parameters for one grouped native allocation creation.
+typedef struct amdf_wkmi_bridge_gpu_allocation_create_info_t {
+  // Must be at least the size of this structure.
+  uint32_t structure_size;
+  // Live logical D3DKMT device receiving the allocations.
+  uint32_t device_handle;
+  // One `AMDF_WKMI_BRIDGE_GPU_ALLOCATION_DOMAIN_*` value.
+  amdf_wkmi_bridge_gpu_allocation_domain_t domain;
+  // `AMDF_WKMI_BRIDGE_GPU_ALLOCATION_FLAG_*` bits.
+  amdf_wkmi_bridge_gpu_allocation_flags_t flags;
+  // Page-aligned aggregate physical byte length.
+  uint64_t byte_length;
+  // First GPU address for local placement, otherwise zero.
+  uint64_t placement_device_address;
+  // First host byte for system or registered memory, otherwise `NULL`.
+  void* host_pointer;
+} amdf_wkmi_bridge_gpu_allocation_create_info_t;
+
+#ifdef __cplusplus
+static_assert(sizeof(amdf_wkmi_bridge_gpu_allocation_create_info_t) == 40,
+              "WKMI allocation create ABI must remain stable");
+#else
+_Static_assert(sizeof(amdf_wkmi_bridge_gpu_allocation_create_info_t) == 40,
+               "WKMI allocation create ABI must remain stable");
+#endif
+
 // Immutable entry-point table for private bridge ABI version 1.
 typedef struct amdf_wkmi_bridge_api_t {
   // Size in bytes of this table version.
@@ -85,24 +138,47 @@ typedef struct amdf_wkmi_bridge_api_t {
   // Bridge ABI version implemented by this table.
   uint32_t abi_version;
 
-  // Queries one physical GPU adapter without retaining native state.
+  // Parses and retains one physical GPU adapter.
   //
   // |adapter_handle| is a live D3DKMT adapter handle and
   // |physical_adapter_index| selects one physical adapter represented by it.
   // |out_native_status| receives the NTSTATUS only for
   // AMDF_WKMI_BRIDGE_RESULT_NATIVE_FAILURE and is zero otherwise.
-  amdf_wkmi_bridge_result_t(AMDF_WKMI_BRIDGE_CALL* query_gpu_properties)(
+  amdf_wkmi_bridge_result_t(AMDF_WKMI_BRIDGE_CALL* gpu_adapter_open)(
       uint32_t adapter_handle, uint32_t physical_adapter_index,
+      amdf_wkmi_bridge_gpu_adapter_t** out_adapter,
       amdf_wkmi_bridge_gpu_properties_t* out_properties,
+      uint32_t* out_native_status);
+
+  // Releases parsed adapter state after every dependent bridge call returns.
+  void(AMDF_WKMI_BRIDGE_CALL* gpu_adapter_close)(
+      amdf_wkmi_bridge_gpu_adapter_t* adapter);
+
+  // Queries the native allocation layout for an aggregate byte length.
+  amdf_wkmi_bridge_result_t(AMDF_WKMI_BRIDGE_CALL* gpu_allocation_query_layout)(
+      amdf_wkmi_bridge_gpu_adapter_t* adapter, uint64_t byte_length,
+      uint32_t* out_allocation_count,
+      uint64_t* out_maximum_allocation_byte_length);
+
+  // Creates one grouped set of native allocations through pinned WKMI.
+  //
+  // No allocation is created unless `allocation_handle_capacity` is
+  // sufficient. `out_native_status` receives an NTSTATUS only for
+  // AMDF_WKMI_BRIDGE_RESULT_NATIVE_FAILURE and is zero otherwise.
+  amdf_wkmi_bridge_result_t(AMDF_WKMI_BRIDGE_CALL* gpu_allocation_create)(
+      amdf_wkmi_bridge_gpu_adapter_t* adapter,
+      const amdf_wkmi_bridge_gpu_allocation_create_info_t* create_info,
+      uint32_t allocation_handle_capacity, uint32_t* out_allocation_handles,
+      uint32_t* out_resource_handle, uint32_t* out_allocation_count,
       uint32_t* out_native_status);
 
 } amdf_wkmi_bridge_api_t;
 
 #ifdef __cplusplus
-static_assert(sizeof(amdf_wkmi_bridge_api_t) == 16,
+static_assert(sizeof(amdf_wkmi_bridge_api_t) == 40,
               "WKMI entry-point table ABI must remain stable");
 #else
-_Static_assert(sizeof(amdf_wkmi_bridge_api_t) == 16,
+_Static_assert(sizeof(amdf_wkmi_bridge_api_t) == 40,
                "WKMI entry-point table ABI must remain stable");
 #endif
 

@@ -192,7 +192,10 @@ amdf_status_t amdf_gpu_wddm_wkmi_loader_initialize(
     } else if (result != AMDF_WKMI_BRIDGE_RESULT_SUCCESS || api == NULL ||
                api->structure_size < sizeof(amdf_wkmi_bridge_api_t) ||
                api->abi_version != AMDF_WKMI_BRIDGE_ABI_VERSION_1 ||
-               api->query_gpu_properties == NULL) {
+               api->gpu_adapter_open == NULL ||
+               api->gpu_adapter_close == NULL ||
+               api->gpu_allocation_query_layout == NULL ||
+               api->gpu_allocation_create == NULL) {
       status = amdf_make_api_status(AMDF_STATUS_CODE_INTERNAL);
     }
   }
@@ -215,30 +218,4 @@ amdf_status_t amdf_gpu_wddm_wkmi_loader_deinitialize(
   }
   *loader = (amdf_gpu_wddm_wkmi_loader_t){0};
   return AMDF_STATUS_OK;
-}
-
-amdf_status_t amdf_gpu_wddm_wkmi_loader_query_properties(
-    const amdf_gpu_wddm_wkmi_loader_t* loader, D3DKMT_HANDLE adapter,
-    uint32_t physical_adapter_index,
-    amdf_wkmi_bridge_gpu_properties_t* out_properties, bool* out_available) {
-  *out_available = false;
-  uint32_t native_status = 0;
-  const amdf_wkmi_bridge_result_t result = loader->api->query_gpu_properties(
-      (uint32_t)adapter, physical_adapter_index, out_properties,
-      &native_status);
-  switch (result) {
-    case AMDF_WKMI_BRIDGE_RESULT_SUCCESS:
-      *out_available = true;
-      return AMDF_STATUS_OK;
-    case AMDF_WKMI_BRIDGE_RESULT_UNSUPPORTED:
-      return AMDF_STATUS_OK;
-    case AMDF_WKMI_BRIDGE_RESULT_NATIVE_FAILURE:
-      return amdf_make_status(AMDF_STATUS_DOMAIN_NTSTATUS, native_status);
-    case AMDF_WKMI_BRIDGE_RESULT_RESOURCE_EXHAUSTED:
-      return amdf_make_api_status(AMDF_STATUS_CODE_RESOURCE_EXHAUSTED);
-    case AMDF_WKMI_BRIDGE_RESULT_INTERNAL:
-      return amdf_make_api_status(AMDF_STATUS_CODE_INTERNAL);
-    default:
-      return amdf_make_api_status(AMDF_STATUS_CODE_INTERNAL);
-  }
 }

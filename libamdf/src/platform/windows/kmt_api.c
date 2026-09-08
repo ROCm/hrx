@@ -36,10 +36,17 @@ static amdf_status_t amdf_kmt_resolve_procedures(amdf_kmt_api_t* api) {
       api->module, "D3DKMTCreateAllocation2");
   api->destroy_allocation = (PFND3DKMT_DESTROYALLOCATION2)GetProcAddress(
       api->module, "D3DKMTDestroyAllocation2");
+  api->reserve_gpu_virtual_address =
+      (PFND3DKMT_RESERVEGPUVIRTUALADDRESS)GetProcAddress(
+          api->module, "D3DKMTReserveGpuVirtualAddress");
+  api->free_gpu_virtual_address =
+      (PFND3DKMT_FREEGPUVIRTUALADDRESS)GetProcAddress(
+          api->module, "D3DKMTFreeGpuVirtualAddress");
   api->map_gpu_virtual_address = (PFND3DKMT_MAPGPUVIRTUALADDRESS)GetProcAddress(
       api->module, "D3DKMTMapGpuVirtualAddress");
   api->make_resident =
       (PFND3DKMT_MAKERESIDENT)GetProcAddress(api->module, "D3DKMTMakeResident");
+  api->evict = (PFND3DKMT_EVICT)GetProcAddress(api->module, "D3DKMTEvict");
   api->lock = (PFND3DKMT_LOCK2)GetProcAddress(api->module, "D3DKMTLock2");
   api->unlock = (PFND3DKMT_UNLOCK2)GetProcAddress(api->module, "D3DKMTUnlock2");
   api->invalidate_cache = (PFND3DKMT_INVALIDATECACHE)GetProcAddress(
@@ -84,6 +91,13 @@ bool amdf_kmt_api_supports_memory(const amdf_kmt_api_t* api) {
   return api->create_allocation != NULL && api->destroy_allocation != NULL &&
          api->map_gpu_virtual_address != NULL && api->make_resident != NULL &&
          api->wait_from_cpu != NULL;
+}
+
+bool amdf_kmt_api_supports_gpu_memory(const amdf_kmt_api_t* api) {
+  return amdf_kmt_api_supports_memory(api) &&
+         api->reserve_gpu_virtual_address != NULL &&
+         api->free_gpu_virtual_address != NULL && api->evict != NULL &&
+         api->invalidate_cache != NULL;
 }
 
 bool amdf_kmt_api_supports_xdna_kernel_execution(const amdf_kmt_api_t* api) {

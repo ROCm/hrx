@@ -14,7 +14,9 @@ iree_cc_library(
   NAME
     gpu_tests
   SRCS
+    "gpu_device_fixture.h"
     "gpu_extension_test.cc"
+    "memory_test.cc"
   DEPS
     amdf::headers
     iree::third_party::google_test

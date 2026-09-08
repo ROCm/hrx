@@ -29,13 +29,18 @@ iree_cc_library(
     device
   HDRS
     "device.h"
+    "memory.h"
   SRCS
     "device.c"
+    "memory.c"
   DEPS
     amdf::headers
     libamdf::src::device
     libamdf::src::endpoint
     libamdf::src::gpu::umd::device
+    libamdf::src::gpu::umd::memory
+    libamdf::src::host_mapping
+    libamdf::src::memory
     libamdf::src::structure
   PUBLIC
 )

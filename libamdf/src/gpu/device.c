@@ -11,6 +11,7 @@
 
 #include "libamdf/src/device.h"
 #include "libamdf/src/endpoint.h"
+#include "libamdf/src/gpu/memory.h"
 #include "libamdf/src/gpu/umd/device.h"
 #include "libamdf/src/structure.h"
 
@@ -37,7 +38,7 @@ static amdf_status_t amdf_gpu_device_destroy_native(
 }
 
 static const amdf_device_vtable_t amdf_gpu_device_vtable = {
-    .memory_create = NULL,
+    .memory_create = amdf_gpu_memory_create,
     .destroy_native = amdf_gpu_device_destroy_native,
 };
 
@@ -113,4 +114,12 @@ amdf_status_t AMDF_CALL amdf_gpu_device_query_info(
   out_info->structure_size = structure_size;
   out_info->next = next;
   return AMDF_STATUS_OK;
+}
+
+amdf_gpu_umd_device_t* amdf_gpu_device_get_umd(amdf_device_t* device) {
+  return ((amdf_gpu_device_t*)device)->umd;
+}
+
+uint64_t amdf_gpu_device_query_reset_epoch(const amdf_device_t* device) {
+  return ((const amdf_gpu_device_t*)device)->info.reset_epoch;
 }

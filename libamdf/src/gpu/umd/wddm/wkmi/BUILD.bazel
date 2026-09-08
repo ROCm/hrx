@@ -21,6 +21,19 @@ amdf_cc_library(
     target_compatible_with = ["@platforms//os:windows"],
 )
 
+amdf_cc_library(
+    name = "adapter",
+    srcs = ["adapter.c"],
+    hdrs = ["adapter.h"],
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//libamdf/src/gpu/umd/wddm:__pkg__"],
+    deps = [
+        ":bridge_api",
+        ":loader",
+        "//libamdf/src/platform/windows:kmt_api",
+    ],
+)
+
 amdf_windows_sidecar_library(
     name = "amdf_wkmi_bridge",
     srcs = [

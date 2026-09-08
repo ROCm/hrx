@@ -55,10 +55,16 @@ typedef struct amdf_kmt_api_t {
   PFND3DKMT_CREATEALLOCATION2 create_allocation;
   // Destroys one physical allocation or resource.
   PFND3DKMT_DESTROYALLOCATION2 destroy_allocation;
+  // Reserves one device virtual-address range without physical backing.
+  PFND3DKMT_RESERVEGPUVIRTUALADDRESS reserve_gpu_virtual_address;
+  // Releases one unmapped device virtual-address reservation.
+  PFND3DKMT_FREEGPUVIRTUALADDRESS free_gpu_virtual_address;
   // Establishes one allocation mapping in a device address space.
   PFND3DKMT_MAPGPUVIRTUALADDRESS map_gpu_virtual_address;
   // Establishes residency without forcing a device error on exhaustion.
   PFND3DKMT_MAKERESIDENT make_resident;
+  // Releases residency for one or more physical allocations.
+  PFND3DKMT_EVICT evict;
   // Locks one allocation for explicit host access.
   PFND3DKMT_LOCK2 lock;
   // Releases one explicit allocation lock.
@@ -92,6 +98,10 @@ bool amdf_kmt_api_supports_device_contexts(const amdf_kmt_api_t* api);
 
 // Returns true when the complete physical-memory procedure set exists.
 bool amdf_kmt_api_supports_memory(const amdf_kmt_api_t* api);
+
+// Returns true when the complete GPU allocation and virtual-memory procedure
+// set exists.
+bool amdf_kmt_api_supports_gpu_memory(const amdf_kmt_api_t* api);
 
 // Returns true when the complete XDNA kernel-submission procedure set exists.
 bool amdf_kmt_api_supports_xdna_kernel_execution(const amdf_kmt_api_t* api);

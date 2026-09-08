@@ -32,12 +32,20 @@ amdf_cc_library(
 )
 
 amdf_cc_library(
+    name = "memory",
+    hdrs = ["memory.h"],
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//libamdf/src/gpu:__subpackages__"],
+)
+
+amdf_cc_library(
     name = "umd",
     target_compatible_with = ["@platforms//os:windows"],
     visibility = ["//libamdf/src/gpu:__pkg__"],
     deps = [
         ":device",
         ":endpoint_profile",
+        ":memory",
         "//libamdf/src/gpu/umd/wddm",
     ],
 )

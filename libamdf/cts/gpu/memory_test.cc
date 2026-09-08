@@ -1,0 +1,264 @@
+// Copyright 2026 The IREE Authors
+//
+// Licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif  // WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif  // NOMINMAX
+#include <windows.h>
+
+#include "amdf/amdf.h"
+#include "amdf/gpu.h"
+#include "gpu_device_fixture.h"
+#include "gtest/gtest.h"
+
+namespace {
+
+static_assert(offsetof(amdf_memory_create_info_t, memory_class) ==
+              sizeof(amdf_input_structure_t));
+static_assert(offsetof(amdf_memory_create_info_t, required_flags) == 24);
+static_assert(offsetof(amdf_memory_create_info_t, byte_length) == 32);
+static_assert(sizeof(amdf_memory_create_info_t) == 56);
+static_assert(offsetof(amdf_memory_info_t, memory_class) ==
+              sizeof(amdf_output_structure_t));
+static_assert(offsetof(amdf_memory_info_t, physical_backing_id) == 48);
+static_assert(offsetof(amdf_memory_info_t, device_address) == 64);
+static_assert(sizeof(amdf_memory_info_t) == 80);
+
+class GpuMemoryTest : public GpuDeviceFixture {
+ protected:
+  void TearDown() override {
+    if (mapping_ != nullptr) {
+      const amdf_status_t status = api_->host_mapping_destroy(mapping_);
+      EXPECT_TRUE(amdf_status_is_ok(status));
+      if (amdf_status_is_ok(status)) {
+        mapping_ = nullptr;
+      }
+    }
+    if (memory_ != nullptr) {
+      const amdf_status_t status = api_->memory_destroy(memory_);
+      EXPECT_TRUE(amdf_status_is_ok(status));
+      if (amdf_status_is_ok(status)) {
+        memory_ = nullptr;
+      }
+    }
+    if (memory_ == nullptr && registered_host_pointer_ != nullptr) {
+      EXPECT_TRUE(VirtualFree(registered_host_pointer_, 0, MEM_RELEASE));
+      registered_host_pointer_ = nullptr;
+    }
+    GpuDeviceFixture::TearDown();
+  }
+
+  amdf_memory_create_info_t MakeSystemMemoryCreateInfo() {
+    amdf_memory_create_info_t create_info = {};
+    create_info.type = AMDF_STRUCTURE_TYPE_MEMORY_CREATE_INFO;
+    create_info.structure_size = sizeof(create_info);
+    create_info.memory_class = AMDF_MEMORY_CLASS_SYSTEM;
+    create_info.required_flags =
+        AMDF_MEMORY_FLAG_HOST_VISIBLE | AMDF_MEMORY_FLAG_DEVICE_ADDRESS;
+    create_info.byte_length = 4097;
+    create_info.minimum_alignment = 1024 * 1024;
+    return create_info;
+  }
+
+  amdf_memory_t* memory_ = nullptr;
+  amdf_host_mapping_t* mapping_ = nullptr;
+  void* registered_host_pointer_ = nullptr;
+};
+
+TEST_F(GpuMemoryTest, ValidatesPlacementRequirementsBeforeNativeAllocation) {
+  amdf_memory_create_info_t create_info = MakeSystemMemoryCreateInfo();
+  amdf_memory_t* output = reinterpret_cast<amdf_memory_t*>(uintptr_t{1});
+
+  create_info.required_flags |= AMDF_MEMORY_FLAG_SHAREABLE;
+  EXPECT_EQ(
+      amdf_status_code(api_->memory_create(device_, &create_info, &output)),
+      AMDF_STATUS_CODE_UNSUPPORTED);
+  EXPECT_EQ(output, nullptr);
+
+  create_info = MakeSystemMemoryCreateInfo();
+  create_info.required_flags |= AMDF_MEMORY_FLAG_DEVICE_LOCAL;
+  EXPECT_EQ(
+      amdf_status_code(api_->memory_create(device_, &create_info, &output)),
+      AMDF_STATUS_CODE_UNSUPPORTED);
+  EXPECT_EQ(output, nullptr);
+
+  create_info = MakeSystemMemoryCreateInfo();
+  create_info.memory_class = AMDF_MEMORY_CLASS_LOCAL;
+  create_info.required_flags |= AMDF_MEMORY_FLAG_HOST_VISIBLE;
+  EXPECT_EQ(
+      amdf_status_code(api_->memory_create(device_, &create_info, &output)),
+      AMDF_STATUS_CODE_UNSUPPORTED);
+  EXPECT_EQ(output, nullptr);
+
+  create_info = MakeSystemMemoryCreateInfo();
+  create_info.memory_class = AMDF_MEMORY_CLASS_REGISTERED_HOST;
+  create_info.byte_length = 4096;
+  create_info.registered_host_pointer = &create_info;
+  EXPECT_EQ(
+      amdf_status_code(api_->memory_create(device_, &create_info, &output)),
+      AMDF_STATUS_CODE_INVALID_ARGUMENT);
+  EXPECT_EQ(output, nullptr);
+}
+
+TEST_F(GpuMemoryTest, OwnsStableSystemAddressAndExplicitHostMapping) {
+  const amdf_memory_create_info_t create_info = MakeSystemMemoryCreateInfo();
+  ASSERT_TRUE(
+      amdf_status_is_ok(api_->memory_create(device_, &create_info, &memory_)));
+  ASSERT_NE(memory_, nullptr);
+
+  amdf_memory_info_t memory_info = {};
+  memory_info.type = AMDF_STRUCTURE_TYPE_MEMORY_INFO;
+  memory_info.structure_size = sizeof(memory_info);
+  ASSERT_TRUE(
+      amdf_status_is_ok(api_->memory_query_info(memory_, &memory_info)));
+  EXPECT_EQ(memory_info.memory_class, AMDF_MEMORY_CLASS_SYSTEM);
+  EXPECT_EQ(memory_info.flags & create_info.required_flags,
+            create_info.required_flags);
+  EXPECT_GE(memory_info.byte_length, create_info.byte_length);
+  EXPECT_GE(memory_info.alignment, create_info.minimum_alignment);
+  EXPECT_EQ(memory_info.device_address & (memory_info.alignment - 1), 0u);
+  EXPECT_NE(memory_info.physical_backing_id.words[0] |
+                memory_info.physical_backing_id.words[1],
+            0u);
+
+  amdf_gpu_device_info_t device_info = {};
+  device_info.type = AMDF_STRUCTURE_TYPE_GPU_DEVICE_INFO;
+  device_info.structure_size = sizeof(device_info);
+  ASSERT_TRUE(
+      amdf_status_is_ok(gpu_api_->device_query_info(device_, &device_info)));
+  EXPECT_EQ(memory_info.reset_epoch, device_info.reset_epoch);
+
+  amdf_memory_map_info_t map_info = {};
+  map_info.type = AMDF_STRUCTURE_TYPE_MEMORY_MAP_INFO;
+  map_info.structure_size = sizeof(map_info);
+  map_info.byte_length = memory_info.byte_length;
+  map_info.flags = AMDF_MEMORY_MAP_FLAG_READ | AMDF_MEMORY_MAP_FLAG_WRITE;
+  ASSERT_TRUE(
+      amdf_status_is_ok(api_->memory_map(memory_, &map_info, &mapping_)));
+
+  amdf_host_mapping_info_t mapping_info = {};
+  mapping_info.type = AMDF_STRUCTURE_TYPE_HOST_MAPPING_INFO;
+  mapping_info.structure_size = sizeof(mapping_info);
+  ASSERT_TRUE(amdf_status_is_ok(
+      api_->host_mapping_query_info(mapping_, &mapping_info)));
+  ASSERT_NE(mapping_info.pointer, nullptr);
+  EXPECT_EQ(reinterpret_cast<uintptr_t>(mapping_info.pointer) &
+                (memory_info.alignment - 1),
+            0u);
+  EXPECT_EQ(mapping_info.cacheability, AMDF_HOST_CACHEABILITY_WRITE_BACK);
+  EXPECT_EQ(mapping_info.byte_length, memory_info.byte_length);
+
+  std::memset(mapping_info.pointer, 0xA5,
+              static_cast<size_t>(mapping_info.byte_length));
+  EXPECT_TRUE(amdf_status_is_ok(api_->host_mapping_cache_control(
+      mapping_, AMDF_HOST_CACHE_OPERATION_FLUSH, 0, mapping_info.byte_length)));
+  EXPECT_TRUE(amdf_status_is_ok(api_->host_mapping_cache_control(
+      mapping_, AMDF_HOST_CACHE_OPERATION_INVALIDATE, 0,
+      mapping_info.byte_length)));
+
+  EXPECT_EQ(amdf_status_code(api_->memory_destroy(memory_)),
+            AMDF_STATUS_CODE_BUSY);
+  EXPECT_EQ(amdf_status_code(api_->device_destroy(device_)),
+            AMDF_STATUS_CODE_BUSY);
+  ASSERT_TRUE(amdf_status_is_ok(api_->host_mapping_destroy(mapping_)));
+  mapping_ = nullptr;
+  ASSERT_TRUE(amdf_status_is_ok(api_->memory_destroy(memory_)));
+  memory_ = nullptr;
+}
+
+TEST_F(GpuMemoryTest, CreatesDeviceLocalExecutableMemory) {
+  amdf_memory_create_info_t create_info = {};
+  create_info.type = AMDF_STRUCTURE_TYPE_MEMORY_CREATE_INFO;
+  create_info.structure_size = sizeof(create_info);
+  create_info.memory_class = AMDF_MEMORY_CLASS_LOCAL;
+  create_info.required_flags = AMDF_MEMORY_FLAG_DEVICE_LOCAL |
+                               AMDF_MEMORY_FLAG_DEVICE_ADDRESS |
+                               AMDF_MEMORY_FLAG_EXECUTABLE;
+  create_info.byte_length = 4097;
+  create_info.minimum_alignment = 1024 * 1024;
+
+  ASSERT_TRUE(
+      amdf_status_is_ok(api_->memory_create(device_, &create_info, &memory_)));
+  amdf_memory_info_t memory_info = {};
+  memory_info.type = AMDF_STRUCTURE_TYPE_MEMORY_INFO;
+  memory_info.structure_size = sizeof(memory_info);
+  ASSERT_TRUE(
+      amdf_status_is_ok(api_->memory_query_info(memory_, &memory_info)));
+  EXPECT_EQ(memory_info.memory_class, AMDF_MEMORY_CLASS_LOCAL);
+  EXPECT_EQ(memory_info.flags & create_info.required_flags,
+            create_info.required_flags);
+  EXPECT_GE(memory_info.byte_length, create_info.byte_length);
+  EXPECT_GE(memory_info.alignment, create_info.minimum_alignment);
+  EXPECT_EQ(memory_info.device_address & (memory_info.alignment - 1), 0u);
+  EXPECT_NE(memory_info.device_address, 0u);
+
+  amdf_memory_map_info_t map_info = {};
+  map_info.type = AMDF_STRUCTURE_TYPE_MEMORY_MAP_INFO;
+  map_info.structure_size = sizeof(map_info);
+  map_info.byte_length = memory_info.byte_length;
+  map_info.flags = AMDF_MEMORY_MAP_FLAG_WRITE;
+  amdf_host_mapping_t* output =
+      reinterpret_cast<amdf_host_mapping_t*>(uintptr_t{1});
+  EXPECT_EQ(amdf_status_code(api_->memory_map(memory_, &map_info, &output)),
+            AMDF_STATUS_CODE_UNSUPPORTED);
+  EXPECT_EQ(output, nullptr);
+}
+
+TEST_F(GpuMemoryTest, RegistersCallerOwnedCoherentHostPages) {
+  constexpr uint64_t kByteLength = 64 * 1024;
+  registered_host_pointer_ = VirtualAlloc(
+      nullptr, kByteLength, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+  ASSERT_NE(registered_host_pointer_, nullptr);
+
+  amdf_memory_create_info_t create_info = {};
+  create_info.type = AMDF_STRUCTURE_TYPE_MEMORY_CREATE_INFO;
+  create_info.structure_size = sizeof(create_info);
+  create_info.memory_class = AMDF_MEMORY_CLASS_REGISTERED_HOST;
+  create_info.required_flags = AMDF_MEMORY_FLAG_HOST_VISIBLE |
+                               AMDF_MEMORY_FLAG_HOST_COHERENT |
+                               AMDF_MEMORY_FLAG_DEVICE_ADDRESS;
+  create_info.byte_length = kByteLength;
+  create_info.minimum_alignment = kByteLength;
+  create_info.registered_host_pointer = registered_host_pointer_;
+  ASSERT_TRUE(
+      amdf_status_is_ok(api_->memory_create(device_, &create_info, &memory_)));
+
+  amdf_memory_map_info_t map_info = {};
+  map_info.type = AMDF_STRUCTURE_TYPE_MEMORY_MAP_INFO;
+  map_info.structure_size = sizeof(map_info);
+  map_info.byte_offset = 128;
+  map_info.byte_length = 4096;
+  map_info.flags = AMDF_MEMORY_MAP_FLAG_READ | AMDF_MEMORY_MAP_FLAG_WRITE;
+  ASSERT_TRUE(
+      amdf_status_is_ok(api_->memory_map(memory_, &map_info, &mapping_)));
+
+  amdf_host_mapping_info_t mapping_info = {};
+  mapping_info.type = AMDF_STRUCTURE_TYPE_HOST_MAPPING_INFO;
+  mapping_info.structure_size = sizeof(mapping_info);
+  ASSERT_TRUE(amdf_status_is_ok(
+      api_->host_mapping_query_info(mapping_, &mapping_info)));
+  EXPECT_EQ(
+      mapping_info.pointer,
+      static_cast<uint8_t*>(registered_host_pointer_) + map_info.byte_offset);
+  EXPECT_EQ(mapping_info.cacheability, AMDF_HOST_CACHEABILITY_COHERENT);
+  EXPECT_TRUE(amdf_status_is_ok(api_->host_mapping_cache_control(
+      mapping_, AMDF_HOST_CACHE_OPERATION_FLUSH, 0, mapping_info.byte_length)));
+
+  ASSERT_TRUE(amdf_status_is_ok(api_->host_mapping_destroy(mapping_)));
+  mapping_ = nullptr;
+  ASSERT_TRUE(amdf_status_is_ok(api_->memory_destroy(memory_)));
+  memory_ = nullptr;
+  std::memset(registered_host_pointer_, 0x3C, kByteLength);
+}
+
+}  // namespace

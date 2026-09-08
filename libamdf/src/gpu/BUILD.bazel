@@ -22,13 +22,22 @@ amdf_cc_library(
 
 amdf_cc_library(
     name = "device",
-    srcs = ["device.c"],
-    hdrs = ["device.h"],
+    srcs = [
+        "device.c",
+        "memory.c",
+    ],
+    hdrs = [
+        "device.h",
+        "memory.h",
+    ],
     deps = [
         "//libamdf/src:device",
         "//libamdf/src:endpoint",
+        "//libamdf/src:host_mapping",
+        "//libamdf/src:memory",
         "//libamdf/src:structure",
         "//libamdf/src/gpu/umd:device",
+        "//libamdf/src/gpu/umd:memory",
     ],
 )
 

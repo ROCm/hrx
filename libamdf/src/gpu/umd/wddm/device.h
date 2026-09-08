@@ -8,12 +8,21 @@
 #define AMDF_SRC_GPU_UMD_WDDM_DEVICE_H_
 
 #include "libamdf/src/gpu/umd/device.h"
+#include "libamdf/src/gpu/umd/wddm/wkmi/adapter.h"
 #include "libamdf/src/platform/windows/kmt_api.h"
+
+typedef struct amdf_gpu_umd_memory_t amdf_gpu_umd_memory_t;
 
 // Concrete Windows state backing one program-independent GPU device.
 struct amdf_gpu_umd_device_t {
   // KMT table borrowed from the endpoint's platform instance.
   const amdf_kmt_api_t* kmt;
+  // Adapter handle borrowed from the endpoint owning this device.
+  D3DKMT_HANDLE adapter;
+  // Physical adapter represented by native private records.
+  uint32_t physical_adapter_index;
+  // Loaded private WKMI adapter state shared by allocations and queues.
+  amdf_gpu_wddm_wkmi_adapter_t wkmi;
   // Logical KMT device owning paging and future execution state.
   D3DKMT_HANDLE device;
   // Paging queue owned by this logical device.
@@ -22,6 +31,10 @@ struct amdf_gpu_umd_device_t {
   D3DKMT_HANDLE paging_sync_object;
   // CPU mapping of the paging queue's monitored fence.
   const volatile uint64_t* paging_fence;
+  // Protects failed-construction memory records retained for teardown retry.
+  SRWLOCK deferred_memory_release_lock;
+  // First memory record awaiting a failed construction rollback retry.
+  amdf_gpu_umd_memory_t* deferred_memory_release_head;
 };
 
 #endif  // AMDF_SRC_GPU_UMD_WDDM_DEVICE_H_
