@@ -74,36 +74,10 @@ void amdf_windows_xdna_legacy_submission_build_watermark(
   amdf_windows_xdna_legacy_write_u64(out_submission->bytes, 0x10, watermark);
 }
 
-amdf_status_t amdf_windows_xdna_legacy_ert_packet_build(
-    uint64_t instruction_address, uint32_t instruction_byte_length,
-    const uint64_t* binding_addresses, uint32_t binding_count,
-    amdf_windows_xdna_legacy_ert_packet_t* out_packet) {
-  if (out_packet == NULL || instruction_address == 0 ||
-      instruction_byte_length == 0 ||
-      instruction_byte_length % sizeof(uint32_t) != 0 ||
-      binding_count > AMDF_WINDOWS_XDNA_LEGACY_MAXIMUM_BINDING_COUNT ||
-      (binding_count != 0) != (binding_addresses != NULL)) {
-    return amdf_make_api_status(AMDF_STATUS_CODE_INVALID_ARGUMENT);
-  }
-  memset(out_packet, 0, sizeof(*out_packet));
-  amdf_windows_xdna_legacy_write_u32(out_packet->bytes, 0x00, 0x30010001);
-  amdf_windows_xdna_legacy_write_u32(out_packet->bytes, 0x04, 1);
-  amdf_windows_xdna_legacy_write_u32(out_packet->bytes, 0x08, 3);
-  amdf_windows_xdna_legacy_write_u64(out_packet->bytes, 0x10,
-                                     instruction_address);
-  amdf_windows_xdna_legacy_write_u32(
-      out_packet->bytes, 0x18, instruction_byte_length / sizeof(uint32_t));
-  for (uint32_t i = 0; i < binding_count; ++i) {
-    amdf_windows_xdna_legacy_write_u64(
-        out_packet->bytes, 0x1C + i * sizeof(uint64_t), binding_addresses[i]);
-  }
-  return AMDF_STATUS_OK;
-}
-
 void amdf_windows_xdna_legacy_submission_build_execute(
     const amdf_windows_xdna_private_allocation_t* execution_allocation,
     const amdf_windows_xdna_private_allocation_t* command_allocation,
-    const amdf_windows_xdna_legacy_ert_packet_t* packet,
+    const amdf_xdna_npu5_ert_packet_t* packet,
     amdf_windows_xdna_legacy_submission_t* out_submission) {
   amdf_windows_xdna_legacy_submission_initialize(
       AMDF_WINDOWS_XDNA_LEGACY_SUBMISSION_HEADER_SIZE +

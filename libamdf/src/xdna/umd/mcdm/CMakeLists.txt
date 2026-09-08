@@ -95,6 +95,7 @@ iree_cc_library(
   DEPS
     ::private_allocation
     amdf::headers
+    libamdf::src::xdna::target::npu5::ert_packet
   PUBLIC
 )
 endif()

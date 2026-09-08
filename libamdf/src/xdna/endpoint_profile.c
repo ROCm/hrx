@@ -8,12 +8,13 @@
 
 #include <stddef.h>
 
+#include "libamdf/src/xdna/target/npu5/ert_packet.h"
+
 // The first qualified NPU5 path stages native transaction bytes in the
 // 32 KiB instruction window between offsets 0x8000 and 0x10000. Its ERT
 // command record carries exactly five dense 64-bit memory addresses.
 enum {
   AMDF_XDNA_NPU5_MAXIMUM_NATIVE_BYTE_LENGTH = 32 * 1024,
-  AMDF_XDNA_NPU5_MAXIMUM_BINDING_COUNT = 5,
 };
 
 // Static profiles contain only properties that are invariant for an exact PCI

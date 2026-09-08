@@ -510,7 +510,7 @@ amdf_status_t amdf_windows_xdna_kernel_execution_prepare_command(
     uint32_t binding_count, amdf_windows_xdna_kernel_command_t* out_command) {
   if (execution == NULL || program_bytes == NULL || control_bytes == NULL ||
       out_command == NULL ||
-      binding_count > AMDF_WINDOWS_XDNA_LEGACY_MAXIMUM_BINDING_COUNT ||
+      binding_count > AMDF_XDNA_NPU5_MAXIMUM_BINDING_COUNT ||
       (binding_count != 0) != (binding_addresses != NULL)) {
     return amdf_make_api_status(AMDF_STATUS_CODE_INVALID_ARGUMENT);
   }
@@ -549,9 +549,9 @@ amdf_status_t amdf_windows_xdna_kernel_execution_prepare_command(
         instruction_byte_length);
   }
 
-  amdf_windows_xdna_legacy_ert_packet_t packet;
+  amdf_xdna_npu5_ert_packet_t packet;
   if (amdf_status_is_ok(status)) {
-    status = amdf_windows_xdna_legacy_ert_packet_build(
+    amdf_xdna_npu5_ert_packet_build(
         AMDF_WINDOWS_XDNA_CONTEXT_APERTURE_BASE + slot->instruction_offset,
         (uint32_t)instruction_byte_length, binding_addresses, binding_count,
         &packet);

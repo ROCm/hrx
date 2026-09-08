@@ -73,10 +73,10 @@ TEST(WindowsXdnaLegacySubmissionTest, BuildsFixedBindingExecutionRecords) {
   const std::array<uint64_t, 5> binding_addresses = {
       UINT64_C(0x1000), UINT64_C(0x2000), UINT64_C(0x3000), UINT64_C(0x4000),
       UINT64_C(0x5000)};
-  amdf_windows_xdna_legacy_ert_packet_t packet = {};
-  ASSERT_TRUE(amdf_status_is_ok(amdf_windows_xdna_legacy_ert_packet_build(
+  amdf_xdna_npu5_ert_packet_t packet = {};
+  amdf_xdna_npu5_ert_packet_build(
       UINT64_C(0x04008000), 300, binding_addresses.data(),
-      static_cast<uint32_t>(binding_addresses.size()), &packet)));
+      static_cast<uint32_t>(binding_addresses.size()), &packet);
   EXPECT_EQ(ReadU32(packet.bytes, 0x00), 0x30010001u);
   EXPECT_EQ(ReadU32(packet.bytes, 0x04), 1u);
   EXPECT_EQ(ReadU32(packet.bytes, 0x08), 3u);
@@ -108,16 +108,6 @@ TEST(WindowsXdnaLegacySubmissionTest, BuildsFixedBindingExecutionRecords) {
   EXPECT_EQ(
       std::memcmp(submission.bytes + 104, packet.bytes, sizeof(packet.bytes)),
       0);
-}
-
-TEST(WindowsXdnaLegacySubmissionTest, RejectsUnrepresentablePackets) {
-  amdf_windows_xdna_legacy_ert_packet_t packet = {};
-  EXPECT_EQ(amdf_status_code(amdf_windows_xdna_legacy_ert_packet_build(
-                UINT64_C(0x04008000), 3, nullptr, 0, &packet)),
-            AMDF_STATUS_CODE_INVALID_ARGUMENT);
-  EXPECT_EQ(amdf_status_code(amdf_windows_xdna_legacy_ert_packet_build(
-                UINT64_C(0x04008000), 4, nullptr, 1, &packet)),
-            AMDF_STATUS_CODE_INVALID_ARGUMENT);
 }
 
 }  // namespace

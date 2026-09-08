@@ -18,7 +18,10 @@ amdf_cc_library(
     srcs = ["endpoint_profile.c"],
     hdrs = ["endpoint_profile.h"],
     visibility = ["//libamdf/src/xdna:__subpackages__"],
-    deps = ["//libamdf/src:pci"],
+    deps = [
+        "//libamdf/src:pci",
+        "//libamdf/src/xdna/target/npu5:ert_packet",
+    ],
 )
 
 amdf_cc_library(

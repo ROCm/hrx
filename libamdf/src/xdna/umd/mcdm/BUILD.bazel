@@ -68,7 +68,10 @@ amdf_cc_library(
     srcs = ["legacy_submission.c"],
     hdrs = ["legacy_submission.h"],
     target_compatible_with = MCDM_COMPATIBILITY,
-    deps = [":private_allocation"],
+    deps = [
+        ":private_allocation",
+        "//libamdf/src/xdna/target/npu5:ert_packet",
+    ],
 )
 
 amdf_cc_library(

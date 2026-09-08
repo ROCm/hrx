@@ -18,12 +18,11 @@ amdf_status_t amdf_xdna_umd_command_create(
     const amdf_xdna_umd_command_binding_t* bindings, uint32_t binding_count,
     amdf_xdna_umd_command_t** out_command) {
   *out_command = NULL;
-  if (binding_count > AMDF_WINDOWS_XDNA_LEGACY_MAXIMUM_BINDING_COUNT ||
+  if (binding_count > AMDF_XDNA_NPU5_MAXIMUM_BINDING_COUNT ||
       (binding_count != 0) != (bindings != NULL)) {
     return amdf_make_api_status(AMDF_STATUS_CODE_INVALID_ARGUMENT);
   }
-  uint64_t binding_addresses[AMDF_WINDOWS_XDNA_LEGACY_MAXIMUM_BINDING_COUNT] = {
-      0};
+  uint64_t binding_addresses[AMDF_XDNA_NPU5_MAXIMUM_BINDING_COUNT] = {0};
   for (uint32_t i = 0; i < binding_count; ++i) {
     binding_addresses[i] = bindings[i].device_address;
   }

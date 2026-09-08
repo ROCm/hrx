@@ -20,6 +20,7 @@ iree_cc_library(
   DEPS
     amdf::headers
     libamdf::src::pci
+    libamdf::src::xdna::target::npu5::ert_packet
   PUBLIC
 )
 endif()
