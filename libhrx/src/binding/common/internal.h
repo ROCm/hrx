@@ -32,6 +32,17 @@ typedef struct iree_hal_streaming_context_module_entry_t
     iree_hal_streaming_context_module_entry_t;
 typedef struct iree_hal_streaming_context_symbol_map_t
     iree_hal_streaming_context_symbol_map_t;
+
+// Timeline advanced by accepted operations in one binding scheduling domain.
+// The semaphore is owned by the containing object and |pending_value| is the
+// largest value an accepted queue operation will signal. Callers provide the
+// synchronization protecting |pending_value|.
+typedef struct iree_hal_streaming_operation_timeline_t {
+  // Timeline semaphore signaled by operations in the scheduling domain.
+  iree_hal_semaphore_t* semaphore;
+  // Largest value an accepted operation will signal.
+  uint64_t pending_value;
+} iree_hal_streaming_operation_timeline_t;
 typedef struct iree_hal_streaming_deferred_device_free_t
     iree_hal_streaming_deferred_device_free_t;
 typedef struct iree_hal_streaming_device_t iree_hal_streaming_device_t;
@@ -284,6 +295,12 @@ struct iree_hal_streaming_context_t {
 
   // Dedicated mutex for stream list access.
   iree_slim_mutex_t stream_list_mutex;
+
+  // Timeline covering context-wide event records submitted on behalf of this
+  // context and every binding scheduling domain layered over it.
+  iree_hal_streaming_operation_timeline_t event_record_timeline;
+  // Serializes event record submission and |event_record_timeline| updates.
+  iree_slim_mutex_t event_record_mutex;
 
   // Global context list node pointers for cleanup tracking.
   // These are used to link all contexts in a global list for proper cleanup.
@@ -1637,6 +1654,21 @@ iree_status_t iree_hal_streaming_context_disable_peer_access(
 iree_status_t iree_hal_streaming_context_register_stream(
     iree_hal_streaming_context_t* context, iree_hal_streaming_stream_t* stream);
 
+// Takes a retained snapshot of all streams currently registered with
+// |context|. The caller must release the snapshot with
+// iree_hal_streaming_context_release_stream_snapshot. Both outputs are
+// unchanged on failure.
+// Synchronization: thread-safe internal locking.
+iree_status_t iree_hal_streaming_context_snapshot_streams(
+    iree_hal_streaming_context_t* context,
+    iree_hal_streaming_stream_t*** out_streams,
+    iree_host_size_t* out_stream_count);
+
+// Releases every retained stream in |streams| and frees the snapshot storage.
+void iree_hal_streaming_context_release_stream_snapshot(
+    iree_hal_streaming_context_t* context,
+    iree_hal_streaming_stream_t** streams, iree_host_size_t stream_count);
+
 // Removes a registered stream and releases the stream-list reference. The
 // stream's context pointer remains valid until its final release because every
 // operation that can outlive removal retains the context independently. A
@@ -1645,6 +1677,14 @@ iree_status_t iree_hal_streaming_context_register_stream(
 // Synchronization: thread-safe internal locking.
 void iree_hal_streaming_context_unregister_stream(
     iree_hal_streaming_context_t* context, iree_hal_streaming_stream_t* stream);
+
+// Extends immutable |previous_frontier| with the semaphore point
+// (|semaphore|, |value|), pruning points that have already completed.
+// |out_frontier| is unchanged on failure.
+iree_status_t iree_hal_streaming_wait_frontier_extend(
+    iree_hal_fence_t* previous_frontier, iree_hal_semaphore_t* semaphore,
+    uint64_t value, iree_allocator_t host_allocator,
+    iree_hal_fence_t** out_frontier);
 
 // Records |event| after the captured tails of all streams currently registered
 // with |context|. Each stream is flushed before its tail is captured and the
@@ -1656,8 +1696,9 @@ iree_status_t iree_hal_streaming_context_record_event(
 // Orders all current and future streams registered with |context| after the
 // point currently recorded on |event|. Current streams receive device-side
 // barriers and later registrations inherit an immutable pending frontier; the
-// call does not wait for host-visible completion. The event must have been
-// created by |context|.
+// call does not wait for host-visible completion. Events from other contexts
+// and devices are accepted when the destination queues support their
+// semaphores.
 iree_status_t iree_hal_streaming_context_wait_event(
     iree_hal_streaming_context_t* context, iree_hal_streaming_event_t* event);
 
@@ -1683,8 +1724,15 @@ iree_status_t iree_hal_streaming_context_flush(
 iree_status_t iree_hal_streaming_context_flush_all(void);
 
 // Synchronization: all streams (blocks until all streams idle).
-// This flushes and waits for all streams on the device.
+// This flushes and waits for all streams and context-wide event records on the
+// device.
 iree_status_t iree_hal_streaming_context_synchronize(
+    iree_hal_streaming_context_t* context);
+
+// Waits for every context-wide event record accepted before this call's
+// internal timeline snapshot. Used by binding scheduling domains whose stream
+// membership differs from the common context while sharing its primary scope.
+iree_status_t iree_hal_streaming_context_synchronize_event_records(
     iree_hal_streaming_context_t* context);
 
 // Synchronizes streams that participate in legacy default stream ordering.
@@ -1949,9 +1997,16 @@ iree_hal_streaming_event_exchange_capture_graph(
 // capturing. The caller keeps the borrowed stream references live for the
 // duration of the call. The fan-in record is submitted directly on the
 // context's primary queue and retains no single recording stream.
+//
+// All records advance the context's event-record timeline. When
+// |additional_timeline| is non-NULL the same submission also waits on and
+// advances it, and the caller must serialize access to it for the duration of
+// the call. Accepted submissions update both timelines before returning OK.
+// The caller must flush the context queue after a successful call.
 iree_status_t iree_hal_streaming_event_record_after_streams(
     iree_hal_streaming_event_t* event,
-    iree_hal_streaming_stream_t* const* streams, iree_host_size_t stream_count);
+    iree_hal_streaming_stream_t* const* streams, iree_host_size_t stream_count,
+    iree_hal_streaming_operation_timeline_t* additional_timeline);
 
 // Enqueues |event|'s record on |queue| at the point reached once
 // |wait_semaphores| is satisfied, signaling |signal_semaphores| there.

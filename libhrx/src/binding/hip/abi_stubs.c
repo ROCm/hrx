@@ -713,25 +713,6 @@ HIPAPI hipError_t hipEventRecordWithFlags(hipEvent_t event, hipStream_t stream,
   return hipErrorNotSupported;
 }
 
-HIPAPI hipError_t hipExecutionCtxRecordEvent(hipExecutionCtx_t ctx,
-                                             hipEvent_t event) {
-  (void)ctx;
-  (void)event;
-  return hipErrorNotSupported;
-}
-
-HIPAPI hipError_t hipExecutionCtxWaitEvent(hipExecutionCtx_t ctx,
-                                           hipEvent_t event) {
-  (void)ctx;
-  (void)event;
-  return hipErrorNotSupported;
-}
-
-HIPAPI hipError_t hipExecutionCtxSynchronize(hipExecutionCtx_t ctx) {
-  (void)ctx;
-  return hipErrorNotSupported;
-}
-
 HIPAPI hipError_t hipExternalMemoryGetMappedBuffer(
     void** devPtr, hipExternalMemory_t extMem,
     const hipExternalMemoryBufferDesc* bufferDesc) {

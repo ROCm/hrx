@@ -402,11 +402,13 @@ class CpuStreamingContextTest : public ::testing::Test {
   }
 
   iree_status_t CreateNonBlockingStream(
+      iree_hal_streaming_context_t* context,
       iree_hal_streaming_stream_t** out_stream) {
+    IREE_ASSERT_ARGUMENT(context);
     IREE_ASSERT_ARGUMENT(out_stream);
     *out_stream = nullptr;
     const iree_hal_queue_family_t* queue_family =
-        iree_hal_device_queue_family(context_->device, /*family_ordinal=*/0);
+        iree_hal_device_queue_family(context->device, /*family_ordinal=*/0);
     if (IREE_UNLIKELY(!queue_family)) {
       return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
                               "task device has no queue family");
@@ -415,11 +417,11 @@ class CpuStreamingContextTest : public ::testing::Test {
     iree_hal_queue_params_initialize(&queue_params);
     iree_hal_queue_t* queue = nullptr;
     iree_status_t status = iree_hal_device_acquire_queue(
-        context_->device, queue_family, &queue_params, &queue);
+        context->device, queue_family, &queue_params, &queue);
     iree_hal_streaming_stream_t* stream = nullptr;
     if (iree_status_is_ok(status)) {
       status = iree_hal_streaming_stream_create(
-          context_, queue, IREE_HAL_STREAMING_STREAM_FLAG_NON_BLOCKING,
+          context, queue, IREE_HAL_STREAMING_STREAM_FLAG_NON_BLOCKING,
           /*priority=*/0, iree_allocator_system(), &stream);
     }
     iree_hal_queue_release(queue);
@@ -497,8 +499,8 @@ TEST_F(CpuStreamingContextTest, ContextRecordWaitsForEveryCurrentStream) {
     iree_hal_streaming_stream_release(first_stream);
   });
 
-  IREE_ASSERT_OK(CreateNonBlockingStream(&first_stream));
-  IREE_ASSERT_OK(CreateNonBlockingStream(&second_stream));
+  IREE_ASSERT_OK(CreateNonBlockingStream(context_, &first_stream));
+  IREE_ASSERT_OK(CreateNonBlockingStream(context_, &second_stream));
   ASSERT_NE(first_stream->queue, second_stream->queue);
   ASSERT_NE(first_stream->queue, context_->queue);
   ASSERT_NE(second_stream->queue, context_->queue);
@@ -535,7 +537,9 @@ TEST_F(CpuStreamingContextTest, ContextRecordWaitsForEveryCurrentStream) {
   IREE_ASSERT_OK(iree_hal_streaming_event_query(event, &event_status));
   EXPECT_EQ(1, event_status);
   IREE_ASSERT_OK(SignalGate(second_gate, gate_value));
-  IREE_ASSERT_OK(iree_hal_streaming_event_synchronize(event));
+  IREE_ASSERT_OK(iree_hal_streaming_context_synchronize(context_));
+  IREE_ASSERT_OK(iree_hal_streaming_event_query(event, &event_status));
+  EXPECT_EQ(0, event_status);
 
   // Repeat with the opposite release order. The two rounds prove that the
   // fan-in waits for each stream rather than accidentally naming only one.
@@ -565,8 +569,8 @@ TEST_F(CpuStreamingContextTest, ContextWaitOrdersCurrentAndLaterStreams) {
     iree_hal_streaming_stream_release(source_stream);
   });
 
-  IREE_ASSERT_OK(CreateNonBlockingStream(&source_stream));
-  IREE_ASSERT_OK(CreateNonBlockingStream(&current_stream));
+  IREE_ASSERT_OK(CreateNonBlockingStream(context_, &source_stream));
+  IREE_ASSERT_OK(CreateNonBlockingStream(context_, &current_stream));
   ASSERT_NE(source_stream->queue, current_stream->queue);
 
   iree_hal_semaphore_t* gate = nullptr;
@@ -586,10 +590,63 @@ TEST_F(CpuStreamingContextTest, ContextWaitOrdersCurrentAndLaterStreams) {
   IREE_ASSERT_OK(iree_hal_streaming_event_record(event, source_stream));
   IREE_ASSERT_OK(iree_hal_streaming_context_wait_event(context_, event));
 
-  IREE_ASSERT_OK(CreateNonBlockingStream(&later_stream));
+  IREE_ASSERT_OK(CreateNonBlockingStream(context_, &later_stream));
   ASSERT_NE(later_stream->queue, source_stream->queue);
   ASSERT_NE(later_stream->queue, current_stream->queue);
 
+  int current_status = 0;
+  IREE_ASSERT_OK(
+      iree_hal_streaming_stream_query(current_stream, &current_status));
+  EXPECT_EQ(1, current_status);
+  int later_status = 0;
+  IREE_ASSERT_OK(iree_hal_streaming_stream_query(later_stream, &later_status));
+  EXPECT_EQ(1, later_status);
+
+  IREE_ASSERT_OK(SignalGate(gate, gate_value));
+  IREE_ASSERT_OK(iree_hal_streaming_stream_synchronize(current_stream));
+  IREE_ASSERT_OK(iree_hal_streaming_stream_synchronize(later_stream));
+}
+
+TEST_F(CpuStreamingContextTest, CrossContextWaitOrdersCurrentAndLaterStreams) {
+  iree_hal_streaming_context_t* target_context = nullptr;
+  iree_hal_streaming_stream_t* source_stream = nullptr;
+  iree_hal_streaming_stream_t* current_stream = nullptr;
+  iree_hal_streaming_stream_t* later_stream = nullptr;
+  iree_hal_streaming_event_t* event = nullptr;
+  ScopeExit cleanup([&] {
+    IREE_EXPECT_OK(ReleaseAllGates());
+    iree_hal_streaming_event_release(event);
+    iree_hal_streaming_stream_release(later_stream);
+    iree_hal_streaming_stream_release(current_stream);
+    iree_hal_streaming_stream_release(source_stream);
+    iree_hal_streaming_context_release(target_context);
+  });
+
+  iree_hal_streaming_context_flags_t context_flags = {};
+  context_flags.scheduling_mode = IREE_HAL_STREAMING_SCHEDULING_MODE_AUTO;
+  IREE_ASSERT_OK(iree_hal_streaming_context_create(
+      &device_entry_, context_flags, iree_allocator_system(), &target_context));
+  IREE_ASSERT_OK(CreateNonBlockingStream(context_, &source_stream));
+  IREE_ASSERT_OK(CreateNonBlockingStream(target_context, &current_stream));
+
+  iree_hal_semaphore_t* gate = nullptr;
+  IREE_ASSERT_OK(CreateGate(/*release_value=*/1, &gate));
+  uint64_t gate_value = 1;
+  const iree_hal_semaphore_list_t gate_wait = {
+      .count = 1,
+      .semaphores = &gate,
+      .payload_values = &gate_value,
+  };
+  IREE_ASSERT_OK(
+      iree_hal_streaming_stream_wait_semaphores(source_stream, gate_wait));
+
+  IREE_ASSERT_OK(iree_hal_streaming_event_create(
+      context_, IREE_HAL_STREAMING_EVENT_FLAG_DISABLE_TIMING,
+      iree_allocator_system(), &event));
+  IREE_ASSERT_OK(iree_hal_streaming_event_record(event, source_stream));
+  IREE_ASSERT_OK(iree_hal_streaming_context_wait_event(target_context, event));
+
+  IREE_ASSERT_OK(CreateNonBlockingStream(target_context, &later_stream));
   int current_status = 0;
   IREE_ASSERT_OK(
       iree_hal_streaming_stream_query(current_stream, &current_status));

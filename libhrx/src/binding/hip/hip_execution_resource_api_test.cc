@@ -6,9 +6,11 @@
 
 #include <dlfcn.h>
 
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "binding/hip/api.h"
@@ -62,6 +64,11 @@ using HipExecutionCtxStreamCreateFn = hipError_t (*)(hipStream_t* stream,
                                                      hipExecutionCtx_t context,
                                                      unsigned int flags,
                                                      int priority);
+using HipExecutionCtxRecordEventFn = hipError_t (*)(hipExecutionCtx_t context,
+                                                    hipEvent_t event);
+using HipExecutionCtxWaitEventFn = hipError_t (*)(hipExecutionCtx_t context,
+                                                  hipEvent_t event);
+using HipExecutionCtxSynchronizeFn = hipError_t (*)(hipExecutionCtx_t context);
 using HipDeviceGetStreamPriorityRangeFn =
     hipError_t (*)(int* least_priority, int* greatest_priority);
 using HipStreamCreateWithPriorityFn = hipError_t (*)(hipStream_t* stream,
@@ -80,7 +87,21 @@ using HipStreamGetFlagsFn = hipError_t (*)(hipStream_t stream,
                                            unsigned int* flags);
 using HipStreamGetPriorityFn = hipError_t (*)(hipStream_t stream,
                                               int* priority);
+using HipStreamBeginCaptureFn = hipError_t (*)(hipStream_t stream,
+                                               hipStreamCaptureMode mode);
+using HipStreamEndCaptureFn = hipError_t (*)(hipStream_t stream,
+                                             hipGraph_t* graph);
+using HipStreamIsCapturingFn =
+    hipError_t (*)(hipStream_t stream, hipStreamCaptureStatus* capture_status);
 using HipStreamDestroyFn = hipError_t (*)(hipStream_t stream);
+using HipLaunchHostFuncFn = hipError_t (*)(hipStream_t stream, hipHostFn_t fn,
+                                           void* user_data);
+using HipEventCreateWithFlagsFn = hipError_t (*)(hipEvent_t* event,
+                                                 unsigned int flags);
+using HipEventDestroyFn = hipError_t (*)(hipEvent_t event);
+using HipEventRecordFn = hipError_t (*)(hipEvent_t event, hipStream_t stream);
+using HipEventQueryFn = hipError_t (*)(hipEvent_t event);
+using HipEventSynchronizeFn = hipError_t (*)(hipEvent_t event);
 
 struct ExecutionContextDeleter {
   // Runtime entry point used to destroy a live execution context.
@@ -104,6 +125,62 @@ struct StreamDeleter {
 };
 
 using ScopedStream = std::unique_ptr<hipStream_st, StreamDeleter>;
+
+struct EventDeleter {
+  // Runtime entry point used to destroy a live event.
+  HipEventDestroyFn destroy = nullptr;
+
+  void operator()(hipEvent_st* event) const {
+    if (event) destroy(event);
+  }
+};
+
+using ScopedEvent = std::unique_ptr<hipEvent_st, EventDeleter>;
+
+// Host callback that blocks stream progress on an explicit test-controlled
+// condition. Destruction releases the gate so a fatal assertion cannot strand
+// asynchronous work during fixture cleanup.
+class HostGate {
+ public:
+  ~HostGate() { Open(); }
+
+  static void Callback(void* user_data) {
+    static_cast<HostGate*>(user_data)->Wait();
+  }
+
+  void WaitUntilEntered() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    condition_.wait(lock, [this] { return entered_; });
+  }
+
+  void Open() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      is_open_ = true;
+    }
+    condition_.notify_all();
+  }
+
+ private:
+  void Wait() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    entered_ = true;
+    condition_.notify_all();
+    condition_.wait(lock, [this] { return is_open_; });
+  }
+
+  // Serializes gate state accessed by the test and callback threads.
+  std::mutex mutex_;
+
+  // Notifies entry and release state transitions.
+  std::condition_variable condition_;
+
+  // True once the stream callback has begun waiting.
+  bool entered_ = false;
+
+  // True once the callback is allowed to return.
+  bool is_open_ = false;
+};
 
 // Owns the process-scoped HIP runtime under test and its resource entry points.
 // Calls cross the shared-library ABI instead of linking the implementation.
@@ -153,6 +230,15 @@ struct HipRuntimeApi {
   // Creates a stream on an exact execution context.
   HipExecutionCtxStreamCreateFn context_stream_create = nullptr;
 
+  // Records an event after all current execution-context work.
+  HipExecutionCtxRecordEventFn context_record_event = nullptr;
+
+  // Orders current and future execution-context work after an event.
+  HipExecutionCtxWaitEventFn context_wait_event = nullptr;
+
+  // Synchronizes all current execution-context work.
+  HipExecutionCtxSynchronizeFn context_synchronize = nullptr;
+
   // Queries the binding's supported stream priority range.
   HipDeviceGetStreamPriorityRangeFn device_get_stream_priority_range = nullptr;
 
@@ -174,8 +260,35 @@ struct HipRuntimeApi {
   // Queries the clamped scheduling priority assigned to a stream.
   HipStreamGetPriorityFn stream_get_priority = nullptr;
 
+  // Begins graph capture on one stream.
+  HipStreamBeginCaptureFn stream_begin_capture = nullptr;
+
+  // Ends graph capture on one stream.
+  HipStreamEndCaptureFn stream_end_capture = nullptr;
+
+  // Queries the graph capture state of one stream.
+  HipStreamIsCapturingFn stream_is_capturing = nullptr;
+
   // Destroys a live or execution-context-detached stream.
   HipStreamDestroyFn stream_destroy = nullptr;
+
+  // Enqueues a host callback in a stream.
+  HipLaunchHostFuncFn launch_host_function = nullptr;
+
+  // Creates an event with explicit flags.
+  HipEventCreateWithFlagsFn event_create_with_flags = nullptr;
+
+  // Destroys a live event.
+  HipEventDestroyFn event_destroy = nullptr;
+
+  // Records an event on one stream.
+  HipEventRecordFn event_record = nullptr;
+
+  // Queries event completion without blocking.
+  HipEventQueryFn event_query = nullptr;
+
+  // Waits for event completion.
+  HipEventSynchronizeFn event_synchronize = nullptr;
 };
 
 template <typename T>
@@ -224,6 +337,13 @@ class HipExecutionResourceApiTest : public testing::Test {
       api_.context_stream_create =
           ResolveHipSymbol<HipExecutionCtxStreamCreateFn>(
               api_.library, "hipExecutionCtxStreamCreate");
+      api_.context_record_event =
+          ResolveHipSymbol<HipExecutionCtxRecordEventFn>(
+              api_.library, "hipExecutionCtxRecordEvent");
+      api_.context_wait_event = ResolveHipSymbol<HipExecutionCtxWaitEventFn>(
+          api_.library, "hipExecutionCtxWaitEvent");
+      api_.context_synchronize = ResolveHipSymbol<HipExecutionCtxSynchronizeFn>(
+          api_.library, "hipExecutionCtxSynchronize");
       api_.device_get_stream_priority_range =
           ResolveHipSymbol<HipDeviceGetStreamPriorityRangeFn>(
               api_.library, "hipDeviceGetStreamPriorityRange");
@@ -241,8 +361,27 @@ class HipExecutionResourceApiTest : public testing::Test {
           api_.library, "hipStreamGetFlags");
       api_.stream_get_priority = ResolveHipSymbol<HipStreamGetPriorityFn>(
           api_.library, "hipStreamGetPriority");
+      api_.stream_begin_capture = ResolveHipSymbol<HipStreamBeginCaptureFn>(
+          api_.library, "hipStreamBeginCapture");
+      api_.stream_end_capture = ResolveHipSymbol<HipStreamEndCaptureFn>(
+          api_.library, "hipStreamEndCapture");
+      api_.stream_is_capturing = ResolveHipSymbol<HipStreamIsCapturingFn>(
+          api_.library, "hipStreamIsCapturing");
       api_.stream_destroy = ResolveHipSymbol<HipStreamDestroyFn>(
           api_.library, "hipStreamDestroy");
+      api_.launch_host_function = ResolveHipSymbol<HipLaunchHostFuncFn>(
+          api_.library, "hipLaunchHostFunc");
+      api_.event_create_with_flags =
+          ResolveHipSymbol<HipEventCreateWithFlagsFn>(
+              api_.library, "hipEventCreateWithFlags");
+      api_.event_destroy =
+          ResolveHipSymbol<HipEventDestroyFn>(api_.library, "hipEventDestroy");
+      api_.event_record =
+          ResolveHipSymbol<HipEventRecordFn>(api_.library, "hipEventRecord");
+      api_.event_query =
+          ResolveHipSymbol<HipEventQueryFn>(api_.library, "hipEventQuery");
+      api_.event_synchronize = ResolveHipSymbol<HipEventSynchronizeFn>(
+          api_.library, "hipEventSynchronize");
     }
 
     ASSERT_NE(api_.init, nullptr);
@@ -259,6 +398,9 @@ class HipExecutionResourceApiTest : public testing::Test {
     ASSERT_NE(api_.context_get_device, nullptr);
     ASSERT_NE(api_.context_get_id, nullptr);
     ASSERT_NE(api_.context_stream_create, nullptr);
+    ASSERT_NE(api_.context_record_event, nullptr);
+    ASSERT_NE(api_.context_wait_event, nullptr);
+    ASSERT_NE(api_.context_synchronize, nullptr);
     ASSERT_NE(api_.device_get_stream_priority_range, nullptr);
     ASSERT_NE(api_.stream_create_with_priority, nullptr);
     ASSERT_NE(api_.stream_create_with_cu_mask, nullptr);
@@ -266,7 +408,16 @@ class HipExecutionResourceApiTest : public testing::Test {
     ASSERT_NE(api_.stream_get_resource, nullptr);
     ASSERT_NE(api_.stream_get_flags, nullptr);
     ASSERT_NE(api_.stream_get_priority, nullptr);
+    ASSERT_NE(api_.stream_begin_capture, nullptr);
+    ASSERT_NE(api_.stream_end_capture, nullptr);
+    ASSERT_NE(api_.stream_is_capturing, nullptr);
     ASSERT_NE(api_.stream_destroy, nullptr);
+    ASSERT_NE(api_.launch_host_function, nullptr);
+    ASSERT_NE(api_.event_create_with_flags, nullptr);
+    ASSERT_NE(api_.event_destroy, nullptr);
+    ASSERT_NE(api_.event_record, nullptr);
+    ASSERT_NE(api_.event_query, nullptr);
+    ASSERT_NE(api_.event_synchronize, nullptr);
 
     ASSERT_EQ(hipSuccess, api_.init(/*flags=*/0));
     ASSERT_EQ(hipSuccess, api_.get_device(&device_));
@@ -570,6 +721,179 @@ TEST_F(HipExecutionResourceApiTest,
                         sizeof(stream_resource)),
             0);
   EXPECT_EQ(hipSuccess, api_.stream_destroy(stream_guard.release()));
+}
+
+TEST_F(HipExecutionResourceApiTest,
+       OrdersCurrentAndFutureExecutionContextStreamsWithEvents) {
+  hipDevResource full_resource;
+  ASSERT_EQ(hipSuccess, api_.device_get_resource(device_, &full_resource,
+                                                 hipDevResourceTypeSm));
+  hipDevResourceDesc_t descriptor = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.generate_descriptor(&descriptor, &full_resource, 1));
+  hipExecutionCtx_t context = nullptr;
+  ASSERT_EQ(hipSuccess, api_.create_context(&context, descriptor, device_, 0));
+  ScopedExecutionContext context_guard(
+      context, ExecutionContextDeleter{api_.destroy_context});
+
+  ScopedStream first_stream_guard(nullptr, StreamDeleter{api_.stream_destroy});
+  ScopedStream second_stream_guard(nullptr, StreamDeleter{api_.stream_destroy});
+  ScopedStream source_stream_guard(nullptr, StreamDeleter{api_.stream_destroy});
+  ScopedStream later_stream_guard(nullptr, StreamDeleter{api_.stream_destroy});
+  ScopedEvent record_event_guard(nullptr, EventDeleter{api_.event_destroy});
+  ScopedEvent source_event_guard(nullptr, EventDeleter{api_.event_destroy});
+  ScopedEvent current_event_guard(nullptr, EventDeleter{api_.event_destroy});
+  ScopedEvent later_event_guard(nullptr, EventDeleter{api_.event_destroy});
+
+  hipStream_t first_stream = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.context_stream_create(&first_stream, context, hipStreamDefault,
+                                       /*priority=*/0));
+  first_stream_guard.reset(first_stream);
+  hipStream_t second_stream = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.context_stream_create(&second_stream, context,
+                                       hipStreamDefault, /*priority=*/0));
+  second_stream_guard.reset(second_stream);
+
+  HostGate record_gate;
+  HostGate source_gate;
+
+  hipEvent_t record_event = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.event_create_with_flags(&record_event, hipEventDisableTiming));
+  record_event_guard.reset(record_event);
+  ASSERT_EQ(hipSuccess, api_.launch_host_function(
+                            second_stream, HostGate::Callback, &record_gate));
+  ASSERT_EQ(hipSuccess, api_.context_record_event(context, record_event));
+  record_gate.WaitUntilEntered();
+  EXPECT_EQ(hipErrorNotReady, api_.event_query(record_event));
+  record_gate.Open();
+  ASSERT_EQ(hipSuccess, api_.context_synchronize(context));
+  EXPECT_EQ(hipSuccess, api_.event_query(record_event));
+
+  hipStream_t source_stream = nullptr;
+  ASSERT_EQ(hipSuccess, api_.stream_create_with_priority(&source_stream,
+                                                         hipStreamNonBlocking,
+                                                         /*priority=*/0));
+  source_stream_guard.reset(source_stream);
+  hipEvent_t source_event = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.event_create_with_flags(&source_event, hipEventDisableTiming));
+  source_event_guard.reset(source_event);
+  ASSERT_EQ(hipSuccess, api_.launch_host_function(
+                            source_stream, HostGate::Callback, &source_gate));
+  ASSERT_EQ(hipSuccess, api_.event_record(source_event, source_stream));
+  source_gate.WaitUntilEntered();
+
+  ASSERT_EQ(hipSuccess, api_.context_wait_event(context, source_event));
+
+  hipStream_t later_stream = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.context_stream_create(&later_stream, context, hipStreamDefault,
+                                       /*priority=*/0));
+  later_stream_guard.reset(later_stream);
+  hipEvent_t current_event = nullptr;
+  ASSERT_EQ(hipSuccess, api_.event_create_with_flags(&current_event,
+                                                     hipEventDisableTiming));
+  current_event_guard.reset(current_event);
+  hipEvent_t later_event = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.event_create_with_flags(&later_event, hipEventDisableTiming));
+  later_event_guard.reset(later_event);
+  ASSERT_EQ(hipSuccess, api_.event_record(current_event, first_stream));
+  ASSERT_EQ(hipSuccess, api_.event_record(later_event, later_stream));
+  EXPECT_EQ(hipErrorNotReady, api_.event_query(current_event));
+  EXPECT_EQ(hipErrorNotReady, api_.event_query(later_event));
+
+  source_gate.Open();
+  ASSERT_EQ(hipSuccess, api_.context_synchronize(context));
+  EXPECT_EQ(hipSuccess, api_.event_query(current_event));
+  EXPECT_EQ(hipSuccess, api_.event_query(later_event));
+}
+
+TEST_F(HipExecutionResourceApiTest,
+       PrimaryExecutionContextIncludesPartitionedStreams) {
+  hipExecutionCtx_t primary_context = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.device_execution_context(&primary_context, device_));
+
+  hipDevResource full_resource;
+  ASSERT_EQ(hipSuccess, api_.device_get_resource(device_, &full_resource,
+                                                 hipDevResourceTypeSm));
+  hipDevResourceDesc_t descriptor = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.generate_descriptor(&descriptor, &full_resource, 1));
+  hipExecutionCtx_t partitioned_context = nullptr;
+  ASSERT_EQ(hipSuccess, api_.create_context(&partitioned_context, descriptor,
+                                            device_, /*flags=*/0));
+  ScopedExecutionContext context_guard(
+      partitioned_context, ExecutionContextDeleter{api_.destroy_context});
+
+  hipStream_t stream = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.context_stream_create(&stream, partitioned_context,
+                                       hipStreamDefault, /*priority=*/0));
+  ScopedStream stream_guard(stream, StreamDeleter{api_.stream_destroy});
+  hipEvent_t event = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.event_create_with_flags(&event, hipEventDisableTiming));
+  ScopedEvent event_guard(event, EventDeleter{api_.event_destroy});
+  HostGate gate;
+
+  ASSERT_EQ(hipSuccess,
+            api_.launch_host_function(stream, HostGate::Callback, &gate));
+  ASSERT_EQ(hipSuccess, api_.context_record_event(primary_context, event));
+  gate.WaitUntilEntered();
+  EXPECT_EQ(hipErrorNotReady, api_.event_query(event));
+  gate.Open();
+  ASSERT_EQ(hipSuccess, api_.context_synchronize(primary_context));
+  EXPECT_EQ(hipSuccess, api_.event_query(event));
+}
+
+TEST_F(HipExecutionResourceApiTest,
+       ExecutionContextEventsInvalidateStreamCapture) {
+  hipDevResource full_resource;
+  ASSERT_EQ(hipSuccess, api_.device_get_resource(device_, &full_resource,
+                                                 hipDevResourceTypeSm));
+  hipDevResourceDesc_t descriptor = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.generate_descriptor(&descriptor, &full_resource, 1));
+  hipExecutionCtx_t context = nullptr;
+  ASSERT_EQ(hipSuccess, api_.create_context(&context, descriptor, device_, 0));
+  ScopedExecutionContext context_guard(
+      context, ExecutionContextDeleter{api_.destroy_context});
+
+  hipStream_t stream = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.context_stream_create(&stream, context, hipStreamDefault,
+                                       /*priority=*/0));
+  ScopedStream stream_guard(stream, StreamDeleter{api_.stream_destroy});
+  hipEvent_t event = nullptr;
+  ASSERT_EQ(hipSuccess,
+            api_.event_create_with_flags(&event, hipEventDisableTiming));
+  ScopedEvent event_guard(event, EventDeleter{api_.event_destroy});
+
+  ASSERT_EQ(hipSuccess,
+            api_.stream_begin_capture(stream, hipStreamCaptureModeGlobal));
+  EXPECT_EQ(hipErrorStreamCaptureUnsupported,
+            api_.context_record_event(context, event));
+  hipStreamCaptureStatus capture_status = hipStreamCaptureStatusNone;
+  ASSERT_EQ(hipSuccess, api_.stream_is_capturing(stream, &capture_status));
+  EXPECT_EQ(hipStreamCaptureStatusInvalidated, capture_status);
+  EXPECT_EQ(hipErrorStreamCaptureInvalidated,
+            api_.stream_end_capture(stream, nullptr));
+
+  ASSERT_EQ(hipSuccess,
+            api_.stream_begin_capture(stream, hipStreamCaptureModeGlobal));
+  ASSERT_EQ(hipSuccess, api_.event_record(event, stream));
+  EXPECT_EQ(hipErrorStreamCaptureUnsupported,
+            api_.context_wait_event(context, event));
+  capture_status = hipStreamCaptureStatusNone;
+  ASSERT_EQ(hipSuccess, api_.stream_is_capturing(stream, &capture_status));
+  EXPECT_EQ(hipStreamCaptureStatusInvalidated, capture_status);
+  EXPECT_EQ(hipErrorStreamCaptureInvalidated,
+            api_.stream_end_capture(stream, nullptr));
 }
 
 TEST_F(HipExecutionResourceApiTest, CreatesStreamsAtClampedHardwarePriorities) {

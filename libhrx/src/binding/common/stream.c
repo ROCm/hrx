@@ -1238,8 +1238,8 @@ iree_status_t iree_hal_streaming_stream_wait_event(
   const uint64_t source_timeline_value =
       recorded_point.ordered_after_stream_value;
   const bool files_memory_reuse_dependency =
-      source_stream_id != 0 && source_stream_id != stream->stream_id &&
-      source_timeline_value != 0;
+      event->context == stream->context && source_stream_id != 0 &&
+      source_stream_id != stream->stream_id && source_timeline_value != 0;
   bool added_memory_reuse_dependency = false;
   // True once the queue has accepted the barrier that establishes the ordering.
   bool submitted = false;

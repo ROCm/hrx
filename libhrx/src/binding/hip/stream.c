@@ -75,10 +75,11 @@ iree_hal_queue_priority_t iree_hip_queue_family_select_priority(
   return family_spec->priorities[queue_priority_index];
 }
 
-iree_status_t iree_hip_stream_create(iree_hal_streaming_context_t* context,
-                                     iree_hal_queue_t* queue,
-                                     unsigned int flags, int priority,
-                                     hipStream_t* out_handle) {
+iree_status_t iree_hip_stream_create(
+    iree_hal_streaming_context_t* context, iree_hal_queue_t* queue,
+    unsigned int flags, int priority,
+    iree_hal_semaphore_list_t initial_wait_semaphores,
+    hipStream_t* out_handle) {
   IREE_ASSERT_ARGUMENT(context);
   IREE_ASSERT_ARGUMENT(queue);
   IREE_ASSERT_ARGUMENT(out_handle);
@@ -92,6 +93,10 @@ iree_status_t iree_hip_stream_create(iree_hal_streaming_context_t* context,
   iree_hal_streaming_stream_t* stream = NULL;
   iree_status_t status = iree_hal_streaming_stream_create(
       context, queue, stream_flags, priority, context->host_allocator, &stream);
+  if (iree_status_is_ok(status) && initial_wait_semaphores.count > 0) {
+    status = iree_hal_streaming_stream_wait_semaphores(stream,
+                                                       initial_wait_semaphores);
+  }
   if (iree_status_is_ok(status)) {
     status =
         iree_hip_stream_publish(stream, context->host_allocator, out_handle);

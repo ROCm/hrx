@@ -165,8 +165,8 @@ iree_hal_streaming_graph_t* iree_hal_streaming_event_exchange_capture_graph(
 
 iree_status_t iree_hal_streaming_event_record_after_streams(
     iree_hal_streaming_event_t* event,
-    iree_hal_streaming_stream_t* const* streams,
-    iree_host_size_t stream_count) {
+    iree_hal_streaming_stream_t* const* streams, iree_host_size_t stream_count,
+    iree_hal_streaming_operation_timeline_t* additional_timeline) {
   IREE_ASSERT_ARGUMENT(event);
   if (IREE_UNLIKELY(stream_count > 0 && !streams)) {
     return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
@@ -176,16 +176,62 @@ iree_status_t iree_hal_streaming_event_record_after_streams(
   IREE_TRACE_ZONE_BEGIN(z0);
 
   iree_hal_streaming_context_t* context = event->context;
+  iree_slim_mutex_lock(&context->event_record_mutex);
+
   iree_hal_semaphore_t** wait_semaphores = NULL;
   uint64_t* wait_values = NULL;
   iree_status_t status = iree_ok_status();
-  if (stream_count > 0) {
+  uint64_t context_signal_value = 0;
+  uint64_t additional_signal_value = 0;
+  if (IREE_UNLIKELY(!context->event_record_timeline.semaphore)) {
+    status = iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
+                              "context event record timeline is unavailable");
+  } else if (IREE_UNLIKELY(context->event_record_timeline.pending_value ==
+                           UINT64_MAX)) {
+    status = iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
+                              "context event record timeline is exhausted");
+  } else {
+    context_signal_value = context->event_record_timeline.pending_value + 1;
+  }
+  if (iree_status_is_ok(status) && additional_timeline) {
+    if (IREE_UNLIKELY(!additional_timeline->semaphore ||
+                      additional_timeline->semaphore ==
+                          context->event_record_timeline.semaphore)) {
+      status =
+          iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                           "additional event record timeline must be distinct");
+    } else if (IREE_UNLIKELY(additional_timeline->pending_value ==
+                             UINT64_MAX)) {
+      status =
+          iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
+                           "additional event record timeline is exhausted");
+    } else {
+      additional_signal_value = additional_timeline->pending_value + 1;
+    }
+  }
+
+  iree_host_size_t wait_capacity = stream_count;
+  if (iree_status_is_ok(status) &&
+      context->event_record_timeline.pending_value > 0 &&
+      IREE_UNLIKELY(
+          !iree_host_size_checked_add(wait_capacity, 1, &wait_capacity))) {
+    status = iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
+                              "event wait list size overflow");
+  }
+  if (iree_status_is_ok(status) && additional_timeline &&
+      additional_timeline->pending_value > 0 &&
+      IREE_UNLIKELY(
+          !iree_host_size_checked_add(wait_capacity, 1, &wait_capacity))) {
+    status = iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
+                              "event wait list size overflow");
+  }
+  if (iree_status_is_ok(status) && wait_capacity > 0) {
     iree_host_size_t semaphore_storage_size = 0;
     iree_host_size_t value_storage_size = 0;
     if (IREE_UNLIKELY(
-            !iree_host_size_checked_mul(stream_count, sizeof(*wait_semaphores),
+            !iree_host_size_checked_mul(wait_capacity, sizeof(*wait_semaphores),
                                         &semaphore_storage_size) ||
-            !iree_host_size_checked_mul(stream_count, sizeof(*wait_values),
+            !iree_host_size_checked_mul(wait_capacity, sizeof(*wait_values),
                                         &value_storage_size))) {
       status = iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
                                 "event wait list size overflow");
@@ -199,13 +245,6 @@ iree_status_t iree_hal_streaming_event_record_after_streams(
       status = iree_allocator_malloc(context->host_allocator,
                                      value_storage_size, (void**)&wait_values);
     }
-  }
-
-  iree_hal_semaphore_t* record_semaphore = NULL;
-  if (iree_status_is_ok(status)) {
-    status = iree_hal_semaphore_create(
-        context->device, IREE_HAL_QUEUE_FAMILY_AFFINITY_ANY,
-        /*initial_value=*/0, IREE_HAL_SEMAPHORE_FLAG_NONE, &record_semaphore);
   }
 
   // Reject invalid membership and capture state before flushing any source.
@@ -239,6 +278,18 @@ iree_status_t iree_hal_streaming_event_record_after_streams(
   }
 
   iree_host_size_t wait_count = 0;
+  if (iree_status_is_ok(status) &&
+      context->event_record_timeline.pending_value > 0) {
+    wait_semaphores[wait_count] = context->event_record_timeline.semaphore;
+    wait_values[wait_count] = context->event_record_timeline.pending_value;
+    ++wait_count;
+  }
+  if (iree_status_is_ok(status) && additional_timeline &&
+      additional_timeline->pending_value > 0) {
+    wait_semaphores[wait_count] = additional_timeline->semaphore;
+    wait_values[wait_count] = additional_timeline->pending_value;
+    ++wait_count;
+  }
   for (iree_host_size_t i = 0; i < stream_count && iree_status_is_ok(status);
        ++i) {
     iree_hal_streaming_stream_t* stream = streams[i];
@@ -263,35 +314,45 @@ iree_status_t iree_hal_streaming_event_record_after_streams(
   iree_hal_streaming_stream_t* previous_recording_stream = NULL;
   iree_hal_streaming_graph_t* dropped_capture_graph = NULL;
   if (iree_status_is_ok(status)) {
-    uint64_t record_value = 1;
     const iree_hal_semaphore_list_t waits = {
         .count = wait_count,
         .semaphores = wait_semaphores,
         .payload_values = wait_values,
     };
+    iree_hal_semaphore_t* signal_semaphores[2] = {
+        context->event_record_timeline.semaphore,
+        additional_timeline ? additional_timeline->semaphore : NULL,
+    };
+    uint64_t signal_values[2] = {
+        context_signal_value,
+        additional_signal_value,
+    };
     const iree_hal_semaphore_list_t signals = {
-        .count = 1,
-        .semaphores = &record_semaphore,
-        .payload_values = &record_value,
+        .count = additional_timeline ? 2 : 1,
+        .semaphores = signal_semaphores,
+        .payload_values = signal_values,
     };
     iree_hal_streaming_recorded_point_t recorded_point = {
-        .semaphore = record_semaphore,
-        .value = record_value,
+        .semaphore = context->event_record_timeline.semaphore,
+        .value = context_signal_value,
     };
     status = iree_hal_streaming_event_enqueue_record(
         event, context, context->queue, waits, signals, &recorded_point);
     if (iree_status_is_ok(status)) {
+      context->event_record_timeline.pending_value = context_signal_value;
+      if (additional_timeline) {
+        additional_timeline->pending_value = additional_signal_value;
+      }
       dropped_capture_graph =
           iree_hal_streaming_event_commit_recorded_point(event, recorded_point);
       previous_recording_stream =
           iree_hal_streaming_event_exchange_recording_stream(event, NULL);
-      status = iree_hal_queue_flush(context->queue);
     }
   }
 
+  iree_slim_mutex_unlock(&context->event_record_mutex);
   iree_hal_streaming_stream_release(previous_recording_stream);
   iree_hal_streaming_graph_release(dropped_capture_graph);
-  iree_hal_semaphore_release(record_semaphore);
   iree_allocator_free(context->host_allocator, wait_values);
   iree_allocator_free(context->host_allocator, wait_semaphores);
 

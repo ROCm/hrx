@@ -14,6 +14,7 @@ extern "C" {
 #endif
 
 typedef struct iree_hal_streaming_device_t iree_hal_streaming_device_t;
+typedef struct iree_hal_streaming_event_t iree_hal_streaming_event_t;
 
 // Returns the process-managed primary execution context for |device|, creating
 // its handle for the current device incarnation if necessary. |out_context| is
@@ -60,6 +61,23 @@ hipError_t iree_hip_execution_context_get_device(hipExecutionCtx_t context,
 // |out_context_id| is unchanged on failure.
 hipError_t iree_hip_execution_context_get_id(
     hipExecutionCtx_t context, unsigned long long* out_context_id);
+
+// Records |event| after all work submitted to |context| before the call. A
+// primary execution context includes resource-partitioned streams on its
+// device. The event must belong to the same primary streaming context.
+hipError_t iree_hip_execution_context_record_event(
+    hipExecutionCtx_t context, iree_hal_streaming_event_t* event);
+
+// Orders all future work submitted to |context| after the point recorded on
+// |event| without blocking the caller. Events from other contexts and devices
+// are accepted when their semaphore is compatible with the target queues.
+hipError_t iree_hip_execution_context_wait_event(
+    hipExecutionCtx_t context, iree_hal_streaming_event_t* event);
+
+// Blocks until all work submitted to |context| before the call completes. A
+// primary execution context includes resource-partitioned streams on its
+// device.
+hipError_t iree_hip_execution_context_synchronize(hipExecutionCtx_t context);
 
 // Invalidates every resource-partitioned execution context on |device| before
 // releasing its primary-context ownership.

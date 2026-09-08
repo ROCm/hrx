@@ -59,11 +59,13 @@ iree_hal_queue_priority_t iree_hip_queue_family_select_priority(
 
 // Creates and publishes a HIP stream that submits through the exact hardware
 // |queue|. The common stream retains |queue| and records the clamped HIP
-// |priority| for compatibility queries. |out_handle| is unchanged on failure.
-iree_status_t iree_hip_stream_create(iree_hal_streaming_context_t* context,
-                                     iree_hal_queue_t* queue,
-                                     unsigned int flags, int priority,
-                                     hipStream_t* out_handle);
+// |priority| for compatibility queries. |initial_wait_semaphores| orders the
+// stream before its public handle becomes visible. |out_handle| is unchanged
+// on failure.
+iree_status_t iree_hip_stream_create(
+    iree_hal_streaming_context_t* context, iree_hal_queue_t* queue,
+    unsigned int flags, int priority,
+    iree_hal_semaphore_list_t initial_wait_semaphores, hipStream_t* out_handle);
 
 // Publishes |stream| as an opaque HIP stream handle. On success the handle
 // assumes ownership of the caller's stream reference and |out_handle| receives
