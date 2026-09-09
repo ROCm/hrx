@@ -289,14 +289,26 @@ static iree_status_t InitializeFakeHalContext(
       /*.target_count=*/1,
       /*.targets=*/&executable_target,
   };
+  const iree_hal_queue_priority_t normal_priority =
+      IREE_HAL_QUEUE_PRIORITY_NORMAL;
   const iree_hal_queue_family_spec_t queue_family = {
       /*.name=*/IREE_SV("dispatch"),
       /*.provisioned_queue_count=*/0,
       /*.priority_count=*/1,
+      /*.priorities=*/&normal_priority,
+      /*.execution_unit_count=*/0,
+      /*.execution_resource_group_count=*/0,
+      /*.execution_resource_groups=*/nullptr,
+      /*.execution_resource_count=*/0,
+      /*.execution_resources=*/nullptr,
+      /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
       /*.timestamp_valid_bits=*/0,
       /*.timestamp_frequency_hz=*/0,
       /*.physical_device_affinity=*/1,
       /*.role_flags=*/IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH,
+      /*.atomic_capabilities=*/{},
+      /*.zero_compute_atomic_capabilities=*/{},
+      /*.flags=*/IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_NONE,
   };
   const iree_hal_device_queue_spec_t queues = {
       /*.family_count=*/1,
@@ -321,7 +333,10 @@ static iree_status_t InitializeFakeHalContext(
     return status;
   }
 
-  iree_hal_queue_family_initialize(/*ordinal=*/0, out_dispatch_queue_family);
+  const iree_hal_queue_family_spec_t* queue_family_spec =
+      &iree_hal_device_spec_queues(iree_hal_device_spec(device))->families[0];
+  iree_hal_queue_family_initialize(/*ordinal=*/0, queue_family_spec,
+                                   out_dispatch_queue_family);
   out_dispatch_queue->queue_family = out_dispatch_queue_family;
   context->device_provider = &kFakeDeviceProvider;
   context->runtime = (loom_run_hal_runtime_t){
