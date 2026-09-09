@@ -46,6 +46,7 @@ loom_library(
 
 loom_kernel_binary(
     name = "transitive_subject",
+    out = "transitive_subject.hsaco",
     tags = ["manual"],
     target = "//loom/target/amdgpu:gfx11-generic",
     deps = [":interface"],

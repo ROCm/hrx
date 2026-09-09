@@ -44,9 +44,9 @@ loom_amdgpu_target_profile(
 )
 
 loom_target_profile(
-    name = "test_spirv_profile",
-    family = "spirv",
-    selector = "vulkan1.3+bda",
+    name = "test_fake_profile",
+    family = "FakeTargetFamily123",
+    selector = "FakeTargetSelector123",
 )
 
 loom_kernel_library(
@@ -69,6 +69,7 @@ loom_library(
 
 loom_kernel_binary(
     name = "kernel_binary_deps",
+    out = "kernel_binary_deps.hsaco",
     tags = ["manual"],
     target = "//loom/target/amdgpu:gfx11-generic",
     deps = [":public_kernel_library"],
@@ -77,6 +78,7 @@ loom_kernel_binary(
 loom_kernel_binary(
     name = "kernel_binary_srcs",
     srcs = ["link_kernels.loom"],
+    out = "kernel_binary_srcs.hsaco",
     tags = ["manual"],
     target = "//loom/target/amdgpu:gfx11-generic",
 )
@@ -84,6 +86,7 @@ loom_kernel_binary(
 loom_kernel_binary(
     name = "kernel_binary_mixed",
     srcs = ["link_checks.loom"],
+    out = "kernel_binary_mixed.hsaco",
     configs = {
         "a.value": "1",
         "z.value": "2",
@@ -95,6 +98,7 @@ loom_kernel_binary(
 
 loom_kernel_binary(
     name = "kernel_binary_explicit_root",
+    out = "kernel_binary_explicit_root.hsaco",
     roots = ["@scale"],
     tags = ["manual"],
     target = "//loom/target/amdgpu:gfx11-generic",

@@ -39,6 +39,7 @@ loom_library(
 
 loom_kernel_binary(
     name = "elementwise_kernel",
+    out = "elementwise_kernel.hsaco",
     target = "@hrx//loom/target/amdgpu:gfx11-generic",
     deps = [":kernel"],
 )

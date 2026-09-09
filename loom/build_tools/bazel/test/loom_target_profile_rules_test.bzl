@@ -47,14 +47,14 @@ def _test_generic_profile_preserves_family_identity(name, **kwargs):
     analysis_test(
         name = name,
         impl = _test_generic_profile_preserves_family_identity_impl,
-        target = ":test_spirv_profile",
+        target = ":test_fake_profile",
         **kwargs
     )
 
 def _test_generic_profile_preserves_family_identity_impl(env, target):
     profile = target[LoomTargetProfileInfo]
-    env.expect.that_str(profile.family).equals("spirv")
-    env.expect.that_str(profile.selector).equals("vulkan1.3+bda")
+    env.expect.that_str(profile.family).equals("FakeTargetFamily123")
+    env.expect.that_str(profile.selector).equals("FakeTargetSelector123")
 
 def loom_target_profile_rules_test_suite(name):
     test_suite(

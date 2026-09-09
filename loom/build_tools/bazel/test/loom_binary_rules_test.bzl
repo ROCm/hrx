@@ -47,6 +47,11 @@ def _expect_no_arg_with_suffix(env, args, prefix, suffix):
                 (prefix, suffix, args),
             )
 
+def _expect_no_arg_with_prefix(env, args, prefix):
+    for arg in args:
+        if arg.startswith(prefix):
+            env.fail("unexpected argument with prefix %r in %r" % (prefix, args))
+
 def _test_kernel_binary_roots_direct_library_exports(name, **kwargs):
     analysis_test(
         name = name,
@@ -99,7 +104,6 @@ def _test_kernel_binary_roots_direct_library_exports_impl(env, target):
     compile_action = _find_action(env, actions, "LoomKernelBinary")
     for expected_arg in [
         "--product=kernel",
-        "--format=amdgpu-hsaco",
         "--target=amdgpu:gfx11-generic",
         "--compile-report=details",
     ]:
@@ -108,6 +112,7 @@ def _test_kernel_binary_roots_direct_library_exports_impl(env, target):
                 "expected %r in compile arguments %r" %
                 (expected_arg, compile_action.argv),
             )
+    _expect_no_arg_with_prefix(env, compile_action.argv, "--format=")
 
     _expect_basename(
         env,
@@ -202,28 +207,49 @@ def _test_explicit_roots_replace_direct_exports_impl(env, target):
         "public_kernel_library.loombc",
     )
 
-def _test_kernel_binary_profile_mismatch(name, **kwargs):
+def _test_kernel_binary_accepts_generic_profile(name, **kwargs):
     subject = name + "_subject"
     util.helper_target(
         loom_kernel_binary,
         name = subject,
         deps = [":public_kernel_library"],
+        out = "ExecutableArtifact123.bin",
         tags = ["manual"],
-        target = ":test_spirv_profile",
+        target = ":test_fake_profile",
     )
     analysis_test(
         name = name,
-        expect_failure = True,
-        impl = _test_kernel_binary_profile_mismatch_impl,
+        impl = _test_kernel_binary_accepts_generic_profile_impl,
         target = subject,
         **kwargs
     )
 
-def _test_kernel_binary_profile_mismatch_impl(env, target):
-    env.expect.that_target(target).failures().contains_predicate(
-        matching.contains(
-            "cannot emit a kernel binary for target profile family \"spirv\"",
-        ),
+def _test_kernel_binary_accepts_generic_profile_impl(env, target):
+    binary = target[LoomBinaryInfo]
+    env.expect.that_str(binary.primary_artifact.basename).equals(
+        "ExecutableArtifact123.bin",
+    )
+    env.expect.that_str(
+        binary.target_profiles[0][LoomTargetProfileInfo].family,
+    ).equals("FakeTargetFamily123")
+    env.expect.that_str(
+        binary.target_profiles[0][LoomTargetProfileInfo].selector,
+    ).equals("FakeTargetSelector123")
+
+    actions = target[TestingAspectInfo].actions
+    for action_name in ["LoomBinaryLink", "LoomKernelBinary"]:
+        action = _find_action(env, actions, action_name)
+        if "--target=FakeTargetFamily123:FakeTargetSelector123" not in action.argv:
+            env.fail("expected generic target in %s arguments %r" % (action_name, action.argv))
+    compile_action = _find_action(env, actions, "LoomKernelBinary")
+    if "--product=kernel" not in compile_action.argv:
+        env.fail("expected kernel product in %r" % compile_action.argv)
+    _expect_no_arg_with_prefix(env, compile_action.argv, "--format=")
+    _expect_arg_with_suffix(
+        env,
+        compile_action.argv,
+        "--output=",
+        "ExecutableArtifact123.bin",
     )
 
 def _test_command_binary_emits_composite_product(name, **kwargs):
@@ -403,7 +429,7 @@ def _test_command_binary_profile_mismatch(name, **kwargs):
         name = subject,
         deps = [":public_kernel_library"],
         tags = ["manual"],
-        target = ":test_spirv_profile",
+        target = ":test_fake_profile",
     )
     analysis_test(
         name = name,
@@ -416,7 +442,8 @@ def _test_command_binary_profile_mismatch(name, **kwargs):
 def _test_command_binary_profile_mismatch_impl(env, target):
     env.expect.that_target(target).failures().contains_predicate(
         matching.contains(
-            "cannot emit a command binary for target profile family \"spirv\"",
+            "cannot emit a command binary for target profile family " +
+            "\"FakeTargetFamily123\"",
         ),
     )
 
@@ -429,7 +456,7 @@ def loom_binary_rules_test_suite(name):
             _test_command_binary_profile_mismatch,
             _test_command_binary_sources_are_an_implicit_library,
             _test_explicit_roots_replace_direct_exports,
-            _test_kernel_binary_profile_mismatch,
+            _test_kernel_binary_accepts_generic_profile,
             _test_kernel_binary_roots_direct_library_exports,
             _test_kernel_binary_sources_are_an_implicit_library,
         ],

@@ -1,0 +1,52 @@
+# Copyright 2026 The IREE Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+#
+# bazel-to-cmake: skip
+
+load("//build_tools/bazel:executable.bzl", "iree_executable_test")
+load("//loom/build_tools/bazel:build_defs.bzl", "loom_config_compatible_with")
+load(
+    "//loom/build_tools/bazel:defs.bzl",
+    "loom_kernel_binary",
+    "loom_target_profile",
+)
+
+package(default_visibility = ["//visibility:public"])
+
+_SPIRV_ARTIFACTS_COMPATIBLE_WITH = loom_config_compatible_with([
+    "//loom/config/target:spirv_artifacts",
+])
+
+loom_target_profile(
+    name = "vulkan1.3+bda",
+    family = "spirv",
+    selector = "vulkan1.3+bda",
+    target_compatible_with = _SPIRV_ARTIFACTS_COMPATIBLE_WITH,
+)
+
+loom_kernel_binary(
+    name = "copy_i32_test_binary",
+    testonly = True,
+    srcs = ["copy_i32.loom"],
+    out = "copy_i32_test.spv",
+    target = ":vulkan1.3+bda",
+    target_compatible_with = _SPIRV_ARTIFACTS_COMPATIBLE_WITH,
+    visibility = ["//visibility:private"],
+)
+
+iree_executable_test(
+    name = "copy_i32_test",
+    src = "//third_party:spirv_val",
+    args = [
+        "--target-env",
+        "vulkan1.3",
+        "$(rootpath :copy_i32_test_binary)",
+    ],
+    data = [":copy_i32_test_binary"],
+    tags = ["hostonly"],
+    target_compatible_with = _SPIRV_ARTIFACTS_COMPATIBLE_WITH,
+    visibility = ["//visibility:private"],
+)

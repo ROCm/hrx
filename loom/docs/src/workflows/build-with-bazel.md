@@ -131,10 +131,16 @@ link boundary targetless.
 ## Kernel binaries are loader-ready executables
 
 `loom_kernel_binary` specializes the selected kernel closure for one immutable
-target profile and emits `<name>.hsaco` for the current AMDGPU product. The
-example's profile label carries the typed family and the target selector
-`gfx11-generic`; it is a Bazel target, not a source file or filename-like
-configuration blob.
+target profile and emits one artifact named by `out`. The compiler chooses the
+canonical kernel format for that target. The example therefore names
+`elementwise_kernel.hsaco` for its `gfx11-generic` AMDGPU profile, while a rule
+using `//loom/target/spirv:vulkan1.3+bda` can name an `.spv` output without
+changing the base rule.
+
+`out` controls only the Bazel artifact path; the compiler never infers the
+format from its suffix. When omitted, the artifact has the extensionless rule
+name. This is useful for higher-level macros that fan out target products but
+do not own target-specific filename conventions.
 
 ```shell
 bazel build //loom/docs/examples/elementwise-transform:elementwise_kernel
