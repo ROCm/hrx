@@ -656,9 +656,10 @@ union produced by joining the selected CTest names with the validated
 
 Windows builds require an x64 MSVC ABI environment even when `clang-cl` is the
 host compiler. Install Python 3.12, Visual Studio 2022 Build Tools with the x64
-C++ tools and a Windows SDK, and Ninja. Install LLVM separately when building
-with `clang-cl`. The CI CMake version is 3.31.6; using that version locally
-removes an otherwise unhelpful source of generator differences.
+C++ tools and a Windows SDK, and Git for Windows. Bazel uses the Bash supplied
+by Git for Windows; the developer wrapper discovers it automatically. The
+managed developer environment installs Ninja and the CI-pinned CMake 3.31.6.
+Install LLVM separately when building with `clang-cl`.
 
 Start from an x64 Visual Studio developer shell so `INCLUDE`, `LIB`, the SDK
 tools, and the MSVC linker are available. Git for Windows also ships a Unix
@@ -670,13 +671,18 @@ where.exe link
 ```
 
 The first `link.exe` must be the MSVC linker, not Git's `usr\bin\link.exe`.
-Create the repository tool environment and add the CI-pinned CMake plus Ninja:
+Create the repository tool environment and check it:
 
 ```powershell
 python dev.py cmake setup --venv
-.\.venv\Scripts\python.exe -m pip install --upgrade cmake==3.31.6 ninja
 python dev.py cmake doctor
 ```
+
+Setup, configure, build, test, and doctor also work from an exported source
+snapshot. Setup and doctor omit Git-specific checks when `.git` is absent;
+installing hooks and running Git-based presubmit require a checkout. This lets
+a Windows build host consume source synchronized from another machine while
+Git operations remain on the source machine.
 
 Keep Windows build trees short and keep one tree per compiler. The `C:\b` CMake
 trees below remain within the legacy Win32 path limit and do not require the

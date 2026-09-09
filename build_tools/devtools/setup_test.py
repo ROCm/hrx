@@ -10,6 +10,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from build_tools.devtools.command_plan import CommandStep, WriteFileStep
 from build_tools.devtools.environment import REPO_ROOT, ToolEnvironment, ToolMode
@@ -49,12 +50,17 @@ class SetupPlanTest(unittest.TestCase):
     def test_venv_mode_schedules_python_tool_install(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             venv_root = Path(temporary_directory) / "venv"
-            plan = setup_plan(
-                "bazel",
-                ToolEnvironment(ToolMode.VENV, venv_root),
-                None,
-                platform_name="linux",
-            )
+            # A linked checkout has a .git file rather than a directory.
+            (Path(temporary_directory) / ".git").write_text("gitdir: ../repo.git")
+            with mock.patch(
+                "build_tools.devtools.setup.REPO_ROOT", Path(temporary_directory)
+            ):
+                plan = setup_plan(
+                    "bazel",
+                    ToolEnvironment(ToolMode.VENV, venv_root),
+                    None,
+                    platform_name="linux",
+                )
 
             commands = [step for step in plan.steps if isinstance(step, CommandStep)]
             self.assertTrue(any("-m venv" in step.describe() for step in commands))

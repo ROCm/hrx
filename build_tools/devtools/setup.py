@@ -65,7 +65,9 @@ def common_setup_plan(
             label="install Python developer tools",
         )
     )
-    plan.add(hooks.lefthook_cli_compatibility_probe(tool_env))
+    # Exported source trees can install build tools without Git metadata.
+    if (REPO_ROOT / ".git").exists():
+        plan.add(hooks.lefthook_cli_compatibility_probe(tool_env))
     platform_name = sys.platform if platform_name is None else platform_name
     if platform_name != "win32":
         requirements = [

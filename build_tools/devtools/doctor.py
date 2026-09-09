@@ -125,12 +125,14 @@ def doctor_plan(lane: str | None, tool_env: ToolEnvironment) -> CommandPlan:
                     label=f"check {tool}",
                 )
             )
-    plan.add(
-        CommandStep(
-            ["git", "status", "--short"],
-            cwd=REPO_ROOT,
-            env=env,
-            label="check Git worktree status",
+    # Source archives support builds and tool diagnosis without a Git checkout.
+    if (REPO_ROOT / ".git").exists():
+        plan.add(
+            CommandStep(
+                ["git", "status", "--short"],
+                cwd=REPO_ROOT,
+                env=env,
+                label="check Git worktree status",
+            )
         )
-    )
     return plan
