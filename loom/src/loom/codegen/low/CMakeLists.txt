@@ -825,6 +825,7 @@ loom_cc_test(
     "frame_test.cc"
   DEPS
     ::frame
+    ::packet
     ::rematerialization
     ::text_asm
     iree::base::internal::arena

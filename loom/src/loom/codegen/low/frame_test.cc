@@ -9,6 +9,7 @@
 #include "iree/base/internal/arena.h"
 #include "iree/testing/gtest.h"
 #include "iree/testing/status_matchers.h"
+#include "loom/codegen/low/packet.h"
 #include "loom/codegen/low/rematerialization.h"
 #include "loom/codegen/low/schedule/diagnostics.h"
 #include "loom/codegen/low/text_asm.h"
@@ -138,6 +139,74 @@ low.func.def target<test.low.core> @structural_model() -> (reg<test.i32 x4>) asm
   loom_target_low_descriptor_registry_t registry_ = {};
   iree_arena_allocator_t arena_ = {};
 };
+
+TEST_F(LowEmissionFrameTest, PacketLocationsFollowOperandAndResultOccurrences) {
+  ModulePtr module = ParseModule(R"(
+low.func.def target<test.low.core> @packet_bindings(%input: reg<test.i32>) -> (reg<test.i32>) asm {
+  %storage = storage {byte_alignment = 16, byte_length = 64} : low.storage<workgroup>
+  %address = storage_address %storage : low.storage<workgroup> -> reg<test.ptr>
+  %loaded = test.load.v4i32 %address
+  %sum = test.add.i32 %input, %input
+  low.br ^exit(%sum: reg<test.i32>)
+^exit(%returned: reg<test.i32>):
+  return %returned
+}
+)");
+  ASSERT_NE(module, nullptr);
+  loom_low_emission_frame_t frame = {};
+  IREE_ASSERT_OK(BuildFrame(module.get(), {}, &frame));
+  ASSERT_EQ(frame.allocation.error_count, 0u);
+  ASSERT_EQ(frame.schedule.block_count, 2u);
+
+  for (uint32_t i = 0; i < frame.schedule.node_count; ++i) {
+    const loom_low_packet_view_t packet =
+        loom_low_packet_at_node(&frame.schedule, i);
+    const loom_low_packet_view_t ordered =
+        loom_low_packet_at(&frame.schedule, packet.packet_index);
+    EXPECT_EQ(ordered.node, packet.node);
+    EXPECT_EQ(ordered.node_index, i);
+    const loom_op_t* op = packet.node->op;
+    for (uint16_t j = 0; j < packet.node->result_count; ++j) {
+      const loom_low_allocation_assignment_t* assignment =
+          loom_low_packet_result_assignment(&frame.allocation, &packet, j);
+      if (loom_low_storage_reserve_isa(op)) {
+        EXPECT_EQ(assignment, nullptr);
+      } else {
+        ASSERT_NE(assignment, nullptr);
+        EXPECT_EQ(assignment->value_id, loom_op_const_results(op)[j]);
+      }
+    }
+    for (uint16_t j = 0; j < packet.node->operand_count; ++j) {
+      const loom_low_allocation_assignment_t* assignment =
+          loom_low_packet_operand_assignment(&frame.allocation, &packet, j);
+      if (loom_low_storage_address_isa(op)) {
+        EXPECT_EQ(assignment, nullptr);
+      } else {
+        ASSERT_NE(assignment, nullptr);
+        EXPECT_EQ(assignment->value_id, loom_op_const_operands(op)[j]);
+      }
+    }
+    if (packet.descriptor != nullptr) {
+      const loom_low_descriptor_t* descriptor = packet.descriptor;
+      const loom_low_descriptor_set_t* descriptor_set =
+          frame.schedule.target.descriptor_set;
+      for (uint16_t j = 0; j < descriptor->operand_count; ++j) {
+        const loom_low_operand_t* operand =
+            &descriptor_set->operands[descriptor->operand_start + j];
+        const loom_low_allocation_assignment_t* assignment =
+            loom_low_packet_descriptor_operand_assignment(&frame.allocation,
+                                                          &packet, j);
+        EXPECT_EQ(
+            assignment,
+            j < descriptor->result_count
+                ? loom_low_packet_result_assignment(&frame.allocation, &packet,
+                                                    operand->source_value_index)
+                : loom_low_packet_operand_assignment(
+                      &frame.allocation, &packet, operand->source_value_index));
+      }
+    }
+  }
+}
 
 TEST_F(LowEmissionFrameTest, EveryStrategyEnforcesIssueResourceCapacity) {
   for (const loom_low_schedule_strategy_t strategy : kScheduleStrategies) {

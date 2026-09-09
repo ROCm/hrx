@@ -756,6 +756,7 @@ loom_cc_test(
     srcs = ["frame_test.cc"],
     deps = [
         ":frame",
+        ":packet",
         ":rematerialization",
         ":text_asm",
         "//loom/src/loom/codegen/low/schedule",
