@@ -439,26 +439,25 @@ int iree_run_loom_main(int argc, char** argv,
   if (FLAG_probe_hal) {
     loom_run_one_shot_result_t probe_result = {0};
     loom_run_one_shot_result_initialize(allocator, &probe_result);
-    iree_status_t probe_status = status;
-    if (iree_status_is_ok(probe_status) && backend->probe == NULL) {
-      probe_status = iree_make_status(
+    if (iree_status_is_ok(status) && backend->probe == NULL) {
+      status = iree_make_status(
           IREE_STATUS_INVALID_ARGUMENT,
           "--probe-hal requires --device to select a probeable HAL provider");
-    } else if (iree_status_is_ok(probe_status)) {
+    } else if (iree_status_is_ok(status)) {
       const loom_run_one_shot_probe_request_t probe_request = {
           .host_allocator = allocator,
           .result = &probe_result,
       };
-      probe_status = backend->probe(backend, &probe_request);
+      status = backend->probe(backend, &probe_request);
     }
-    if (iree_status_is_ok(probe_status)) {
-      probe_status = loom_tooling_write_stdout(
+    if (iree_status_is_ok(status)) {
+      status = loom_tooling_write_stdout(
           iree_string_builder_view(&probe_result.output));
     }
     int probe_exit_code = 0;
-    if (!iree_status_is_ok(probe_status)) {
-      iree_status_fprint(stderr, probe_status);
-      iree_status_free(probe_status);
+    if (!iree_status_is_ok(status)) {
+      iree_status_fprint(stderr, status);
+      iree_status_free(status);
       probe_exit_code = 1;
     }
     loom_run_one_shot_result_deinitialize(&probe_result);
