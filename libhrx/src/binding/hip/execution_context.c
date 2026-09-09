@@ -396,12 +396,12 @@ hipError_t iree_hip_execution_context_create(
   }
 
   hipError_t result = hipSuccess;
-  const uint64_t table_generation =
-      iree_hal_streaming_execution_resource_table_generation(
+  const uint64_t table_incarnation =
+      iree_hal_streaming_execution_resource_table_incarnation(
           &device->execution_resource_table);
   if (retained_descriptor->device_ordinal != device->ordinal) {
     result = hipErrorInvalidDevice;
-  } else if (retained_descriptor->table_generation != table_generation) {
+  } else if (retained_descriptor->table_incarnation != table_incarnation) {
     result = hipErrorInvalidResourceConfiguration;
   }
 

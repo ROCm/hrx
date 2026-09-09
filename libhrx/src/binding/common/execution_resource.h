@@ -53,7 +53,7 @@ typedef struct iree_hal_streaming_execution_resource_table_t {
   iree_hal_device_t* device;
 
   // Process-unique nonzero device-table incarnation.
-  uint64_t generation;
+  uint64_t incarnation;
 
   // Number of immutable entries in |entries|.
   iree_host_size_t entry_count;
@@ -78,7 +78,7 @@ void iree_hal_streaming_execution_resource_table_deinitialize(
     iree_hal_streaming_execution_resource_table_t* table);
 
 // Returns the nonzero process-unique incarnation assigned to |table|.
-uint64_t iree_hal_streaming_execution_resource_table_generation(
+uint64_t iree_hal_streaming_execution_resource_table_incarnation(
     const iree_hal_streaming_execution_resource_table_t* table);
 
 // Interns |resources| for |queue_family| and returns its stable table identity.

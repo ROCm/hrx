@@ -36,7 +36,7 @@ typedef struct iree_hip_execution_resource_token_t {
   uint32_t resource_flags;
 
   // Exact device-table incarnation that owns |set_id|.
-  uint64_t table_generation;
+  uint64_t table_incarnation;
 
   // Immutable execution-resource set identity within the device table.
   iree_hal_streaming_execution_resource_set_id_t set_id;
@@ -223,8 +223,8 @@ iree_status_t iree_hip_execution_resource_create_sm(
       .kind = IREE_HIP_EXECUTION_RESOURCE_TOKEN_KIND_SM,
       .device_ordinal = (uint32_t)device->ordinal,
       .resource_flags = flags,
-      .table_generation =
-          iree_hal_streaming_execution_resource_table_generation(
+      .table_incarnation =
+          iree_hal_streaming_execution_resource_table_incarnation(
               &device->execution_resource_table),
       .set_id = set_id,
   };
@@ -434,8 +434,8 @@ hipError_t iree_hip_execution_resource_resolve_sm_for_device(
       iree_hip_execution_resource_decode_sm_token(resource, &token);
   if (result != hipSuccess) return result;
   if (token.device_ordinal != device->ordinal ||
-      token.table_generation !=
-          iree_hal_streaming_execution_resource_table_generation(
+      token.table_incarnation !=
+          iree_hal_streaming_execution_resource_table_incarnation(
               &device->execution_resource_table)) {
     return hipErrorInvalidResourceConfiguration;
   }

@@ -33,7 +33,7 @@ typedef struct iree_hip_execution_resource_descriptor_t {
   iree_host_size_t device_ordinal;
 
   // Device execution-resource table incarnation owning |sm_resource_set_id|.
-  uint64_t table_generation;
+  uint64_t table_incarnation;
 
   // Queue family shared by all SM resources in this descriptor.
   iree_hal_queue_family_ordinal_t queue_family_ordinal;

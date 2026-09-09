@@ -17,31 +17,31 @@ typedef struct iree_hal_streaming_execution_resource_set_storage_t {
   iree_hal_queue_execution_resource_ordinal_t ordinals[];
 } iree_hal_streaming_execution_resource_set_storage_t;
 
-// Next table generation to issue. Zero permanently marks exhaustion after the
-// final nonzero generation has been issued.
+// Next table incarnation to issue. Zero permanently marks exhaustion after the
+// final nonzero incarnation has been issued.
 static iree_atomic_uint64_t
-    iree_hal_streaming_next_execution_resource_table_generation =
+    iree_hal_streaming_next_execution_resource_table_incarnation =
         IREE_ATOMIC_VAR_INIT(1);
 
 static iree_status_t
-iree_hal_streaming_execution_resource_table_allocate_generation(
-    uint64_t* out_generation) {
+iree_hal_streaming_execution_resource_table_allocate_incarnation(
+    uint64_t* out_incarnation) {
   uint64_t current = iree_atomic_load(
-      &iree_hal_streaming_next_execution_resource_table_generation,
+      &iree_hal_streaming_next_execution_resource_table_incarnation,
       iree_memory_order_relaxed);
   while (current != 0) {
     const uint64_t next = current + 1;
     if (iree_atomic_compare_exchange_weak(
-            &iree_hal_streaming_next_execution_resource_table_generation,
+            &iree_hal_streaming_next_execution_resource_table_incarnation,
             &current, next, iree_memory_order_relaxed,
             iree_memory_order_relaxed)) {
-      *out_generation = current;
+      *out_incarnation = current;
       return iree_ok_status();
     }
   }
   return iree_make_status(
       IREE_STATUS_RESOURCE_EXHAUSTED,
-      "execution-resource table generation space is exhausted");
+      "execution-resource table incarnation space is exhausted");
 }
 
 static iree_hal_queue_execution_resource_ordinal_t
@@ -150,22 +150,22 @@ iree_status_t iree_hal_streaming_execution_resource_table_initialize(
   IREE_ASSERT_ARGUMENT(device);
   IREE_ASSERT_ARGUMENT(out_table);
 
-  uint64_t generation = 0;
+  uint64_t incarnation = 0;
   IREE_RETURN_IF_ERROR(
-      iree_hal_streaming_execution_resource_table_allocate_generation(
-          &generation));
+      iree_hal_streaming_execution_resource_table_allocate_incarnation(
+          &incarnation));
 
   memset(out_table, 0, sizeof(*out_table));
   iree_slim_mutex_initialize(&out_table->mutex);
   out_table->host_allocator = host_allocator;
   out_table->device = device;
-  out_table->generation = generation;
+  out_table->incarnation = incarnation;
   return iree_ok_status();
 }
 
 void iree_hal_streaming_execution_resource_table_deinitialize(
     iree_hal_streaming_execution_resource_table_t* table) {
-  if (!table || table->generation == 0) return;
+  if (!table || table->incarnation == 0) return;
   for (iree_host_size_t i = 0; i < table->entry_count; ++i) {
     iree_allocator_free(table->host_allocator, table->entries[i]);
   }
@@ -174,9 +174,9 @@ void iree_hal_streaming_execution_resource_table_deinitialize(
   memset(table, 0, sizeof(*table));
 }
 
-uint64_t iree_hal_streaming_execution_resource_table_generation(
+uint64_t iree_hal_streaming_execution_resource_table_incarnation(
     const iree_hal_streaming_execution_resource_table_t* table) {
-  return table->generation;
+  return table->incarnation;
 }
 
 iree_status_t iree_hal_streaming_execution_resource_table_intern(

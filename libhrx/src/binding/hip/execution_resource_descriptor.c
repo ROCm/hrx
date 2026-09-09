@@ -149,8 +149,8 @@ hipError_t iree_hip_execution_resource_descriptor_create(
     iree_atomic_ref_count_init(&descriptor->ref_count);
     descriptor->host_allocator = host_allocator;
     descriptor->device_ordinal = device->ordinal;
-    descriptor->table_generation =
-        iree_hal_streaming_execution_resource_table_generation(
+    descriptor->table_incarnation =
+        iree_hal_streaming_execution_resource_table_incarnation(
             &device->execution_resource_table);
     descriptor->queue_family_ordinal = first_set->queue_family_ordinal;
     descriptor->sm_resource_set_id = union_set_id;

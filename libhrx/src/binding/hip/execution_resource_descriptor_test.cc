@@ -185,8 +185,8 @@ TEST_F(ExecutionResourceDescriptorTest, UnionsDisjointExactSets) {
   ASSERT_TRUE(iree_hip_execution_resource_descriptor_take(handle, &descriptor));
   ASSERT_NE(descriptor, nullptr);
   EXPECT_EQ(descriptor->device_ordinal, device_.ordinal);
-  EXPECT_EQ(descriptor->table_generation,
-            iree_hal_streaming_execution_resource_table_generation(
+  EXPECT_EQ(descriptor->table_incarnation,
+            iree_hal_streaming_execution_resource_table_incarnation(
                 &device_.execution_resource_table));
   EXPECT_EQ(descriptor->queue_family_ordinal, 0u);
   EXPECT_EQ(descriptor->resource_count, IREE_ARRAYSIZE(resources));
