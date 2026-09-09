@@ -256,6 +256,11 @@ typedef struct iree_hal_amdgpu_logical_device_options_t {
     // metadata such as device-side command-buffer fixup inputs without using
     // the file staging pool.
     uint32_t upload_capacity;
+    // Number of additional fixed physical queues reserved for the restricted
+    // execution-queue compatibility API, up to 64. These queues are absent
+    // from the ordinary provisioned queue inventory and are created only after
+    // a caller binds one immutable execution-unit mask.
+    uint32_t experimental_execution_queue_count;
   } host_queues;
 
   // Per-physical-device queue_read/queue_write file staging policy.

@@ -8,6 +8,7 @@
 
 #include "iree/hal/drivers/amdgpu/api.h"
 #include "iree/hal/drivers/amdgpu/logical_device.h"
+#include "iree/hal/drivers/amdgpu/physical_device.h"
 #include "iree/testing/gtest.h"
 #include "iree/testing/status_matchers.h"
 
@@ -38,6 +39,63 @@ TEST(AmdgpuDriverOptionsTest, LogicalDeviceParamsAreRejectedUntilDefined) {
                                           /*.count=*/1,
                                           /*.pairs=*/&pair,
                                       }));
+}
+
+TEST(AmdgpuDriverOptionsTest, LogicalDeviceDefaultsDisableExecutionQueues) {
+  iree_hal_amdgpu_logical_device_options_t options;
+  iree_hal_amdgpu_logical_device_options_initialize(&options);
+
+  EXPECT_EQ(options.host_queues.experimental_execution_queue_count, 0u);
+}
+
+TEST(AmdgpuDriverOptionsTest, ParsesExperimentalExecutionQueueCount) {
+  iree_hal_amdgpu_logical_device_options_t options;
+  iree_hal_amdgpu_logical_device_options_initialize(&options);
+  const iree_string_pair_t pair =
+      iree_make_cstring_pair("experimental_execution_queue_count", "3");
+
+  IREE_EXPECT_OK(iree_hal_amdgpu_logical_device_options_parse(
+      &options, (iree_string_pair_list_t){
+                    /*.count=*/1,
+                    /*.pairs=*/&pair,
+                }));
+  EXPECT_EQ(options.host_queues.experimental_execution_queue_count, 3u);
+}
+
+TEST(AmdgpuDriverOptionsTest, RejectsInvalidExperimentalExecutionQueueCount) {
+  constexpr const char* kInvalidValues[] = {
+      "-1", "not-a-count", "4294967296", "12garbage", "",
+  };
+  for (const char* invalid_value : kInvalidValues) {
+    iree_hal_amdgpu_logical_device_options_t options;
+    iree_hal_amdgpu_logical_device_options_initialize(&options);
+    const iree_string_pair_t pair = iree_make_cstring_pair(
+        "experimental_execution_queue_count", invalid_value);
+
+    IREE_EXPECT_STATUS_IS(IREE_STATUS_INVALID_ARGUMENT,
+                          iree_hal_amdgpu_logical_device_options_parse(
+                              &options, (iree_string_pair_list_t){
+                                            /*.count=*/1,
+                                            /*.pairs=*/&pair,
+                                        }));
+  }
+}
+
+TEST(AmdgpuDriverOptionsTest, ValidatesPhysicalQueueAxisCountBoundary) {
+  iree_hal_amdgpu_physical_device_options_t options;
+  iree_hal_amdgpu_physical_device_options_initialize(&options);
+  iree_hal_amdgpu_libhsa_t libhsa = {};
+
+  options.host_queue_count = IREE_HAL_AMDGPU_MAX_QUEUE_AXIS_COUNT;
+  options.host_queue_ordinary_capacity = options.host_queue_count;
+  IREE_EXPECT_OK(iree_hal_amdgpu_physical_device_options_verify(
+      &options, &libhsa, hsa_agent_t{0}, hsa_agent_t{0}));
+
+  ++options.host_queue_count;
+  ++options.host_queue_ordinary_capacity;
+  IREE_EXPECT_STATUS_IS(IREE_STATUS_OUT_OF_RANGE,
+                        iree_hal_amdgpu_physical_device_options_verify(
+                            &options, &libhsa, hsa_agent_t{0}, hsa_agent_t{0}));
 }
 
 TEST(AmdgpuDriverOptionsTest, LogicalDeviceDefaultsUseHostCopyPm4Publication) {

@@ -145,6 +145,12 @@ typedef struct iree_hal_amdgpu_logical_device_t {
   // deregistered by each host queue before this table is freed.
   iree_hal_amdgpu_epoch_signal_table_t* host_queue_epoch_table;
 
+  // Non-zero while profiling or teardown excludes private queue construction.
+  iree_atomic_int32_t execution_queue_configuration_frozen;
+
+  // Serializes one-shot private queue construction with profiling and teardown.
+  iree_slim_mutex_t execution_queue_configuration_mutex;
+
   // Selected command-buffer recording and replay implementation.
   iree_hal_amdgpu_command_buffer_mode_t command_buffer_mode;
 
