@@ -88,10 +88,18 @@ iree_status_t iree_hal_amdgpu_hsa_queue_create(
   if (iree_status_is_ok(status) && mask_word_count &&
       memcmp(params->compute_unit_mask, achieved_mask,
              mask_word_count * sizeof(*achieved_mask)) != 0) {
+    uint32_t mismatch_word_index = 0;
+    while (params->compute_unit_mask[mismatch_word_index] ==
+           achieved_mask[mismatch_word_index]) {
+      ++mismatch_word_index;
+    }
     status = iree_make_status(
         IREE_STATUS_FAILED_PRECONDITION,
         "HSA created a queue with a different compute-unit mask than "
-        "requested");
+        "requested: word %u of %u is 0x%08" PRIx32 " instead of 0x%08" PRIx32,
+        mismatch_word_index, (uint32_t)mask_word_count,
+        achieved_mask[mismatch_word_index],
+        params->compute_unit_mask[mismatch_word_index]);
   }
   iree_allocator_free(params->host_allocator, achieved_mask);
 
