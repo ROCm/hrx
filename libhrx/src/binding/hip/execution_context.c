@@ -22,11 +22,11 @@ typedef enum iree_hip_execution_context_kind_e {
 // the device primary streaming context. Hardware queues are realized lazily by
 // streams; this control-plane object does not itself schedule work.
 struct ihipExecutionCtx_t {
-  // Determines whether the context is device-managed or resource-partitioned.
-  iree_hip_execution_context_kind_t kind;
-
   // Reference count including the live registry or public-handle ownership.
   iree_atomic_ref_count_t ref_count;
+
+  // Determines whether the context is device-managed or resource-partitioned.
+  iree_hip_execution_context_kind_t kind;
 
   // Serializes liveness and execution-context stream membership.
   iree_slim_mutex_t mutex;
@@ -138,11 +138,13 @@ static iree_status_t iree_hip_execution_context_allocate_id(
 }
 
 static void iree_hip_execution_context_retain(hipExecutionCtx_t context) {
-  if (context) iree_atomic_ref_count_inc(&context->ref_count);
+  if (!context) return;
+  iree_atomic_ref_count_inc(&context->ref_count);
 }
 
 static void iree_hip_execution_context_release(hipExecutionCtx_t context) {
-  if (!context || iree_atomic_ref_count_dec(&context->ref_count) != 1) return;
+  if (!context) return;
+  if (iree_atomic_ref_count_dec(&context->ref_count) != 1) return;
   IREE_ASSERT(context->device == NULL);
   IREE_ASSERT(context->primary_context == NULL);
   IREE_ASSERT(context->stream_head == NULL);
@@ -239,7 +241,8 @@ static hipError_t iree_hip_execution_context_deinitialize(
   return result;
 }
 
-static hipExecutionCtx_t iree_hip_execution_context_lookup_retain(
+// Resolves |handle| against the live registry and returns a retained context.
+static hipExecutionCtx_t iree_hip_execution_context_resolve_live(
     hipExecutionCtx_t handle) {
   if (!handle) return NULL;
   iree_call_once(&iree_hip_execution_context_registry_once,
@@ -524,7 +527,7 @@ hipError_t iree_hip_execution_context_stream_create(
   if (flags & ~hipStreamNonBlocking) return hipErrorInvalidValue;
 
   hipExecutionCtx_t context =
-      iree_hip_execution_context_lookup_retain(context_handle);
+      iree_hip_execution_context_resolve_live(context_handle);
   if (!context) return hipErrorInvalidValue;
 
   hipError_t result = hipSuccess;
@@ -817,7 +820,7 @@ hipError_t iree_hip_execution_context_record_event(
     hipExecutionCtx_t context_handle, iree_hal_streaming_event_t* event) {
   IREE_ASSERT_ARGUMENT(event);
   hipExecutionCtx_t context =
-      iree_hip_execution_context_lookup_retain(context_handle);
+      iree_hip_execution_context_resolve_live(context_handle);
   if (!context) return hipErrorInvalidValue;
 
   iree_hip_execution_context_stream_snapshot_t snapshot = {0};
@@ -863,7 +866,7 @@ hipError_t iree_hip_execution_context_wait_event(
     hipExecutionCtx_t context_handle, iree_hal_streaming_event_t* event) {
   IREE_ASSERT_ARGUMENT(event);
   hipExecutionCtx_t context =
-      iree_hip_execution_context_lookup_retain(context_handle);
+      iree_hip_execution_context_resolve_live(context_handle);
   if (!context) return hipErrorInvalidValue;
 
   iree_hal_streaming_graph_t* capture_graph =
@@ -962,7 +965,7 @@ hipError_t iree_hip_execution_context_wait_event(
 hipError_t iree_hip_execution_context_synchronize(
     hipExecutionCtx_t context_handle) {
   hipExecutionCtx_t context =
-      iree_hip_execution_context_lookup_retain(context_handle);
+      iree_hip_execution_context_resolve_live(context_handle);
   if (!context) return hipErrorInvalidValue;
 
   iree_hip_execution_context_stream_snapshot_t snapshot = {0};
@@ -1018,7 +1021,7 @@ hipError_t iree_hip_execution_context_get_resource(
   IREE_ASSERT_ARGUMENT(out_resource);
   if (type != hipDevResourceTypeSm) return hipErrorInvalidResourceType;
   hipExecutionCtx_t retained_context =
-      iree_hip_execution_context_lookup_retain(context);
+      iree_hip_execution_context_resolve_live(context);
   if (!retained_context) return hipErrorInvalidValue;
   const hipDevResource resource = retained_context->sm_resource;
   iree_hip_execution_context_release(retained_context);
@@ -1030,7 +1033,7 @@ hipError_t iree_hip_execution_context_get_device(hipExecutionCtx_t context,
                                                  hipDevice_t* out_device) {
   IREE_ASSERT_ARGUMENT(out_device);
   hipExecutionCtx_t retained_context =
-      iree_hip_execution_context_lookup_retain(context);
+      iree_hip_execution_context_resolve_live(context);
   if (!retained_context) return hipErrorInvalidValue;
   const hipDevice_t device = retained_context->device_ordinal;
   iree_hip_execution_context_release(retained_context);
@@ -1042,7 +1045,7 @@ hipError_t iree_hip_execution_context_get_id(
     hipExecutionCtx_t context, unsigned long long* out_context_id) {
   IREE_ASSERT_ARGUMENT(out_context_id);
   hipExecutionCtx_t retained_context =
-      iree_hip_execution_context_lookup_retain(context);
+      iree_hip_execution_context_resolve_live(context);
   if (!retained_context) return hipErrorInvalidValue;
   const unsigned long long context_id = retained_context->context_id;
   iree_hip_execution_context_release(retained_context);
