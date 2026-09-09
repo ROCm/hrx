@@ -1,0 +1,116 @@
+// A load-immediate should not be commoned across a gap in physical liveness.
+// RUN: with-low-asm pass low-cse
+test.target<low_core> @target
+
+low.func.def target<test.low.core>(@target) @disjoint() -> (reg<test.i32>, reg<test.i32>) asm {
+  %first = test.const.explicit32 7
+  %left = copy %first : reg<test.explicit32> -> reg<test.i32>
+  %second = test.const.explicit32 7
+  %right = copy %second : reg<test.explicit32> -> reg<test.i32>
+  return %left, %right
+}
+
+// ====
+
+// Sharing overlapping materializations reduces simultaneous register demand.
+// RUN: with-low-asm pass low-cse
+test.target<low_core> @target
+
+low.func.def target<test.low.core>(@target) @overlapping() -> (reg<test.explicit32>, reg<test.explicit32>) asm {
+  %first = test.const.explicit32 7
+  %second = test.const.explicit32 7
+  return %first, %second
+}
+
+// ----
+test.target<low_core> @target
+
+low.func.def target<test.low.core>(@target) @overlapping() -> (reg<test.explicit32>, reg<test.explicit32>) asm {
+  %first = test.const.explicit32 7
+  return %first, %first
+}
+
+// ====
+
+// Merging a use list extends the cached live endpoint without rescanning it.
+// RUN: with-low-asm pass low-cse
+test.target<low_core> @target
+
+low.func.def target<test.low.core>(@target) @overlap_chain() -> (reg<test.i32>, reg<test.explicit32>, reg<test.explicit32>) asm {
+  %first = test.const.explicit32 7
+  %second = test.const.explicit32 7
+  %left = copy %first : reg<test.explicit32> -> reg<test.i32>
+  %third = test.const.explicit32 7
+  return %left, %second, %third
+}
+
+// ----
+test.target<low_core> @target
+
+low.func.def target<test.low.core>(@target) @overlap_chain() -> (reg<test.i32>, reg<test.explicit32>, reg<test.explicit32>) asm {
+  %first = test.const.explicit32 7
+  %left = copy %first : reg<test.explicit32> -> reg<test.i32>
+  return %left, %first, %first
+}
+
+// ====
+
+// An expired candidate is replaced so the next overlapping pair still shares.
+// RUN: with-low-asm pass low-cse
+test.target<low_core> @target
+
+low.func.def target<test.low.core>(@target) @replace_expired() -> (reg<test.i32>, reg<test.explicit32>, reg<test.explicit32>) asm {
+  %first = test.const.explicit32 7
+  %left = copy %first : reg<test.explicit32> -> reg<test.i32>
+  %second = test.const.explicit32 7
+  %third = test.const.explicit32 7
+  return %left, %second, %third
+}
+
+// ----
+test.target<low_core> @target
+
+low.func.def target<test.low.core>(@target) @replace_expired() -> (reg<test.i32>, reg<test.explicit32>, reg<test.explicit32>) asm {
+  %first = test.const.explicit32 7
+  %left = copy %first : reg<test.explicit32> -> reg<test.i32>
+  %second = test.const.explicit32 7
+  return %left, %second, %second
+}
+
+// ====
+
+// Physical placement is not extended through CFG edges by local CSE.
+// RUN: with-low-asm pass low-cse
+test.target<low_core> @target
+
+low.func.def target<test.low.core>(@target) @cross_block() -> (reg<test.explicit32>, reg<test.explicit32>) asm {
+  %first = test.const.explicit32 7
+  low.br ^next
+^next:
+  %second = test.const.explicit32 7
+  return %first, %second
+}
+
+// ====
+
+// Virtual IDs do not occupy physical registers: ordinary CSE still spans gaps.
+// RUN: with-low-asm pass low-cse
+test.target<low_core> @target
+
+low.func.def target<test.low.core>(@target) @virtual(%lhs: reg<test.i32>, %rhs: reg<test.i32>) -> (reg<test.i32>, reg<test.i32>) asm {
+  %first = test.const.i32 7
+  %left = test.add.i32 %lhs, %first
+  %second = test.const.i32 7
+  %right = test.add.i32 %rhs, %second
+  return %left, %right
+}
+
+// ----
+test.target<low_core> @target
+
+low.func.def target<test.low.core>(@target) @virtual(%lhs: reg<test.i32>, %rhs: reg<test.i32>) -> (reg<test.i32>, reg<test.i32>) asm {
+  %first = test.const.i32 7
+  %left = test.add.i32 %lhs, %first
+  %right = test.add.i32 %rhs, %first
+  return %left, %right
+}
