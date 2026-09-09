@@ -54,9 +54,9 @@ void iree_hal_replay_recorder_queue_initialize(
     iree_hal_device_t* placement_device, iree_allocator_t host_allocator,
     iree_hal_replay_recorder_queue_t* out_queue);
 
-// Allocates a recording proxy for a dynamically acquired |base_queue|.
+// Creates a recording proxy for a dynamically acquired |base_queue|.
 // Retains |base_queue| on success and leaves |out_queue| unchanged on failure.
-iree_status_t iree_hal_replay_recorder_queue_allocate(
+iree_status_t iree_hal_replay_recorder_queue_create(
     const iree_hal_queue_family_t* queue_family,
     iree_hal_replay_recorder_t* recorder, iree_hal_replay_object_id_t device_id,
     iree_hal_replay_object_id_t queue_id, iree_hal_queue_t* base_queue,

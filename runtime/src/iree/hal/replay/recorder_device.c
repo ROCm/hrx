@@ -234,7 +234,7 @@ static iree_status_t iree_hal_replay_device_acquire_queue(
       device->base_device, base_queue_family, params, &base_queue);
   iree_hal_replay_recorder_queue_t* queue = NULL;
   if (iree_status_is_ok(status)) {
-    status = iree_hal_replay_recorder_queue_allocate(
+    status = iree_hal_replay_recorder_queue_create(
         queue_family, device->recorder, device->device_id, queue_id, base_queue,
         base_device, device->host_allocator, &queue);
   }

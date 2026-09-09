@@ -220,11 +220,13 @@ bool iree_hip_stream_detach(hipStream_t handle,
 }
 
 void iree_hip_stream_retain(hipStream_t handle) {
-  if (handle) iree_atomic_ref_count_inc(&handle->ref_count);
+  if (!handle) return;
+  iree_atomic_ref_count_inc(&handle->ref_count);
 }
 
 void iree_hip_stream_release(hipStream_t handle) {
-  if (!handle || iree_atomic_ref_count_dec(&handle->ref_count) != 1) return;
+  if (!handle) return;
+  if (iree_atomic_ref_count_dec(&handle->ref_count) != 1) return;
 
   iree_slim_mutex_lock(&handle->mutex);
   IREE_ASSERT(handle->stream == NULL);
