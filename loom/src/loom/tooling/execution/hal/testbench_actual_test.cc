@@ -322,7 +322,6 @@ static iree_status_t InitializeFakeHalContext(
   }
 
   iree_hal_queue_family_initialize(/*ordinal=*/0, out_dispatch_queue_family);
-  *out_dispatch_queue = (iree_hal_queue_t){};
   out_dispatch_queue->queue_family = out_dispatch_queue_family;
   context->device_provider = &kFakeDeviceProvider;
   context->runtime = (loom_run_hal_runtime_t){

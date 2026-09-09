@@ -573,8 +573,7 @@ int iree_run_loom_main(int argc, char** argv,
     exit_code = run_result.exit_code;
   }
 
-  const bool had_error = !iree_status_is_ok(status);
-  if (had_error) {
+  if (!iree_status_is_ok(status)) {
     iree_status_fprint(stderr, status);
     iree_status_free(status);
     exit_code = 1;
