@@ -349,13 +349,15 @@ static iree_status_t iree_hal_amdgpu_semaphore_wait(
   iree_async_axis_t producer_axis = 0;
   uint64_t producer_epoch = 0;
   uint64_t producer_value = 0;
+  // A later producer may depend on host work performed after this wait
+  // returns. Its epoch is therefore not a safe substitute for this value.
   if (iree_hal_amdgpu_last_signal_load(&semaphore->last_signal,
                                        &last_signal_flags, &producer_axis,
                                        &producer_epoch, &producer_value) &&
       iree_all_bits_set(
           last_signal_flags,
           IREE_HAL_AMDGPU_LAST_SIGNAL_FLAG_PRODUCER_FRONTIER_EXACT) &&
-      producer_value >= value) {
+      producer_value == value) {
     iree_hal_amdgpu_host_queue_epoch_wait_t wait_state;
     if (iree_hal_amdgpu_logical_device_lookup_host_queue_epoch_wait(
             semaphore->device, producer_axis, &wait_state)) {
