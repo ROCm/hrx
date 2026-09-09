@@ -119,8 +119,8 @@ TEST_P(QueueDispatchTest,
   iree_hal_buffer_ref_t binding_refs[2];
   MakeScaleAndOffsetBindings(input_buffer, output_buffer, binding_refs);
   const iree_hal_buffer_ref_list_t bindings = {
-      .count = IREE_ARRAYSIZE(binding_refs),
-      .values = binding_refs,
+      /*.count=*/IREE_ARRAYSIZE(binding_refs),
+      /*.values=*/binding_refs,
   };
   const uint32_t constant_data[] = {5, 3};
   const iree_const_byte_span_t constants =

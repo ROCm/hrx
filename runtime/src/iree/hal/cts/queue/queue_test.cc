@@ -42,11 +42,10 @@ static bool FindDynamicQueueFamily(
     }
     const iree_hal_queue_family_ordinal_t family_ordinal =
         (iree_hal_queue_family_ordinal_t)i;
-    DynamicQueueFamily family = {
-        .ordinal = family_ordinal,
-        .identity = iree_hal_device_queue_family(device, family_ordinal),
-        .spec = family_spec,
-    };
+    DynamicQueueFamily family = {};
+    family.ordinal = family_ordinal;
+    family.identity = iree_hal_device_queue_family(device, family_ordinal);
+    family.spec = family_spec;
     if (!family.identity) return false;
     *out_family = family;
     return true;
@@ -297,19 +296,15 @@ TEST_P(QueueTest, QueueAcquisitionRejectsInvalidRequests) {
   const iree_hal_queue_execution_resource_ordinal_t out_of_range_resource =
       (iree_hal_queue_execution_resource_ordinal_t)
           family.spec->execution_resource_count;
-  params.execution_resources = {
-      .count = 1,
-      .ordinals = &out_of_range_resource,
-  };
+  params.execution_resources.count = 1;
+  params.execution_resources.ordinals = &out_of_range_resource;
   IREE_EXPECT_STATUS_IS(IREE_STATUS_INVALID_ARGUMENT,
                         iree_hal_device_acquire_queue(device_, family.identity,
                                                       &params, &output));
   EXPECT_EQ(sentinel, output);
 
-  params.execution_resources = {
-      .count = 1,
-      .ordinals = nullptr,
-  };
+  params.execution_resources.count = 1;
+  params.execution_resources.ordinals = nullptr;
   IREE_EXPECT_STATUS_IS(IREE_STATUS_INVALID_ARGUMENT,
                         iree_hal_device_acquire_queue(device_, family.identity,
                                                       &params, &output));
@@ -318,10 +313,8 @@ TEST_P(QueueTest, QueueAcquisitionRejectsInvalidRequests) {
   if (family.spec->execution_resource_count >= 1) {
     const iree_hal_queue_execution_resource_ordinal_t duplicate_resources[] = {
         0, 0};
-    params.execution_resources = {
-        .count = IREE_ARRAYSIZE(duplicate_resources),
-        .ordinals = duplicate_resources,
-    };
+    params.execution_resources.count = IREE_ARRAYSIZE(duplicate_resources);
+    params.execution_resources.ordinals = duplicate_resources;
     IREE_EXPECT_STATUS_IS(IREE_STATUS_INVALID_ARGUMENT,
                           iree_hal_device_acquire_queue(
                               device_, family.identity, &params, &output));
@@ -331,10 +324,8 @@ TEST_P(QueueTest, QueueAcquisitionRejectsInvalidRequests) {
   if (family.spec->execution_resource_count >= 2) {
     const iree_hal_queue_execution_resource_ordinal_t unordered_resources[] = {
         1, 0};
-    params.execution_resources = {
-        .count = IREE_ARRAYSIZE(unordered_resources),
-        .ordinals = unordered_resources,
-    };
+    params.execution_resources.count = IREE_ARRAYSIZE(unordered_resources);
+    params.execution_resources.ordinals = unordered_resources;
     IREE_EXPECT_STATUS_IS(IREE_STATUS_INVALID_ARGUMENT,
                           iree_hal_device_acquire_queue(
                               device_, family.identity, &params, &output));

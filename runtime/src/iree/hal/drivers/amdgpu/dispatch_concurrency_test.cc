@@ -16,32 +16,45 @@ static iree_hal_amdgpu_dispatch_concurrency_capabilities_t Capabilities(
     uint32_t major, uint32_t minor, uint32_t stepping,
     uint32_t maximum_waves_per_compute_unit,
     uint32_t simd_count_per_compute_unit) {
-  return {
-      .target_kind = IREE_HAL_AMDGPU_TARGET_KIND_EXACT,
-      .gfxip_version = {major, minor, stepping},
-      .maximum_waves_per_compute_unit = maximum_waves_per_compute_unit,
-      .simd_count_per_compute_unit = simd_count_per_compute_unit,
-  };
+  iree_hal_amdgpu_dispatch_concurrency_capabilities_t capabilities = {};
+  capabilities.target_kind = IREE_HAL_AMDGPU_TARGET_KIND_EXACT;
+  capabilities.gfxip_version.major = major;
+  capabilities.gfxip_version.minor = minor;
+  capabilities.gfxip_version.stepping = stepping;
+  capabilities.maximum_waves_per_compute_unit = maximum_waves_per_compute_unit;
+  capabilities.simd_count_per_compute_unit = simd_count_per_compute_unit;
+  return capabilities;
 }
 
 static iree_hal_amdgpu_dispatch_concurrency_inputs_t Inputs(
     const iree_hal_amdgpu_dispatch_concurrency_capabilities_t* capabilities,
     const iree_hal_amdgpu_queue_execution_resource_topology_t* topology,
     const iree_hal_amdgpu_kernel_descriptor_t* descriptor) {
-  return {
-      .capabilities = capabilities,
-      .execution_resource_topology = topology,
-      .kernel_descriptor = descriptor,
-      .maximum_dynamic_workgroup_local_memory_size = 64u * 1024u,
-  };
+  iree_hal_amdgpu_dispatch_concurrency_inputs_t inputs = {};
+  inputs.capabilities = capabilities;
+  inputs.execution_resource_topology = topology;
+  inputs.kernel_descriptor = descriptor;
+  inputs.maximum_dynamic_workgroup_local_memory_size = 64u * 1024u;
+  return inputs;
+}
+
+static iree_hal_amdgpu_queue_execution_resource_topology_t Topology(
+    uint32_t execution_unit_count, uint32_t execution_units_per_resource) {
+  iree_hal_amdgpu_queue_execution_resource_topology_t topology = {};
+  topology.execution_unit_count = execution_unit_count;
+  topology.execution_units_per_resource = execution_units_per_resource;
+  topology.partition_count = 1;
+  return topology;
 }
 
 static iree_hal_queue_dispatch_concurrency_params_t Workgroup(
     uint32_t size, uint32_t dynamic_local_memory = 0) {
-  return {
-      .workgroup_size = {size, 1, 1},
-      .dynamic_workgroup_local_memory = dynamic_local_memory,
-  };
+  iree_hal_queue_dispatch_concurrency_params_t params = {};
+  params.workgroup_size[0] = size;
+  params.workgroup_size[1] = 1;
+  params.workgroup_size[2] = 1;
+  params.dynamic_workgroup_local_memory = dynamic_local_memory;
+  return params;
 }
 
 TEST(DispatchConcurrencyTest, ModelsCuAndWgpSchedulingDomains) {
@@ -49,25 +62,19 @@ TEST(DispatchConcurrencyTest, ModelsCuAndWgpSchedulingDomains) {
       /*major=*/10, /*minor=*/3, /*stepping=*/0,
       /*maximum_waves_per_compute_unit=*/32,
       /*simd_count_per_compute_unit=*/2);
-  const iree_hal_amdgpu_queue_execution_resource_topology_t topology = {
-      .execution_unit_count = 8,
-      .execution_units_per_resource = 2,
-      .partition_count = 1,
-  };
+  const auto topology = Topology(/*execution_unit_count=*/8,
+                                 /*execution_units_per_resource=*/2);
   const iree_hal_queue_execution_resource_ordinal_t resource_ordinals[] = {0,
                                                                            2};
-  iree_hal_amdgpu_kernel_descriptor_t descriptor = {
-      .compute_pgm_rsrc1 =
-          31u
-          << IREE_HAL_AMDGPU_COMPUTE_PGM_RSRC1_GRANULATED_WORKITEM_VGPR_COUNT_SHIFT,
-      .kernel_code_properties =
-          IREE_HAL_AMDGPU_KERNEL_CODE_PROPERTY_ENABLE_WAVEFRONT_SIZE32,
-  };
+  iree_hal_amdgpu_kernel_descriptor_t descriptor = {};
+  descriptor.compute_pgm_rsrc1 =
+      31u
+      << IREE_HAL_AMDGPU_COMPUTE_PGM_RSRC1_GRANULATED_WORKITEM_VGPR_COUNT_SHIFT;
+  descriptor.kernel_code_properties =
+      IREE_HAL_AMDGPU_KERNEL_CODE_PROPERTY_ENABLE_WAVEFRONT_SIZE32;
   auto inputs = Inputs(&capabilities, &topology, &descriptor);
-  inputs.execution_resources = {
-      .count = IREE_ARRAYSIZE(resource_ordinals),
-      .ordinals = resource_ordinals,
-  };
+  inputs.execution_resources.count = IREE_ARRAYSIZE(resource_ordinals);
+  inputs.execution_resources.ordinals = resource_ordinals;
 
   iree_hal_queue_dispatch_concurrency_t cu_concurrency;
   IREE_ASSERT_OK(iree_hal_amdgpu_calculate_dispatch_concurrency(
@@ -92,21 +99,15 @@ TEST(DispatchConcurrencyTest, AppliesExactResourceAndLocalMemoryCapacity) {
       /*major=*/9, /*minor=*/4, /*stepping=*/2,
       /*maximum_waves_per_compute_unit=*/32,
       /*simd_count_per_compute_unit=*/4);
-  const iree_hal_amdgpu_queue_execution_resource_topology_t topology = {
-      .execution_unit_count = 16,
-      .execution_units_per_resource = 1,
-      .partition_count = 1,
-  };
+  const auto topology = Topology(/*execution_unit_count=*/16,
+                                 /*execution_units_per_resource=*/1);
   const iree_hal_queue_execution_resource_ordinal_t resource_ordinals[] = {
       0, 2, 4, 6};
-  const iree_hal_amdgpu_kernel_descriptor_t descriptor = {
-      .group_segment_fixed_size = 1024,
-  };
+  iree_hal_amdgpu_kernel_descriptor_t descriptor = {};
+  descriptor.group_segment_fixed_size = 1024;
   auto inputs = Inputs(&capabilities, &topology, &descriptor);
-  inputs.execution_resources = {
-      .count = IREE_ARRAYSIZE(resource_ordinals),
-      .ordinals = resource_ordinals,
-  };
+  inputs.execution_resources.count = IREE_ARRAYSIZE(resource_ordinals);
+  inputs.execution_resources.ordinals = resource_ordinals;
   inputs.maximum_dynamic_workgroup_local_memory_size = 64u * 1024u - 1024u;
 
   iree_hal_queue_dispatch_concurrency_t concurrency;
@@ -135,11 +136,8 @@ TEST(DispatchConcurrencyTest, AppliesBarrierAndScalarRegisterCapacity) {
       /*major=*/9, /*minor=*/0, /*stepping=*/0,
       /*maximum_waves_per_compute_unit=*/40,
       /*simd_count_per_compute_unit=*/4);
-  const iree_hal_amdgpu_queue_execution_resource_topology_t topology = {
-      .execution_unit_count = 4,
-      .execution_units_per_resource = 1,
-      .partition_count = 1,
-  };
+  const auto topology = Topology(/*execution_unit_count=*/4,
+                                 /*execution_units_per_resource=*/1);
   iree_hal_amdgpu_kernel_descriptor_t descriptor = {};
   const auto inputs = Inputs(&capabilities, &topology, &descriptor);
 
@@ -161,19 +159,15 @@ TEST(DispatchConcurrencyTest, DynamicVectorRegistersRemoveStaticLimit) {
       /*major=*/12, /*minor=*/0, /*stepping=*/0,
       /*maximum_waves_per_compute_unit=*/32,
       /*simd_count_per_compute_unit=*/2);
-  const iree_hal_amdgpu_queue_execution_resource_topology_t topology = {
-      .execution_unit_count = 4,
-      .execution_units_per_resource = 2,
-      .partition_count = 1,
-  };
-  iree_hal_amdgpu_kernel_descriptor_t descriptor = {
-      .compute_pgm_rsrc1 =
-          (63u
-           << IREE_HAL_AMDGPU_COMPUTE_PGM_RSRC1_GRANULATED_WORKITEM_VGPR_COUNT_SHIFT) |
-          IREE_HAL_AMDGPU_COMPUTE_PGM_RSRC1_WGP_MODE,
-      .kernel_code_properties =
-          IREE_HAL_AMDGPU_KERNEL_CODE_PROPERTY_ENABLE_WAVEFRONT_SIZE32,
-  };
+  const auto topology = Topology(/*execution_unit_count=*/4,
+                                 /*execution_units_per_resource=*/2);
+  iree_hal_amdgpu_kernel_descriptor_t descriptor = {};
+  descriptor.compute_pgm_rsrc1 =
+      (63u
+       << IREE_HAL_AMDGPU_COMPUTE_PGM_RSRC1_GRANULATED_WORKITEM_VGPR_COUNT_SHIFT) |
+      IREE_HAL_AMDGPU_COMPUTE_PGM_RSRC1_WGP_MODE;
+  descriptor.kernel_code_properties =
+      IREE_HAL_AMDGPU_KERNEL_CODE_PROPERTY_ENABLE_WAVEFRONT_SIZE32;
   const auto inputs = Inputs(&capabilities, &topology, &descriptor);
 
   iree_hal_queue_dispatch_concurrency_t static_concurrency;
@@ -196,15 +190,11 @@ TEST(DispatchConcurrencyTest, RejectsUnmodeledGfx125ModesWithoutPublishing) {
       /*major=*/12, /*minor=*/5, /*stepping=*/0,
       /*maximum_waves_per_compute_unit=*/32,
       /*simd_count_per_compute_unit=*/2);
-  const iree_hal_amdgpu_queue_execution_resource_topology_t topology = {
-      .execution_unit_count = 4,
-      .execution_units_per_resource = 2,
-      .partition_count = 1,
-  };
-  iree_hal_amdgpu_kernel_descriptor_t descriptor = {
-      .kernel_code_properties =
-          IREE_HAL_AMDGPU_KERNEL_CODE_PROPERTY_ENABLE_WAVEFRONT_SIZE32,
-  };
+  const auto topology = Topology(/*execution_unit_count=*/4,
+                                 /*execution_units_per_resource=*/2);
+  iree_hal_amdgpu_kernel_descriptor_t descriptor = {};
+  descriptor.kernel_code_properties =
+      IREE_HAL_AMDGPU_KERNEL_CODE_PROPERTY_ENABLE_WAVEFRONT_SIZE32;
   const auto inputs = Inputs(&capabilities, &topology, &descriptor);
 
   iree_hal_queue_dispatch_concurrency_t concurrency;
@@ -246,11 +236,8 @@ TEST(DispatchConcurrencyTest, RejectsUnmodeledGfx125ModesWithoutPublishing) {
 }
 
 TEST(DispatchConcurrencyTest, RejectsUnmodeledSchedulingModes) {
-  const iree_hal_amdgpu_queue_execution_resource_topology_t topology = {
-      .execution_unit_count = 4,
-      .execution_units_per_resource = 1,
-      .partition_count = 1,
-  };
+  const auto topology = Topology(/*execution_unit_count=*/4,
+                                 /*execution_units_per_resource=*/1);
   iree_hal_amdgpu_kernel_descriptor_t descriptor = {};
   iree_hal_queue_dispatch_concurrency_t concurrency = {
       /*.scheduling_domain_count=*/91,
@@ -272,11 +259,8 @@ TEST(DispatchConcurrencyTest, RejectsUnmodeledSchedulingModes) {
       /*major=*/11, /*minor=*/0, /*stepping=*/0,
       /*maximum_waves_per_compute_unit=*/32,
       /*simd_count_per_compute_unit=*/2);
-  const iree_hal_amdgpu_queue_execution_resource_topology_t gfx1100_topology = {
-      .execution_unit_count = 4,
-      .execution_units_per_resource = 2,
-      .partition_count = 1,
-  };
+  const auto gfx1100_topology = Topology(/*execution_unit_count=*/4,
+                                         /*execution_units_per_resource=*/2);
   inputs = Inputs(&gfx1100_capabilities, &gfx1100_topology, &descriptor);
   descriptor.compute_pgm_rsrc3 = 1;
   descriptor.kernel_code_properties =

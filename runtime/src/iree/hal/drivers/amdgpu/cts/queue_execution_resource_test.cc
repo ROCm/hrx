@@ -169,20 +169,16 @@ TEST_P(AmdgpuQueueExecutionResourceTest,
 
   iree_hal_queue_params_t first_params;
   iree_hal_queue_params_initialize(&first_params);
-  first_params.execution_resources = {
-      .count = first_resources.size(),
-      .ordinals = first_resources.data(),
-  };
+  first_params.execution_resources.count = first_resources.size();
+  first_params.execution_resources.ordinals = first_resources.data();
   Ref<iree_hal_queue_t> first_queue;
   IREE_ASSERT_OK(iree_hal_device_acquire_queue(
       device_, queue_family_, &first_params, first_queue.out()));
 
   iree_hal_queue_params_t second_params;
   iree_hal_queue_params_initialize(&second_params);
-  second_params.execution_resources = {
-      .count = second_resources.size(),
-      .ordinals = second_resources.data(),
-  };
+  second_params.execution_resources.count = second_resources.size();
+  second_params.execution_resources.ordinals = second_resources.data();
   Ref<iree_hal_queue_t> second_queue;
   IREE_ASSERT_OK(iree_hal_device_acquire_queue(
       device_, queue_family_, &second_params, second_queue.out()));

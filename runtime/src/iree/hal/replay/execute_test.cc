@@ -1121,9 +1121,9 @@ TEST(ReplayExecuteTest, ReplaysDynamicQueueAcquisition) {
   iree_hal_semaphore_t* signal_semaphores[] = {semaphore};
   uint64_t signal_values[] = {1};
   const iree_hal_semaphore_list_t signal_list = {
-      .count = IREE_ARRAYSIZE(signal_semaphores),
-      .semaphores = signal_semaphores,
-      .payload_values = signal_values,
+      /*.count=*/IREE_ARRAYSIZE(signal_semaphores),
+      /*.semaphores=*/signal_semaphores,
+      /*.payload_values=*/signal_values,
   };
   IREE_ASSERT_OK(iree_hal_queue_barrier(queue, iree_hal_semaphore_list_empty(),
                                         signal_list,
