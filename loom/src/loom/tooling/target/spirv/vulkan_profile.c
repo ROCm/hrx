@@ -547,13 +547,9 @@ void loom_spirv_vulkan_hal_target_profile_storage_deinitialize(
   *storage = (loom_spirv_vulkan_hal_target_profile_storage_t){0};
 }
 
-iree_status_t loom_spirv_vulkan_hal_profile_initialize_target_bundle(
-    const loom_spirv_vulkan_hal_profile_facts_t* facts,
-    loom_target_bundle_storage_t* out_storage) {
+iree_status_t loom_spirv_vulkan_hal_profile_validate(
+    const loom_spirv_vulkan_hal_profile_facts_t* facts) {
   IREE_ASSERT_ARGUMENT(facts);
-  IREE_ASSERT_ARGUMENT(out_storage);
-
-  *out_storage = (loom_target_bundle_storage_t){0};
 
   if (facts->api_version < LOOM_SPIRV_VULKAN_API_VERSION_1_3) {
     return iree_make_status(
@@ -571,6 +567,17 @@ iree_status_t loom_spirv_vulkan_hal_profile_initialize_target_bundle(
       facts, LOOM_SPIRV_VULKAN_HAL_PROFILE_FLAG_SHADER_INT64,
       IREE_SV("Vulkan device does not expose shaderInt64 required by raw BDA "
               "SPIR-V")));
+  return iree_ok_status();
+}
+
+iree_status_t loom_spirv_vulkan_hal_profile_initialize_target_bundle(
+    const loom_spirv_vulkan_hal_profile_facts_t* facts,
+    loom_target_bundle_storage_t* out_storage) {
+  IREE_ASSERT_ARGUMENT(facts);
+  IREE_ASSERT_ARGUMENT(out_storage);
+
+  *out_storage = (loom_target_bundle_storage_t){0};
+  IREE_RETURN_IF_ERROR(loom_spirv_vulkan_hal_profile_validate(facts));
 
   *out_storage = (loom_target_bundle_storage_t){
       .snapshot = *loom_spirv_low_target_bundle_vulkan1_3.snapshot,

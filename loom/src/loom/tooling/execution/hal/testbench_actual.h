@@ -86,10 +86,6 @@ iree_status_t loom_run_hal_testbench_context_validate_explicit_device(
 iree_status_t loom_run_hal_testbench_context_ensure_runtime(
     loom_run_hal_testbench_context_t* context);
 
-// Returns the driver component of an IREE --device= URI.
-iree_string_view_t loom_run_hal_testbench_device_uri_driver_name(
-    iree_string_view_t device_uri);
-
 // Returns host-visible buffer parameters suitable for correctness execution.
 iree_hal_buffer_params_t loom_run_hal_testbench_host_visible_buffer_params(
     void);
@@ -116,6 +112,8 @@ typedef struct loom_run_hal_testbench_actual_provider_options_t {
   const loom_run_module_t* run_module;
   // User-selected pass pipeline.
   iree_string_view_t pipeline;
+  // Optional explicit `family:selector` compiler target.
+  iree_string_view_t target;
   // Sanitizer checks inserted by the target pipeline.
   loom_sanitizer_options_t sanitizer;
   // Config bindings materialized into the private compile copy.
@@ -146,6 +144,8 @@ typedef struct loom_run_hal_testbench_actual_provider_t {
   const loom_run_module_t* run_module;
   // User-selected pass pipeline.
   iree_string_view_t pipeline;
+  // Optional explicit `family:selector` compiler target.
+  iree_string_view_t target;
   // Sanitizer checks inserted by the target pipeline.
   loom_sanitizer_options_t sanitizer;
   // Config bindings materialized into the private compile copy.
@@ -211,7 +211,7 @@ typedef struct loom_run_hal_testbench_actual_provider_t {
   // True when |candidate| has been initialized.
   bool candidate_initialized;
   // True when |compile_device_target| owns provider-selected target storage.
-  bool compile_device_target_initialized;
+  bool owns_compile_device_target;
   // True when |prepared_candidate| has been initialized.
   bool prepared_candidate_initialized;
   // True when HAL candidate emission populated the caller's compile report.
@@ -233,6 +233,8 @@ typedef struct loom_run_hal_testbench_actual_sequence_options_t {
   const loom_run_module_t* run_module;
   // User-selected pass pipeline.
   iree_string_view_t pipeline;
+  // Optional explicit `family:selector` compiler target.
+  iree_string_view_t target;
   // Sanitizer checks inserted by the target pipeline.
   loom_sanitizer_options_t sanitizer;
   // Config bindings materialized into each private compile copy.

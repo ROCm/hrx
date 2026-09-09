@@ -49,6 +49,10 @@ IREE_FLAG(string, pipeline, "default",
           "normal compiler pipeline. 'none' disables all compiler "
           "transformations and requires emission-ready input. Use '@symbol' "
           "or a comma-separated pass list for an explicit pipeline.");
+IREE_FLAG(string, target, "",
+          "Optional compiler target as `family:selector` for every HAL kernel "
+          "launch. The selected device must be able to load the target. Empty "
+          "selects a compatible target from the device and authored kernel.");
 IREE_FLAG_LIST(
     string, config,
     "Compile-time config binding for HAL kernel launches. Repeat as "
@@ -315,6 +319,7 @@ static iree_status_t iree_test_loom_configure_hal_actual_sequence(
       .target_environment = configuration->target_environment,
       .run_module = run_module,
       .pipeline = iree_make_cstring_view(FLAG_pipeline),
+      .target = iree_make_cstring_view(FLAG_target),
       .sanitizer = *sanitizer_options,
       .config_set = config_set,
       .case_plan = case_plan,
@@ -529,6 +534,8 @@ static void iree_test_loom_print_agents_markdown(FILE* stream) {
       "iree-test-loom test.loom --library=motifs.loombc\n"
       "iree-test-loom module.loom --max-samples-per-case=16\n"
       "iree-test-loom module.loom --pipeline=@hal_actual_pipeline\n"
+      "iree-test-loom module.loom --device=amdgpu "
+      "--target=amdgpu:gfx11-generic\n"
       "iree-test-loom module.loom --config=model.hidden_size=4096\n"
       "iree-test-loom module.loom --config-file=model_config.jsonc\n"
       "iree-test-loom module.loom --sanitizer=tsan\n"
@@ -548,8 +555,10 @@ static void iree_test_loom_print_agents_markdown(FILE* stream) {
       "launches use the selected HAL artifact provider, target provider, "
       "and HAL device linked into this binary. "
       "An explicit `--device=DRIVER` is validated even when the selected cases "
-      "contain no kernel launches; unavailable selections list the drivers "
-      "present in this installation. "
+      "contain no kernel launches; unavailable selections identify the "
+      "missing driver. "
+      "`--target=family:selector` forces the compiler target for every HAL "
+      "kernel without changing the device selected by `--device`. "
       "`--pipeline=default|none|@symbol|pass,list` controls the HAL kernel "
       "compile pipeline. `none` disables all compiler transformations and "
       "requires emission-ready input. `--config=key=value` and "

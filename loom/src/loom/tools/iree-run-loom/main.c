@@ -13,12 +13,11 @@
 
 #include "iree/base/api.h"
 #include "iree/base/tooling/flags.h"
+#include "iree/tooling/device_util.h"
 #include "iree/tooling/value_io.h"
-#include "loom/error/diagnostic.h"
 #include "loom/ir/module.h"
 #include "loom/sanitizer/options.h"
 #include "loom/tooling/cli/help.h"
-#include "loom/tooling/compile/pipeline.h"
 #include "loom/tooling/compile/report_capture.h"
 #include "loom/tooling/context/context.h"
 #include "loom/tooling/execution/execution_backend.h"
@@ -26,14 +25,16 @@
 #include "loom/tooling/execution/session.h"
 #include "loom/tooling/io/file.h"
 
-IREE_FLAG(string, backend, "",
-          "Registered compilation and execution backend to run.");
 IREE_FLAG(string, pipeline, "default",
           "Pass pipeline to run before execution. Use 'default' or empty for "
           "the comprehensive prepared-low pipeline. 'none' disables all "
           "compiler transformations and passes the input directly to the "
           "selected backend. Use '@symbol' to run a module-local pass.pipeline "
           "or a comma-separated pass list such as 'canonicalize,cse'.");
+IREE_FLAG(string, target, "",
+          "Optional compiler target as `family:selector`. The selected HAL "
+          "device must be able to load the target. Empty selects the best "
+          "compatible target from the device.");
 IREE_FLAG(string, sanitizer, "none",
           "Sanitizer checks to insert in the default target pipeline: none, "
           "all, or a '|'-separated set of access, value, operation, and race.");
@@ -53,7 +54,7 @@ IREE_FLAG_NAMED(
     "JSON, 'text-summary'/'text-details' for human-readable text, or "
     "empty/'none'.");
 IREE_FLAG_NAMED(string, emit_target_artifact, "emit-target-artifact", "",
-                "Optional output path for the selected HAL backend's "
+                "Optional output path for the selected target's "
                 "target-native artifact, such as AMDGPU HSACO.");
 IREE_FLAG_NAMED(string, emit_hal_executable, "emit-hal-executable", "",
                 "Optional output path for the executable artifact passed to "
@@ -61,8 +62,8 @@ IREE_FLAG_NAMED(string, emit_hal_executable, "emit-hal-executable", "",
 IREE_FLAG_NAMED(bool, emit_only, "emit-only", false,
                 "Stops after HAL executable emission without dispatching.");
 IREE_FLAG_NAMED(bool, probe_hal, "probe-hal", false,
-                "Runs the selected backend's target probe, prints the result, "
-                "and exits. Not all backends support probing.");
+                "Runs the selected HAL device's target probe, prints the "
+                "result, and exits. Not all providers support probing.");
 
 typedef struct iree_run_loom_hal_flag_state_t {
   // Dispatch constants in HAL ABI order.
@@ -298,7 +299,7 @@ static iree_status_t iree_run_loom_one_shot_options_initialize(
     return iree_make_status(
         IREE_STATUS_INVALID_ARGUMENT,
         "--emit-target-artifact, --emit-hal-executable, and --emit-only "
-        "require a HAL backend");
+        "require a HAL execution provider selected by --device");
   }
   return iree_ok_status();
 }
@@ -318,50 +319,28 @@ static iree_status_t iree_run_loom_sanitizer_options_initialize(
       out_options);
 }
 
-static iree_status_t iree_run_loom_run_pass_pipeline(
-    const iree_run_loom_configuration_t* configuration,
-    loom_run_session_t* session, loom_run_module_t* run_module,
-    const loom_compile_options_t* compile_options,
-    loom_compile_pipeline_result_t* out_result) {
-  loom_compile_pipeline_options_t pipeline_options = {0};
-  loom_compile_pipeline_options_initialize(&pipeline_options);
-  pipeline_options.pipeline = iree_make_cstring_view(FLAG_pipeline);
-  pipeline_options.target_pipeline_options =
-      compile_options->target_pipeline_options;
-  pipeline_options.target_environment = configuration->target_environment;
-  pipeline_options.low_descriptor_registry =
-      loom_run_session_low_descriptor_registry(session);
-  pipeline_options.source_resolver =
-      loom_run_module_source_resolver(run_module);
-  pipeline_options.report = compile_options->report;
-  pipeline_options.diagnostic_sink = (loom_diagnostic_sink_t){
-      .fn = loom_diagnostic_stderr_sink,
-  };
-  return loom_compile_run_pipeline(run_module->module, &pipeline_options,
-                                   loom_run_session_block_pool(session),
-                                   out_result);
-}
-
-static iree_status_t iree_run_loom_make_unknown_backend_status(
-    iree_string_view_t backend_name,
+static iree_status_t iree_run_loom_select_execution_backend(
     const loom_run_execution_backend_registry_t* backend_registry,
-    iree_allocator_t allocator) {
-  iree_string_builder_t backend_names;
-  iree_string_builder_initialize(allocator, &backend_names);
-  iree_status_t status = loom_run_execution_backend_registry_format_names(
-      backend_registry, &backend_names);
-  if (!iree_status_is_ok(status)) {
-    iree_string_builder_deinitialize(&backend_names);
-    return status;
+    const loom_run_execution_backend_t** out_backend) {
+  *out_backend = NULL;
+  iree_string_view_t device_uri = iree_string_view_empty();
+  iree_string_view_t device_driver_name = iree_string_view_empty();
+  IREE_RETURN_IF_ERROR(loom_run_execution_select_device_driver(
+      iree_hal_device_flag_list(), &device_uri, &device_driver_name));
+
+  const loom_run_execution_backend_t* backend =
+      loom_run_execution_backend_registry_lookup_device_driver(
+          backend_registry, device_driver_name);
+  if (backend == NULL) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "--device=%.*s selects HAL driver '%.*s', which is not available in "
+        "this Loom installation (no linked execution provider)",
+        (int)device_uri.size, device_uri.data, (int)device_driver_name.size,
+        device_driver_name.data);
   }
-  status = iree_make_status(
-      IREE_STATUS_INVALID_ARGUMENT,
-      "unknown --backend='%.*s'; expected registered backend in [%.*s]",
-      (int)backend_name.size, backend_name.data,
-      (int)iree_string_builder_size(&backend_names),
-      iree_string_builder_buffer(&backend_names));
-  iree_string_builder_deinitialize(&backend_names);
-  return status;
+  *out_backend = backend;
+  return iree_ok_status();
 }
 
 static void iree_run_loom_print_agents_markdown(FILE* stream) {
@@ -378,18 +357,20 @@ static void iree_run_loom_print_agents_markdown(FILE* stream) {
       "### HAL flow\n"
       "\n"
       "```shell\n"
-      "iree-run-loom kernel.loom --backend=amdgpu-hal --function=q8_kernel "
+      "iree-run-loom kernel.loom --device=amdgpu --function=q8_kernel "
       "\\\n"
       "  --kernel-input-buffer=64xf32=0 "
       "--expected-kernel-buffer=64xf32=0\n"
-      "iree-run-loom kernel.loom --backend=amdgpu-hal --function=q8_kernel "
+      "iree-run-loom kernel.loom --device=amdgpu --function=q8_kernel "
       "\\\n"
       "  --workgroup-count=64,8,1 --kernel-input-value=i32=512 \\\n"
       "  --kernel-input-buffer=4096xf32=0\n"
-      "iree-run-loom kernel.loom --backend=amdgpu-hal --emit-only \\\n"
+      "iree-run-loom kernel.loom --device=amdgpu \\\n"
+      "  --target=amdgpu:gfx11-generic --function=q8_kernel\n"
+      "iree-run-loom kernel.loom --device=amdgpu --emit-only \\\n"
       "  --emit-target-artifact=kernel.hsaco "
       "--emit-hal-executable=kernel.bin\n"
-      "iree-run-loom --backend=amdgpu-hal --probe-hal\n"
+      "iree-run-loom --device=amdgpu --probe-hal\n"
       "```\n"
       "\n"
       "`--kernel-input-buffer` and `--expected-kernel-buffer` use the HAL "
@@ -397,19 +378,21 @@ static void iree_run_loom_print_agents_markdown(FILE* stream) {
       "`--workgroup-count` overrides a static\n"
       "`kernel.launch.config` dispatch count when the test needs a different\n"
       "grid. `--emit-only` is HAL-only and stops after producing artifacts.\n"
+      "`--target=family:selector` forces a compatible compiler target without "
+      "changing the device selected by `--device`.\n"
       "\n"
       "### Debugging\n"
       "\n"
       "```shell\n"
       "iree-run-loom module.loom --compile-report=summary\n"
-      "iree-run-loom prepared-low.loom --backend=amdgpu-hal \\\n"
+      "iree-run-loom prepared-low.loom --device=amdgpu \\\n"
       "  --function=kernel --pipeline=none\n"
       "iree-run-loom module.loom --pipeline=@my_pipeline\n"
       "```\n"
       "\n"
       "`--pipeline=none` disables all compiler transformations. The input "
       "must\n"
-      "already satisfy the selected backend's complete emission contract.\n"
+      "already satisfy the selected target emitter's complete contract.\n"
       "\n"
       "`--compile-report=summary|details` prints the same structured compile\n"
       "report family as `loom-compile`. Use `iree-test-loom` once the "
@@ -427,14 +410,14 @@ int iree_run_loom_main(int argc, char** argv,
       "export.\n"
       "\n"
       "Usage:\n"
-      "  iree-run-loom [file.loom] --backend=name --function=name "
+      "  iree-run-loom [file.loom] --device=URI --function=name "
       "--binding=...\n"
-      "  cat module.loom | iree-run-loom - --backend=name "
+      "  cat module.loom | iree-run-loom - --device=URI "
       "--function=name\n"
       "  iree-run-loom --agents_md\n"
       "\n"
-      "Execution backends compile target-low kernels into runtime artifacts "
-      "and dispatch them through their production runtime path.\n");
+      "The selected HAL device determines the linked compiler and execution "
+      "provider used to prepare and dispatch the kernel.\n");
   for (int i = 1; i < argc; ++i) {
     if (loom_tooling_cli_is_agents_markdown_arg(argv[i])) {
       iree_run_loom_print_agents_markdown(stdout);
@@ -450,36 +433,31 @@ int iree_run_loom_main(int argc, char** argv,
   iree_allocator_t allocator = iree_allocator_system();
   const loom_run_execution_backend_registry_t* backend_registry =
       &configuration->execution_backend_registry;
-  const iree_string_view_t backend_name = iree_make_cstring_view(FLAG_backend);
-  const loom_run_execution_backend_t* backend =
-      loom_run_execution_backend_registry_lookup(backend_registry,
-                                                 backend_name);
+  const loom_run_execution_backend_t* backend = NULL;
+  iree_status_t status =
+      iree_run_loom_select_execution_backend(backend_registry, &backend);
   if (FLAG_probe_hal) {
     loom_run_one_shot_result_t probe_result = {0};
     loom_run_one_shot_result_initialize(allocator, &probe_result);
-    iree_status_t probe_status = iree_ok_status();
-    if (backend == NULL) {
-      probe_status = iree_run_loom_make_unknown_backend_status(
-          backend_name, backend_registry, allocator);
-    } else if (backend->probe == NULL) {
-      probe_status = iree_make_status(
+    if (iree_status_is_ok(status) && backend->probe == NULL) {
+      status = iree_make_status(
           IREE_STATUS_INVALID_ARGUMENT,
-          "--probe-hal requires --backend to name a probeable backend");
-    } else {
+          "--probe-hal requires --device to select a probeable HAL provider");
+    } else if (iree_status_is_ok(status)) {
       const loom_run_one_shot_probe_request_t probe_request = {
           .host_allocator = allocator,
           .result = &probe_result,
       };
-      probe_status = backend->probe(backend, &probe_request);
+      status = backend->probe(backend, &probe_request);
     }
-    if (iree_status_is_ok(probe_status)) {
-      probe_status = loom_tooling_write_stdout(
+    if (iree_status_is_ok(status)) {
+      status = loom_tooling_write_stdout(
           iree_string_builder_view(&probe_result.output));
     }
     int probe_exit_code = 0;
-    if (!iree_status_is_ok(probe_status)) {
-      iree_status_fprint(stderr, probe_status);
-      iree_status_free(probe_status);
+    if (!iree_status_is_ok(status)) {
+      iree_status_fprint(stderr, status);
+      iree_status_free(status);
       probe_exit_code = 1;
     }
     loom_run_one_shot_result_deinitialize(&probe_result);
@@ -496,19 +474,13 @@ int iree_run_loom_main(int argc, char** argv,
   loom_run_one_shot_result_initialize(allocator, &run_result);
   int exit_code = 0;
 
-  iree_status_t status = iree_ok_status();
-  if (argc > 2) {
+  if (iree_status_is_ok(status) && argc > 2) {
     status = iree_make_status(
         IREE_STATUS_INVALID_ARGUMENT,
         "iree-run-loom accepts at most one input file or '-' for stdin; got %d "
         "inputs",
         argc - 1);
   }
-  if (iree_status_is_ok(status) && backend == NULL) {
-    status = iree_run_loom_make_unknown_backend_status(
-        backend_name, backend_registry, allocator);
-  }
-
   if (iree_status_is_ok(status)) {
     loom_run_session_options_t session_options = {0};
     loom_run_session_options_initialize(&session_options);
@@ -537,7 +509,6 @@ int iree_run_loom_main(int argc, char** argv,
   }
   loom_compile_options_t compile_options = {0};
   loom_compile_options_initialize(&compile_options);
-  loom_compile_pipeline_result_t pipeline_result = {0};
   if (iree_status_is_ok(status)) {
     status = iree_run_loom_sanitizer_options_initialize(
         &compile_options.target_pipeline_options.sanitizer);
@@ -580,15 +551,11 @@ int iree_run_loom_main(int argc, char** argv,
         loom_run_module_source_resolver(&run_module);
   }
   if (iree_status_is_ok(status)) {
-    status =
-        iree_run_loom_run_pass_pipeline(configuration, &session, &run_module,
-                                        &compile_options, &pipeline_result);
-    if (iree_status_is_ok(status) && pipeline_result.pass.error_count != 0) {
-      exit_code = 1;
-    }
-  }
-  if (iree_status_is_ok(status) && exit_code == 0) {
     const loom_run_one_shot_request_t run_request = {
+        .session = &session,
+        .target_environment = configuration->target_environment,
+        .pipeline = iree_make_cstring_view(FLAG_pipeline),
+        .target = iree_make_cstring_view(FLAG_target),
         .run_module = &run_module,
         .compile_options = &compile_options,
         .options = &one_shot_options,
@@ -606,8 +573,7 @@ int iree_run_loom_main(int argc, char** argv,
     exit_code = run_result.exit_code;
   }
 
-  const bool had_error = !iree_status_is_ok(status);
-  if (had_error) {
+  if (!iree_status_is_ok(status)) {
     iree_status_fprint(stderr, status);
     iree_status_free(status);
     exit_code = 1;
@@ -615,7 +581,6 @@ int iree_run_loom_main(int argc, char** argv,
 
   loom_compile_report_capture_deinitialize(&compile_report_capture);
   loom_run_one_shot_result_deinitialize(&run_result);
-  loom_compile_pipeline_result_deinitialize(&pipeline_result);
   loom_run_module_deinitialize(&run_module);
   iree_io_file_contents_free(contents);
   loom_run_session_deinitialize(&session);

@@ -43,6 +43,13 @@ static iree_status_t loom_run_execution_provider_verify(
                               "execution backend %" PRIhsz,
                               (int)provider->name.size, provider->name.data, i);
     }
+    if (iree_string_view_is_empty(
+            iree_string_view_trim(backend->device_driver_name))) {
+      return iree_make_status(
+          IREE_STATUS_INVALID_ARGUMENT,
+          "loom execution backend '%.*s' has no HAL device driver name",
+          (int)backend->name.size, backend->name.data);
+    }
     if (backend->run_one_shot == NULL) {
       return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                               "loom execution backend '%.*s' has no one-shot "
@@ -93,6 +100,33 @@ loom_run_execution_provider_verify_unique_execution_backend_name(
   return iree_ok_status();
 }
 
+static iree_status_t
+loom_run_execution_provider_verify_unique_execution_device_driver(
+    const loom_run_execution_provider_set_t* provider_set,
+    iree_host_size_t provider_index, iree_host_size_t backend_index) {
+  const loom_run_execution_backend_t* backend =
+      provider_set->providers[provider_index]
+          ->execution_backends[backend_index];
+  for (iree_host_size_t i = 0; i <= provider_index; ++i) {
+    const loom_run_execution_provider_t* provider = provider_set->providers[i];
+    const iree_host_size_t end =
+        i == provider_index ? backend_index : provider->execution_backend_count;
+    for (iree_host_size_t j = 0; j < end; ++j) {
+      const loom_run_execution_backend_t* existing =
+          provider->execution_backends[j];
+      if (iree_string_view_equal(existing->device_driver_name,
+                                 backend->device_driver_name)) {
+        return iree_make_status(
+            IREE_STATUS_INVALID_ARGUMENT,
+            "duplicate Loom execution HAL device driver '%.*s'",
+            (int)backend->device_driver_name.size,
+            backend->device_driver_name.data);
+      }
+    }
+  }
+  return iree_ok_status();
+}
+
 iree_status_t loom_run_execution_provider_set_verify(
     const loom_run_execution_provider_set_t* provider_set) {
   if (provider_set == NULL) {
@@ -111,6 +145,9 @@ iree_status_t loom_run_execution_provider_set_verify(
     for (iree_host_size_t j = 0; j < provider->execution_backend_count; ++j) {
       IREE_RETURN_IF_ERROR(
           loom_run_execution_provider_verify_unique_execution_backend_name(
+              provider_set, i, j));
+      IREE_RETURN_IF_ERROR(
+          loom_run_execution_provider_verify_unique_execution_device_driver(
               provider_set, i, j));
     }
   }

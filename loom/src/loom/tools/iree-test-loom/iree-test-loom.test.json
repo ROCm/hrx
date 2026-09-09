@@ -105,7 +105,7 @@
         "contains": [
           "--device=loom-unavailable",
           "not available in this Loom installation",
-          "available --device drivers:"
+          "no linked device provider"
         ]
       }
     }

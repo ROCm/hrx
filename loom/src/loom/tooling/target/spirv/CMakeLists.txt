@@ -48,6 +48,7 @@ loom_cc_library(
     ::vulkan_profile
     iree::base
     loom::target::arch::spirv::facts
+    loom::target::arch::spirv::profile
     loom::tooling::execution::hal::device_provider
     loom::tooling::execution::hal::runtime
   PUBLIC

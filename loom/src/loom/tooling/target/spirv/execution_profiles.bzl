@@ -20,22 +20,32 @@ load(
     "VULKAN_DEVICE_RESOURCE",
 )
 
-SPIRV_VULKAN_HARDWARE_PROFILE = loom_execution_profile(
+def _spirv_vulkan_hardware_profile(name, runner_args = []):
+    return loom_execution_profile(
+        name = name,
+        build_requirements = [
+            TARGET_ARCH_SPIRV,
+            EMIT_SPIRV,
+            EXECUTE_IREE_HAL,
+            HAL_VULKAN,
+        ],
+        executor = "hardware",
+        resource_group = "loom-vulkan-tests",
+        run_requirements = [VULKAN_DEVICE_RESOURCE],
+        runner_args = [
+            "--device=vulkan",
+            "--vulkan_validation_layers=false",
+        ] + runner_args,
+        sanitizer_suppressions = vulkan_suppressions,
+        target_class = "gpu",
+        target_family = "spirv",
+    )
+
+SPIRV_VULKAN_HARDWARE_PROFILE = _spirv_vulkan_hardware_profile(
     name = "spirv_vulkan_hardware",
-    build_requirements = [
-        TARGET_ARCH_SPIRV,
-        EMIT_SPIRV,
-        EXECUTE_IREE_HAL,
-        HAL_VULKAN,
-    ],
-    executor = "hardware",
-    resource_group = "loom-vulkan-tests",
-    run_requirements = [VULKAN_DEVICE_RESOURCE],
-    runner_args = [
-        "--device=vulkan",
-        "--vulkan_validation_layers=false",
-    ],
-    sanitizer_suppressions = vulkan_suppressions,
-    target_class = "gpu",
-    target_family = "spirv",
+)
+
+SPIRV_VULKAN_EXPLICIT_TARGET_HARDWARE_PROFILE = _spirv_vulkan_hardware_profile(
+    name = "spirv_vulkan_explicit_target_hardware",
+    runner_args = ["--target=spirv:vulkan1.3+bda"],
 )

@@ -137,6 +137,10 @@ iree_status_t loom_spirv_vulkan_hal_profile_query(
     iree_hal_device_t* device,
     loom_spirv_vulkan_hal_profile_facts_t* out_facts);
 
+// Validates that |facts| support the built-in Vulkan 1.3 raw-BDA profile.
+iree_status_t loom_spirv_vulkan_hal_profile_validate(
+    const loom_spirv_vulkan_hal_profile_facts_t* facts);
+
 // Queries active Vulkan cooperative matrix rows into caller-owned storage.
 iree_status_t loom_spirv_vulkan_hal_query_cooperative_matrix_properties(
     iree_hal_device_t* device, iree_allocator_t allocator,

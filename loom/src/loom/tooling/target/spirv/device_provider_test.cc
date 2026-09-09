@@ -67,7 +67,9 @@ static iree_hal_vulkan_features_t BaselineVulkanFeatures() {
           /*.atomics=*/0};
 }
 
-static iree_status_t CreateBaselineDeviceSpec(DeviceSpecPtr* out_device_spec) {
+static iree_status_t CreateDeviceSpec(
+    iree_hal_vulkan_features_t enabled_features,
+    DeviceSpecPtr* out_device_spec) {
   out_device_spec->reset();
   const iree_hal_device_dispatch_spec_t dispatch = {
       /*.launch=*/
@@ -99,7 +101,7 @@ static iree_status_t CreateBaselineDeviceSpec(DeviceSpecPtr* out_device_spec) {
       /*.api_version=*/LOOM_SPIRV_VULKAN_API_VERSION_1_3,
       /*.driver_version=*/1,
       /*.physical_device_type=*/2,
-      /*.enabled_features=*/BaselineVulkanFeatures(),
+      /*.enabled_features=*/enabled_features,
       /*.flags=*/IREE_HAL_VULKAN_DEVICE_SPEC_FLAG_NONE,
   };
   iree_host_size_t vulkan_payload_size = 0;
@@ -173,21 +175,32 @@ static iree_status_t CreateBaselineDeviceSpec(DeviceSpecPtr* out_device_spec) {
 class SpirvDeviceProviderTest : public ::testing::Test {
  protected:
   void TearDown() override {
-    loom_spirv_vulkan_device_provider.deinitialize_target(
-        &loom_spirv_vulkan_device_provider, &target_, iree_allocator_system());
+    if (target_owned_) {
+      loom_spirv_vulkan_device_provider.deinitialize_target(
+          &loom_spirv_vulkan_device_provider, &target_,
+          iree_allocator_system());
+    }
   }
 
-  iree_status_t SelectBaselineTarget() {
-    IREE_RETURN_IF_ERROR(CreateBaselineDeviceSpec(&device_spec_));
+  iree_status_t InitializeRuntime(
+      iree_hal_vulkan_features_t enabled_features = BaselineVulkanFeatures()) {
+    IREE_RETURN_IF_ERROR(CreateDeviceSpec(enabled_features, &device_spec_));
     device_.device_spec = device_spec_.get();
     iree_hal_resource_initialize(&kFakeHalDeviceVtable, &device_.resource);
     iree_hal_queue_family_initialize(/*ordinal=*/0, &dispatch_queue_family_);
     dispatch_queue_.queue_family = &dispatch_queue_family_;
     runtime_.device = reinterpret_cast<iree_hal_device_t*>(&device_);
     runtime_.dispatch_queue = &dispatch_queue_;
-    return loom_spirv_vulkan_device_provider.select_target(
+    return iree_ok_status();
+  }
+
+  iree_status_t SelectBaselineTarget() {
+    IREE_RETURN_IF_ERROR(InitializeRuntime());
+    IREE_RETURN_IF_ERROR(loom_spirv_vulkan_device_provider.select_target(
         &loom_spirv_vulkan_device_provider, &runtime_, iree_allocator_system(),
-        &target_);
+        &target_));
+    target_owned_ = true;
+    return iree_ok_status();
   }
 
   // Immutable device-spec storage used by |device_|.
@@ -206,6 +219,8 @@ class SpirvDeviceProviderTest : public ::testing::Test {
 
   // Device target selected and owned by the provider.
   loom_device_target_t target_ = {};
+  // True when |target_| carries dynamically allocated device profile storage.
+  bool target_owned_ = false;
 };
 
 TEST_F(SpirvDeviceProviderTest, SelectsRawBdaTarget) {
@@ -226,6 +241,39 @@ TEST_F(SpirvDeviceProviderTest, SelectsRawBdaTarget) {
   EXPECT_EQ(target_bundle->snapshot->default_pointer_bitwidth, 64u);
   EXPECT_EQ(target_bundle->snapshot->offset_bitwidth, 64u);
   EXPECT_EQ(target_bundle->export_plan->abi_kind, LOOM_TARGET_ABI_HAL_KERNEL);
+}
+
+TEST_F(SpirvDeviceProviderTest, SelectsForcedStaticBdaTarget) {
+  IREE_ASSERT_OK(InitializeRuntime());
+  const loom_spirv_target_profile_t* requested_profile = nullptr;
+  IREE_ASSERT_OK(loom_spirv_target_profile_select(IREE_SV("vulkan1.3+bda"),
+                                                  &requested_profile));
+
+  IREE_ASSERT_OK(loom_device_provider_select_profile_target(
+      &loom_spirv_vulkan_device_provider, &runtime_, &requested_profile->base,
+      &target_));
+
+  EXPECT_EQ(target_.artifact_target.target_profile, &requested_profile->base);
+  EXPECT_TRUE(iree_string_view_equal(target_.artifact_target.target_key,
+                                     IREE_SV("vulkan1.3+bda")));
+  EXPECT_EQ(target_.executable_target,
+            &iree_hal_device_spec_executables(device_spec_.get())->targets[0]);
+}
+
+TEST_F(SpirvDeviceProviderTest, RejectsForcedTargetMissingRequiredFeature) {
+  iree_hal_vulkan_features_t features = BaselineVulkanFeatures();
+  features.general &= ~IREE_HAL_VULKAN_FEATURE_ENABLE_SHADER_INT64;
+  IREE_ASSERT_OK(InitializeRuntime(features));
+  const loom_spirv_target_profile_t* requested_profile = nullptr;
+  IREE_ASSERT_OK(loom_spirv_target_profile_select(IREE_SV("vulkan1.3+bda"),
+                                                  &requested_profile));
+
+  IREE_EXPECT_STATUS_IS(IREE_STATUS_UNAVAILABLE,
+                        loom_device_provider_select_profile_target(
+                            &loom_spirv_vulkan_device_provider, &runtime_,
+                            &requested_profile->base, &target_));
+  EXPECT_EQ(target_.artifact_target.target_profile, nullptr);
+  EXPECT_EQ(target_.executable_target, nullptr);
 }
 
 }  // namespace

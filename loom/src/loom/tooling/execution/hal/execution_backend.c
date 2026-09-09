@@ -12,6 +12,7 @@
 #include "iree/base/byte_sequence.h"
 #include "iree/base/internal/arena.h"
 #include "loom/target/entry_selection.h"
+#include "loom/tooling/compile/pipeline.h"
 #include "loom/tooling/compile/report_capture.h"
 #include "loom/tooling/execution/hal/candidate.h"
 #include "loom/tooling/execution/hal/invocation.h"
@@ -91,6 +92,74 @@ static iree_status_t loom_run_hal_write_candidate_artifacts(
       IREE_SV("executable"), request->host_allocator);
 }
 
+static iree_status_t loom_run_hal_execution_backend_select_device_target(
+    const loom_device_provider_t* device_provider,
+    const loom_run_hal_runtime_t* runtime,
+    const loom_run_one_shot_request_t* request,
+    const loom_target_facts_t* authored_target_requirement,
+    bool* out_owns_target, loom_device_target_t* out_target) {
+  *out_owns_target = false;
+  *out_target = (loom_device_target_t){0};
+
+  const iree_string_view_t target_specification =
+      iree_string_view_trim(request->target);
+  if (iree_string_view_is_empty(target_specification)) {
+    IREE_RETURN_IF_ERROR(loom_device_provider_select_compatible_target(
+        device_provider, runtime, authored_target_requirement,
+        request->host_allocator, out_target));
+    *out_owns_target = true;
+    return iree_ok_status();
+  }
+
+  if (request->target_environment == NULL) {
+    return iree_make_status(
+        IREE_STATUS_FAILED_PRECONDITION,
+        "explicit HAL target selection requires a target environment");
+  }
+  loom_artifact_target_t artifact_target = {0};
+  IREE_RETURN_IF_ERROR(loom_artifact_target_select(
+      device_provider->artifact_provider, request->target_environment,
+      target_specification, &artifact_target));
+  return loom_device_provider_select_profile_target(
+      device_provider, runtime, artifact_target.target_profile, out_target);
+}
+
+static iree_status_t loom_run_hal_execution_backend_run_pipeline(
+    const loom_run_one_shot_request_t* request,
+    const loom_compile_options_t* compile_options,
+    const loom_target_entry_t* entry, const loom_device_target_t* device_target,
+    loom_compile_pipeline_result_t* out_result) {
+  if (request->session == NULL || request->target_environment == NULL) {
+    return iree_make_status(
+        IREE_STATUS_FAILED_PRECONDITION,
+        "HAL compilation requires a session and target environment");
+  }
+  const loom_target_specialization_request_t specialization_request = {
+      .function_name = entry->func_name,
+      .target_profile = device_target->artifact_target.target_profile,
+  };
+  loom_compile_pipeline_options_t pipeline_options = {0};
+  loom_compile_pipeline_options_initialize(&pipeline_options);
+  pipeline_options.pipeline = request->pipeline;
+  pipeline_options.target_pipeline_options =
+      compile_options->target_pipeline_options;
+  pipeline_options.target_environment = request->target_environment;
+  pipeline_options.target_specializations =
+      (loom_target_specialization_request_list_t){
+          .values = &specialization_request,
+          .count = 1,
+      };
+  pipeline_options.low_descriptor_registry =
+      loom_run_session_low_descriptor_registry(request->session);
+  pipeline_options.source_resolver =
+      loom_run_module_source_resolver(request->run_module);
+  pipeline_options.report = compile_options->report;
+  pipeline_options.diagnostic_sink = compile_options->diagnostic_sink;
+  return loom_compile_run_pipeline(
+      request->run_module->module, &pipeline_options,
+      loom_run_session_block_pool(request->session), out_result);
+}
+
 iree_status_t loom_run_hal_execution_backend_probe(
     const loom_run_execution_backend_t* backend,
     const loom_run_one_shot_probe_request_t* request) {
@@ -147,8 +216,17 @@ iree_status_t loom_run_hal_execution_backend_run_one_shot(
     const loom_run_one_shot_request_t* request) {
   const loom_device_provider_t* device_provider =
       loom_run_hal_execution_backend_device_provider(backend);
+  loom_compile_options_t compile_options = *request->compile_options;
+  const loom_sanitizer_options_t sanitizer =
+      compile_options.target_pipeline_options.sanitizer;
+  compile_options.target_pipeline_options =
+      device_provider->artifact_provider->default_pipeline_options;
+  compile_options.target_pipeline_options.sanitizer = sanitizer;
 
   loom_run_hal_runtime_t runtime = {0};
+  loom_device_target_t device_target = {0};
+  bool owns_device_target = false;
+  loom_compile_pipeline_result_t pipeline_result = {0};
   loom_run_hal_candidate_t candidate = {0};
   loom_run_hal_invocation_result_t invocation_result = {0};
   loom_run_hal_invocation_result_initialize(request->host_allocator,
@@ -172,17 +250,34 @@ iree_status_t loom_run_hal_execution_backend_run_one_shot(
                                           &runtime_options);
   runtime_options.runtime_features |=
       loom_run_hal_runtime_features_from_sanitizer_options(
-          &request->compile_options->target_pipeline_options.sanitizer);
+          &compile_options.target_pipeline_options.sanitizer);
   if (iree_status_is_ok(status) && entry_selected) {
     status = loom_run_hal_runtime_initialize(&runtime_options,
                                              request->host_allocator, &runtime);
   }
   if (iree_status_is_ok(status) && entry_selected) {
-    status = loom_run_hal_candidate_compile(
-        device_provider, &runtime, request->run_module, entry.target_facts,
-        request->compile_options, request->host_allocator, &candidate);
+    status = loom_run_hal_execution_backend_select_device_target(
+        device_provider, &runtime, request, entry.target_facts,
+        &owns_device_target, &device_target);
   }
-  if (iree_status_is_ok(status) && !candidate.artifact_candidate.compiled) {
+  if (iree_status_is_ok(status) && entry_selected) {
+    status = loom_run_hal_execution_backend_run_pipeline(
+        request, &compile_options, &entry, &device_target, &pipeline_result);
+  }
+  if (iree_status_is_ok(status) && entry_selected &&
+      pipeline_result.pass.error_count != 0) {
+    request->result->exit_code = 1;
+  }
+  if (iree_status_is_ok(status) && entry_selected &&
+      pipeline_result.pass.error_count == 0) {
+    compile_options.function_versions = &pipeline_result.function_versions.list;
+    status = loom_run_hal_candidate_emit_target(
+        device_provider, &device_target, request->run_module, &compile_options,
+        request->host_allocator, &candidate);
+  }
+  if (iree_status_is_ok(status) && entry_selected &&
+      pipeline_result.pass.error_count == 0 &&
+      !candidate.artifact_candidate.compiled) {
     request->result->exit_code = 1;
   }
   if (iree_status_is_ok(status) && candidate.artifact_candidate.compiled) {
@@ -245,6 +340,11 @@ iree_status_t loom_run_hal_execution_backend_run_one_shot(
 
   loom_run_hal_invocation_result_deinitialize(&invocation_result);
   loom_run_hal_candidate_deinitialize(&candidate);
+  if (owns_device_target && device_provider->deinitialize_target != NULL) {
+    device_provider->deinitialize_target(device_provider, &device_target,
+                                         request->host_allocator);
+  }
+  loom_compile_pipeline_result_deinitialize(&pipeline_result);
   loom_run_hal_runtime_deinitialize(&runtime);
   iree_arena_deinitialize(&arena);
   iree_arena_block_pool_deinitialize(&block_pool);

@@ -13,7 +13,6 @@
 #include "loom/tooling/compile/options.h"
 #include "loom/tooling/execution/hal/artifact.h"
 #include "loom/tooling/execution/hal/device_provider.h"
-#include "loom/tooling/execution/hal/runtime.h"
 #include "loom/tooling/execution/session.h"
 
 #ifdef __cplusplus
@@ -25,26 +24,13 @@ typedef struct loom_run_hal_candidate_t {
   iree_allocator_t host_allocator;
   // Device provider that selected |device_target|.
   const loom_device_provider_t* provider;
-  // Device target selected during candidate compilation.
+  // Device target selected by the caller for artifact emission.
   loom_device_target_t device_target;
-  // True when |device_target| storage is owned by this candidate.
-  bool owns_device_target;
   // Offline compiler candidate emitted through |provider|.
   loom_artifact_candidate_t artifact_candidate;
   // Device-loadable view of |artifact_candidate|.
   loom_device_artifact_t device_artifact;
 } loom_run_hal_candidate_t;
-
-// Selects a HAL device target satisfying |target_requirement| through
-// |provider| and emits |run_module| to a HAL artifact candidate. NULL
-// represents target-independent code. The module must already contain the
-// prepared target-low entries intended for the artifact.
-iree_status_t loom_run_hal_candidate_compile(
-    const loom_device_provider_t* provider,
-    const loom_run_hal_runtime_t* runtime, loom_run_module_t* run_module,
-    const loom_target_facts_t* target_requirement,
-    const loom_compile_options_t* options, iree_allocator_t allocator,
-    loom_run_hal_candidate_t* out_candidate);
 
 // Emits |run_module| to a HAL artifact candidate using |target| as the
 // selected target overlay. The caller retains ownership of |target| storage and

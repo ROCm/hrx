@@ -50,6 +50,21 @@ or output validation are part of the operation whose latency matters. The
 runner executes correctness first; timing is omitted when the selected case
 sample fails.
 
+The device normally chooses the compiler target. Use the same explicit target
+for controlled comparisons that must hold compilation constant across
+compatible devices:
+
+```shell
+iree-benchmark-loom program.loom \
+  --benchmark=@decode_4096 \
+  --device=amdgpu \
+  --target=amdgpu:gfx11-generic \
+  --output=generic-results.json
+```
+
+The target constrains compilation but never changes the device. A device that
+cannot load the requested `family:selector` fails before measurement.
+
 ## Measure dispatch completion
 
 Kernel tuning usually needs the prepared HAL launch schedule rather than the

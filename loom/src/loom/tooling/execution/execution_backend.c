@@ -16,36 +16,45 @@ void loom_run_execution_backend_registry_initialize_from_entries(
   };
 }
 
-const loom_run_execution_backend_t* loom_run_execution_backend_registry_lookup(
+const loom_run_execution_backend_t*
+loom_run_execution_backend_registry_lookup_device_driver(
     const loom_run_execution_backend_registry_t* registry,
-    iree_string_view_t name) {
+    iree_string_view_t device_driver_name) {
   if (registry == NULL) {
     return NULL;
   }
   for (iree_host_size_t i = 0; i < registry->backend_count; ++i) {
     const loom_run_execution_backend_t* backend = registry->backends[i];
-    if (backend && iree_string_view_equal(backend->name, name)) {
+    if (backend && iree_string_view_equal(backend->device_driver_name,
+                                          device_driver_name)) {
       return backend;
     }
   }
   return NULL;
 }
 
-iree_status_t loom_run_execution_backend_registry_format_names(
-    const loom_run_execution_backend_registry_t* registry,
-    iree_string_builder_t* output) {
-  iree_host_size_t appended_count = 0;
-  for (iree_host_size_t i = 0; i < registry->backend_count; ++i) {
-    const loom_run_execution_backend_t* backend = registry->backends[i];
-    if (backend == NULL) {
-      continue;
-    }
-    if (appended_count > 0) {
-      IREE_RETURN_IF_ERROR(iree_string_builder_append_cstring(output, ", "));
-    }
-    IREE_RETURN_IF_ERROR(
-        iree_string_builder_append_string(output, backend->name));
-    ++appended_count;
+iree_status_t loom_run_execution_select_device_driver(
+    iree_string_view_list_t device_uris, iree_string_view_t* out_device_uri,
+    iree_string_view_t* out_device_driver_name) {
+  *out_device_uri = iree_string_view_empty();
+  *out_device_driver_name = iree_string_view_empty();
+  if (device_uris.count != 1) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "Loom HAL execution requires exactly one --device= URI; got %" PRIhsz,
+        device_uris.count);
   }
+
+  const iree_string_view_t device_uri = device_uris.values[0];
+  iree_string_view_t device_driver_name = iree_string_view_empty();
+  iree_string_view_split(device_uri, ':', &device_driver_name, NULL);
+  if (iree_string_view_is_empty(device_driver_name)) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "--device=%.*s has no HAL driver name",
+                            (int)device_uri.size, device_uri.data);
+  }
+
+  *out_device_uri = device_uri;
+  *out_device_driver_name = device_driver_name;
   return iree_ok_status();
 }

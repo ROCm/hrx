@@ -37,8 +37,10 @@ typedef iree_status_t (*loom_run_execution_backend_run_one_shot_fn_t)(
 
 // Runtime backend linked into a run/benchmark/tune process.
 struct loom_run_execution_backend_t {
-  // User-facing backend name accepted by execution tools.
+  // Private backend name used in diagnostics.
   iree_string_view_t name;
+  // HAL driver name selected by the standard --device flag.
+  iree_string_view_t device_driver_name;
   // Backend option families consumed by one-shot requests.
   loom_run_execution_backend_flags_t flags;
   // Optional backend probe hook.
@@ -61,15 +63,17 @@ void loom_run_execution_backend_registry_initialize_from_entries(
     iree_host_size_t backend_count,
     loom_run_execution_backend_registry_t* out_registry);
 
-// Looks up an execution backend by user-facing name.
-const loom_run_execution_backend_t* loom_run_execution_backend_registry_lookup(
+// Looks up an execution backend by its HAL device driver name.
+const loom_run_execution_backend_t*
+loom_run_execution_backend_registry_lookup_device_driver(
     const loom_run_execution_backend_registry_t* registry,
-    iree_string_view_t name);
+    iree_string_view_t device_driver_name);
 
-// Appends a comma-separated list of registered execution backend names.
-iree_status_t loom_run_execution_backend_registry_format_names(
-    const loom_run_execution_backend_registry_t* registry,
-    iree_string_builder_t* output);
+// Selects the HAL driver named by exactly one --device URI. The returned
+// string views borrow |device_uris| storage.
+iree_status_t loom_run_execution_select_device_driver(
+    iree_string_view_list_t device_uris, iree_string_view_t* out_device_uri,
+    iree_string_view_t* out_device_driver_name);
 
 #ifdef __cplusplus
 }  // extern "C"
