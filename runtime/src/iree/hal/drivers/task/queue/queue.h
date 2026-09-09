@@ -571,13 +571,15 @@ struct iree_hal_task_queue_t {
   // Device-owned submission id counter shared by all queues in the session.
   iree_atomic_int64_t* profile_submission_counter;
 
-  // Scope used for all operations in the queue.
-  // This allows for easy waits on all outstanding queue operations as well as
-  // differentiation of operations within the executor.
-  iree_task_scope_t scope;
+  // Scope tracking all accepted queue operations through terminal completion.
+  iree_task_scope_t operation_scope;
+
+  // Scope tracking the persistent control and compute processes until their
+  // release callbacks have run during queue shutdown.
+  iree_task_scope_t process_scope;
 
   // Persistent process release callbacks that may still access queue fields
-  // after the queue scope reaches idle.
+  // after the process scope reaches idle.
   iree_atomic_int32_t pending_process_release_count;
 
 #if !defined(NDEBUG)
@@ -606,7 +608,7 @@ struct iree_hal_task_queue_t {
   // process below). For all other operation types, this process handles
   // them inline.
   //
-  // The process participates in the queue's scope: scope_begin at
+  // The process participates in the process scope: scope_begin at
   // initialization, scope_end in the release callback. This ensures
   // scope_wait_idle blocks until the process has fully completed and its
   // worker has exited the drain stack.
@@ -629,7 +631,7 @@ struct iree_hal_task_queue_t {
   // fail the CAS (already DRAINING) but still wake workers. The process
   // stays in its slot until shutdown.
   //
-  // Participates in the queue's scope: scope_begin at initialization,
+  // Participates in the process scope: scope_begin at initialization,
   // scope_end in the release callback after the last drainer exits. Completes
   // only after the control process release callback advances shutdown to the
   // COMPUTE phase, ensuring no producer can still touch the item pool.
@@ -679,13 +681,13 @@ iree_status_t iree_hal_task_queue_initialize(
     const iree_hal_task_queue_create_params_t* params,
     iree_hal_task_queue_t* out_queue);
 
-// Allocates and initializes a dynamic task queue.
+// Creates a dynamic task queue.
 //
 // Execution-resource ordinals in |params| are copied into queue-owned storage.
 // |release_slot| is captured only on success; callers retain responsibility for
 // returning the slot when allocation fails. |out_queue| is unchanged on
 // failure.
-iree_status_t iree_hal_task_queue_allocate(
+iree_status_t iree_hal_task_queue_create(
     const iree_hal_task_queue_create_params_t* params,
     iree_hal_task_queue_release_slot_callback_t release_slot,
     iree_allocator_t host_allocator, iree_hal_task_queue_t** out_queue);

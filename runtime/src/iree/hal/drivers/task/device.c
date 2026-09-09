@@ -665,8 +665,8 @@ static iree_status_t iree_hal_task_device_acquire_queue(
         .user_data = device,
         .queue_index = queue_index,
     };
-    status = iree_hal_task_queue_allocate(&queue_create_params, release_slot,
-                                          device->host_allocator, &queue);
+    status = iree_hal_task_queue_create(&queue_create_params, release_slot,
+                                        device->host_allocator, &queue);
     queue_owns_slot = iree_status_is_ok(status);
   }
   if (iree_status_is_ok(status)) {
