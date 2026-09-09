@@ -195,10 +195,11 @@ hrx_status_t hrx_runtime_set_device_event_sink(hrx_device_event_sink_t sink) {
   return hrx_ok_status();
 }
 
-static iree_status_t hrx_create_single_device_group(
-    iree_hal_device_t* device, iree_allocator_t host_allocator,
+static iree_status_t hrx_create_device_group(
+    iree_host_size_t device_count, iree_hal_device_t* const* devices,
+    iree_allocator_t host_allocator,
     iree_hal_device_group_t** out_device_group) {
-  IREE_ASSERT_ARGUMENT(device);
+  IREE_ASSERT_ARGUMENT(devices);
   IREE_ASSERT_ARGUMENT(out_device_group);
   *out_device_group = NULL;
 
@@ -207,8 +208,19 @@ static iree_status_t hrx_create_single_device_group(
       iree_async_frontier_tracker_options_default(), host_allocator,
       &frontier_tracker));
 
-  iree_status_t status = iree_hal_device_group_create_from_device(
-      device, frontier_tracker, host_allocator, out_device_group);
+  iree_hal_device_group_builder_t builder;
+  iree_hal_device_group_builder_initialize(&builder, frontier_tracker);
+  iree_status_t status = iree_ok_status();
+  for (iree_host_size_t i = 0; i < device_count && iree_status_is_ok(status);
+       ++i) {
+    status = iree_hal_device_group_builder_add_device(&builder, devices[i]);
+  }
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_device_group_builder_finalize(&builder, host_allocator,
+                                                    out_device_group);
+  } else {
+    iree_hal_device_group_builder_deinitialize(&builder);
+  }
   iree_async_frontier_tracker_release(frontier_tracker);
   return status;
 }
@@ -657,11 +669,16 @@ static iree_status_t hrx_gpu_end_all_profiling(void) {
   return status;
 }
 
-static void hrx_gpu_release_created_devices(int count) {
+static iree_status_t hrx_gpu_release_created_devices(int count) {
+  iree_status_t status = iree_ok_status();
   for (int i = 0; i < count; ++i) {
-    iree_status_ignore(hrx_device_profile_end(&g_gpu.devices[i]));
+    status =
+        iree_status_join(status, hrx_device_profile_end(&g_gpu.devices[i]));
+    hrx_buffer_table_deinitialize(&g_gpu.devices[i].buffer_table);
+    iree_arena_block_pool_deinitialize(&g_gpu.devices[i].block_pool);
     hrx_device_release(&g_gpu.devices[i]);
   }
+  return status;
 }
 
 static void hrx_debug_print_iree_status(const char* label,
@@ -745,8 +762,8 @@ hrx_status_t hrx_cpu_initialize(uint32_t flags) {
   }
 
   iree_hal_device_group_t* device_group = NULL;
-  iree_status_t iree_status = hrx_create_single_device_group(
-      hal_device, g_shared.host_allocator, &device_group);
+  iree_status_t iree_status = hrx_create_device_group(
+      /*device_count=*/1, &hal_device, g_shared.host_allocator, &device_group);
   if (!iree_status_is_ok(iree_status)) {
     iree_hal_device_release(hal_device);
     iree_hal_driver_release(driver);
@@ -923,9 +940,20 @@ hrx_status_t hrx_gpu_initialize_with_device_extensions(
                            "no physical GPU devices found");
   }
 
-  int count =
-      physical_count < HRX_MAX_DEVICES ? physical_count : HRX_MAX_DEVICES;
-
+  const int maximum_device_count =
+      HRX_MAX_DEVICES < IREE_HAL_TOPOLOGY_MAX_DEVICE_COUNT
+          ? HRX_MAX_DEVICES
+          : IREE_HAL_TOPOLOGY_MAX_DEVICE_COUNT;
+  if (physical_count > maximum_device_count) {
+    iree_status = iree_make_status(
+        IREE_STATUS_RESOURCE_EXHAUSTED,
+        "physical GPU count %d exceeds the HAL topology capacity %d",
+        physical_count, maximum_device_count);
+    iree_allocator_free(alloc, device_infos);
+    iree_hal_driver_release(driver);
+    hrx_release_shared_state();
+    return hrx_status_from_iree(iree_status);
+  }
   iree_hal_device_runtime_feature_flags_t runtime_features =
       IREE_HAL_DEVICE_RUNTIME_FEATURE_FLAG_NONE;
   iree_status = hrx_hal_runtime_features_from_environment(&runtime_features);
@@ -957,79 +985,65 @@ hrx_status_t hrx_gpu_initialize_with_device_extensions(
     }
   }
 
-  int created_count = 0;
+  iree_hal_device_t* hal_devices[IREE_HAL_TOPOLOGY_MAX_DEVICE_COUNT] = {NULL};
+  iree_host_size_t device_info_indices[IREE_HAL_TOPOLOGY_MAX_DEVICE_COUNT] = {
+      0};
+  int created_device_count = 0;
   for (iree_host_size_t info_index = 0;
-       info_index < device_info_count && created_count < count; ++info_index) {
+       info_index < device_info_count && iree_status_is_ok(iree_status);
+       ++info_index) {
     if (device_infos[info_index].path.size == 0) continue;
 
-    iree_hal_device_t* hal_device = NULL;
     iree_status = iree_hal_driver_create_device_by_ordinal(
         driver, info_index, /*param_count=*/0, /*params=*/NULL, &create_params,
-        alloc, &hal_device);
+        alloc, &hal_devices[created_device_count]);
     hrx_debug_print_iree_status("create device by ordinal", iree_status);
-    if (!iree_status_is_ok(iree_status)) {
-      hrx_gpu_release_created_devices(created_count);
-      iree_hal_profile_sink_release(profile_sink);
-      iree_allocator_free(alloc, device_infos);
-      iree_hal_driver_release(driver);
-      hrx_release_shared_state();
-      return hrx_status_from_iree(iree_status);
+    if (iree_status_is_ok(iree_status)) {
+      device_info_indices[created_device_count] = info_index;
+      ++created_device_count;
     }
+  }
 
-    iree_hal_device_group_t* device_group = NULL;
+  // Assign every device to one topology before selecting queues. AMDGPU queue
+  // axes derive their device index from this group and cannot be reassigned
+  // after a dynamic queue has been acquired.
+  iree_hal_device_group_t* device_group = NULL;
+  if (iree_status_is_ok(iree_status)) {
     iree_status =
-        hrx_create_single_device_group(hal_device, alloc, &device_group);
-    if (!iree_status_is_ok(iree_status)) {
-      iree_hal_device_release(hal_device);
-      hrx_gpu_release_created_devices(created_count);
-      iree_hal_profile_sink_release(profile_sink);
-      iree_allocator_free(alloc, device_infos);
-      iree_hal_driver_release(driver);
-      hrx_release_shared_state();
-      return hrx_status_from_iree(iree_status);
-    }
+        hrx_create_device_group((iree_host_size_t)created_device_count,
+                                hal_devices, alloc, &device_group);
+  }
 
+  int initialized_device_count = 0;
+  for (int device_index = 0;
+       device_index < created_device_count && iree_status_is_ok(iree_status);
+       ++device_index) {
+    iree_hal_device_t* hal_device = hal_devices[device_index];
     iree_hal_queue_t* dispatch_queue = NULL;
     iree_status = hrx_hal_device_select_queue(
         hal_device, /*affinity=*/0,
         IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_TRANSFER |
             IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH,
         /*required_family=*/NULL, &dispatch_queue);
-    if (!iree_status_is_ok(iree_status)) {
-      iree_hal_device_group_release(device_group);
-      iree_hal_device_release(hal_device);
-      hrx_gpu_release_created_devices(created_count);
-      iree_hal_profile_sink_release(profile_sink);
-      iree_allocator_free(alloc, device_infos);
-      iree_hal_driver_release(driver);
-      hrx_release_shared_state();
-      return hrx_status_from_iree(iree_status);
-    }
 
     iree_hal_queue_t* transfer_queue = NULL;
-    iree_status = hrx_hal_device_select_queue(
-        hal_device, /*affinity=*/0, IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_TRANSFER,
-        /*required_family=*/NULL, &transfer_queue);
-    if (!iree_status_is_ok(iree_status)) {
-      iree_hal_device_group_release(device_group);
-      iree_hal_device_release(hal_device);
-      hrx_gpu_release_created_devices(created_count);
-      iree_hal_profile_sink_release(profile_sink);
-      iree_allocator_free(alloc, device_infos);
-      iree_hal_driver_release(driver);
-      hrx_release_shared_state();
-      return hrx_status_from_iree(iree_status);
+    if (iree_status_is_ok(iree_status)) {
+      iree_status = hrx_hal_device_select_queue(
+          hal_device, /*affinity=*/0, IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_TRANSFER,
+          /*required_family=*/NULL, &transfer_queue);
     }
+    if (!iree_status_is_ok(iree_status)) break;
 
-    hrx_device_s* dev = &g_gpu.devices[created_count];
+    hrx_device_s* dev = &g_gpu.devices[device_index];
     memset(dev, 0, sizeof(*dev));
     iree_atomic_ref_count_init(&dev->ref_count);
     dev->type = HRX_ACCELERATOR_GPU;
-    dev->ordinal = created_count;
+    dev->ordinal = device_index;
     dev->hal_device = hal_device;
     dev->dispatch_queue = dispatch_queue;
     dev->transfer_queue = transfer_queue;
     dev->hal_device_group = device_group;
+    iree_hal_device_group_retain(device_group);
     dev->allocator.hal_allocator = iree_hal_device_allocator(hal_device);
     iree_hal_allocator_retain(dev->allocator.hal_allocator);
     iree_atomic_ref_count_init(&dev->allocator.ref_count);
@@ -1037,42 +1051,40 @@ hrx_status_t hrx_gpu_initialize_with_device_extensions(
     hrx_buffer_table_initialize(&dev->buffer_table);
     iree_arena_block_pool_initialize(/*block_size=*/32 * 1024,
                                      iree_allocator_system(), &dev->block_pool);
+    hal_devices[device_index] = NULL;
+    ++initialized_device_count;
 
+    const iree_host_size_t info_index = device_info_indices[device_index];
     iree_host_size_t name_len = device_infos[info_index].name.size;
     if (name_len >= sizeof(dev->name)) name_len = sizeof(dev->name) - 1;
     memcpy(dev->name, device_infos[info_index].name.data, name_len);
     dev->name[name_len] = '\0';
 
     iree_status = hrx_set_gpu_architecture_from_hal(dev);
-    if (!iree_status_is_ok(iree_status)) {
-      hrx_device_release(dev);
-      hrx_gpu_release_created_devices(created_count);
-      iree_hal_profile_sink_release(profile_sink);
-      iree_allocator_free(alloc, device_infos);
-      iree_hal_driver_release(driver);
-      hrx_release_shared_state();
-      return hrx_status_from_iree(iree_status);
+    if (iree_status_is_ok(iree_status)) {
+      iree_status = hrx_device_profile_begin(dev, profile_sink);
+      hrx_debug_print_iree_status("begin device profiling", iree_status);
     }
-
-    iree_status = hrx_device_profile_begin(dev, profile_sink);
-    hrx_debug_print_iree_status("begin device profiling", iree_status);
-    if (!iree_status_is_ok(iree_status)) {
-      hrx_device_release(dev);
-      hrx_gpu_release_created_devices(created_count);
-      iree_hal_profile_sink_release(profile_sink);
-      iree_allocator_free(alloc, device_infos);
-      iree_hal_driver_release(driver);
-      hrx_release_shared_state();
-      return hrx_status_from_iree(iree_status);
-    }
-
-    created_count++;
   }
 
+  if (!iree_status_is_ok(iree_status)) {
+    iree_status = iree_status_join(
+        iree_status, hrx_gpu_release_created_devices(initialized_device_count));
+    for (int i = 0; i < created_device_count; ++i) {
+      iree_hal_device_release(hal_devices[i]);
+    }
+  }
+  iree_hal_device_group_release(device_group);
   iree_hal_profile_sink_release(profile_sink);
   iree_allocator_free(alloc, device_infos);
+  if (!iree_status_is_ok(iree_status)) {
+    iree_hal_driver_release(driver);
+    hrx_release_shared_state();
+    return hrx_status_from_iree(iree_status);
+  }
+
   g_gpu.driver = driver;
-  g_gpu.device_count = created_count;
+  g_gpu.device_count = initialized_device_count;
   g_gpu.initialized = true;
   return hrx_ok_status();
 #endif  // HRX_HAS_IREE_AMDGPU_DRIVER
