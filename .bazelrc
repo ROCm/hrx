@@ -93,7 +93,7 @@ test:presubmit-keep-going --keep_going
 # Shared sanitizer build shape. Sanitized builds keep debug information, avoid
 # static sanitizer runtime conflicts, and use longer test timeouts.
 build:sanitizer --strip=never
-build:sanitizer --copt=-g
+build:sanitizer --features=sanitizer_debug_info
 build:sanitizer --force_ignore_dash_static
 build:sanitizer --test_timeout=120,600,1800,-1
 build:sanitizer --//build_tools/bazel:sanitizer=true
@@ -102,7 +102,6 @@ build:sanitizer --//build_tools/bazel:sanitizer=true
 build:asan --config=sanitizer
 build:asan --features=asan
 build:asan --copt=-fsanitize=address
-build:asan --copt=-fsanitize-address-use-after-scope
 build:asan --cc_output_directory_tag=asan
 build:asan --copt=-DADDRESS_SANITIZER
 
@@ -146,7 +145,6 @@ build:ubsan --cc_output_directory_tag=ubsan
 build:fuzzer --config=sanitizer
 build:fuzzer --features=asan
 build:fuzzer --copt=-fsanitize=address
-build:fuzzer --copt=-fsanitize-address-use-after-scope
 build:fuzzer --copt=-DADDRESS_SANITIZER
 build:fuzzer --copt=-fsanitize=fuzzer-no-link
 build:fuzzer --linkopt=-fsanitize=fuzzer-no-link

@@ -100,8 +100,8 @@ diff --git a/cc/private/toolchain/windows_cc_toolchain_config.bzl b/cc/private/t
 +
 +        # MSVC requires CodeView information for usable ASAN diagnostics even
 +        # in fastbuild and opt. Apply this to all instrumented dependencies.
-+        asan_feature = feature(
-+            name = "asan",
++        sanitizer_debug_info_feature = feature(
++            name = "sanitizer_debug_info",
 +            flag_sets = [
 +                flag_set(
 +                    actions = all_compile_actions,
@@ -115,7 +115,7 @@ diff --git a/cc/private/toolchain/windows_cc_toolchain_config.bzl b/cc/private/t
              supports_dynamic_linker_feature,
              supports_interface_shared_libraries_feature,
              symbol_check_feature,
-+            asan_feature,
++            sanitizer_debug_info_feature,
          ]
      else:
          targets_windows_feature = feature(

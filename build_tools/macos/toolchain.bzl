@@ -173,6 +173,12 @@ def macos_cc_toolchains(name, repository_path, metadata, minimum_os, cross):
         srcs = native.glob(["resource/lib/darwin/libclang_rt.asan_osx_dynamic.dylib"], allow_empty = True),
     )
     cc_args(
+        name = "sanitizer_debug",
+        actions = [_ACTIONS + "compile_actions"],
+        args = ["-g"],
+    )
+    cc_feature(name = "sanitizer_debug_info", feature_name = "sanitizer_debug_info", args = [":sanitizer_debug"])
+    cc_args(
         name = "asan_compile",
         actions = [_ACTIONS + "compile_actions"],
         args = ["-fsanitize=address", "-fno-omit-frame-pointer"],
@@ -205,7 +211,7 @@ def macos_cc_toolchains(name, repository_path, metadata, minimum_os, cross):
             args = [":target_" + architecture, ":sdk", ":compile", ":libcxx", ":link", ":libraries_" + architecture],
             artifact_name_patterns = [":dylib"],
             enabled_features = [_STANDARD_FEATURES],
-            known_features = [_STANDARD_FEATURES, ":asan"],
+            known_features = [_STANDARD_FEATURES, ":asan", ":sanitizer_debug_info"],
             supports_param_files = True,
         )
     for framework, headers in metadata["framework_headers"].items():
