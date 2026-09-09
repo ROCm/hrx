@@ -142,6 +142,97 @@ the Linux loader and glibc, and host generators still use its native toolchain.
 Cross-machine remote caching/execution requires a separately specified execution
 environment and is not established by this local configuration.
 
+### macOS targets
+
+macOS follows the same destination selection as Windows:
+
+| Build host | Destination | Config |
+| --- | --- | --- |
+| Linux or macOS | macOS arm64 | `--config=macos-arm64` |
+| Linux or macOS | macOS x86-64 | `--config=macos-x86_64` |
+| macOS | Native architecture | None |
+
+Native builds use the Xcode or Command Line Tools selected by `xcode-select`
+or `DEVELOPER_DIR`. They ignore the Linux cross-toolchain environment variables.
+Linux builds use Clang, `ld64.lld`, and `llvm-libtool-darwin` from `LLVM_ROOT`.
+Both paths support C, C++, Objective-C, Objective-C++, static libraries, and
+Mach-O executables and dylibs. Build-time generators keep the host toolchain.
+The default minimum deployment version is macOS 11.0, independent of the SDK
+version; the `macos_toolchain_repository` declaration owns that policy.
+
+Export an SDK on a Mac with Xcode or Command Line Tools installed:
+
+```bash
+python3 build_tools/macos/export_sdk.py --output macos-sdk.tar.gz
+```
+
+The archive preserves framework aliases and includes the matching libc++
+headers, including Xcode versions that store them outside the SDK. Transfer
+and unpack it into a versioned local installation directory on Linux, then set:
+
+```bash
+export LLVM_ROOT=/path/to/llvm
+export MACOS_SDK_ROOT=/path/to/macos-sdk/MacOSX.sdk
+iree-bazel-build --config=macos-arm64 //tools:iree-dump-cpuinfo
+iree-bazel-build --config=macos-x86_64 -c opt \
+  //runtime/src/iree/base/testing:dynamic_library_test
+```
+
+These paths can also be supplied with `--repo_env=LLVM_ROOT=...` and
+`--repo_env=MACOS_SDK_ROOT=...`. SDK acquisition is separate from Bazel
+configuration, and native Linux builds do not configure the macOS repository.
+
+Framework consumers use ordinary dependencies such as
+`@iree_macos_toolchain//:Foundation` and `@iree_macos_toolchain//:Metal`.
+These provide public headers and framework link interfaces for the selected SDK.
+`objc_library` from `@rules_cc//cc:objc_library.bzl` handles `.m` and `.mm`
+sources, including ARC; its `CcInfo` also works with normal C/C++ rules.
+Framework dependencies carry the SDK files as well as link flags, so consumers
+do not need separate `sdk_frameworks` entries. The repository currently exposes
+CoreFoundation, CoreGraphics, Foundation, and Metal. Adding another framework
+to its explicit framework list inventories that framework's dependency closure.
+
+Compiler inputs include system headers and Clang resource headers. Framework
+headers enter through their dependencies; linker inputs include the SDK stubs
+actually opened by the selected linker, including re-exports. The full SDK and
+LLVM installation are not compiler or linker inputs. Paths in actions are
+relative to the execution root, and the tool projection includes non-system
+loader libraries. This local configuration does not establish a remote execution
+environment or cross-machine cache equivalence.
+
+The integration test embeds MSL with a host-built generator, compiles C and both
+Objective-C language modes, and dispatches and verifies a Metal compute kernel:
+
+```bash
+# On Linux, build and transfer the executable to a Mac for execution.
+iree-bazel-build --config=macos-arm64 //build_tools/macos/tests:metal_test
+
+# On a Mac with a Metal device, build and execute natively.
+iree-bazel-test //build_tools/macos/tests:metal_test
+```
+
+Metal compiles this source through its runtime API; no offline Apple shader
+compiler is required. Command-line programs using `MTLCreateSystemDefaultDevice`
+also link CoreGraphics, as required by
+[Apple's API contract](https://developer.apple.com/documentation/metal/mtlcreatesystemdefaultdevice%28%29?language=objc). Metal compute
+execution works over SSH without a desktop login.
+
+Transfer executables, dependent dylibs, and any consumer runfiles to the Mac.
+The toolchain adds `@loader_path` to the runtime library search path so deployed
+dylibs can sit beside their consumer. Preserve the library names in the
+consumer's load commands (`llvm-otool -L`), including Bazel's `_solib` names.
+Linux `bazel run` and `bazel test` cannot
+execute Mach-O outputs. Debug builds retain object debug information; LLVM's
+`dsymutil` can collect it into a `.dSYM` bundle before deployment.
+
+Native AddressSanitizer uses the selected Xcode runtime with `--config=asan`.
+For Linux cross builds, `MACOS_COMPILER_RT_ROOT` can supply the matching LLVM
+`lib/clang/<version>/lib/darwin` directory, including
+`libclang_rt.asan_osx_dynamic.dylib`. The runtime must match the compiler and
+support the destination architecture; the SDK itself does not provide it.
+Missing sanitizer artifacts fail during analysis. Bazel includes the runtime
+in native test runfiles; deploy the dylib beside cross-built executables.
+
 ### Wrapper arguments
 
 Put wrapper execution and tool-environment options before the build-system
