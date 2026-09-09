@@ -416,8 +416,6 @@ iree_status_t loom_low_materialize_allocation_run(loom_pass_t* pass,
       .budget_count = state ? state->budget_count : 0,
       .emitter = pass->diagnostic_emitter,
   };
-  loom_low_allocation_options_t allocation_probe_options = allocation_options;
-  allocation_probe_options.emitter = (iree_diagnostic_emitter_t){0};
   // Repair only values present when this pass begins. Rematerialized clones
   // are already placed at their uses and cannot make further progress.
   iree_bitmap_t rematerialization_candidate_values = {
@@ -438,7 +436,7 @@ iree_status_t loom_low_materialize_allocation_run(loom_pass_t* pass,
     loom_low_allocation_table_t table = {0};
     IREE_RETURN_IF_ERROR(loom_low_materialize_allocation_build_table(
         module, function.op, function_target_facts, descriptor_registry,
-        &allocation_probe_options, pass->arena, &table));
+        &allocation_options, pass->arena, &table));
     if (iteration_limit == 0) {
       if (table.liveness.value_count == IREE_HOST_SIZE_MAX) {
         return iree_make_status(
@@ -466,10 +464,8 @@ iree_status_t loom_low_materialize_allocation_run(loom_pass_t* pass,
         loom_pass_mark_changed(pass);
         continue;
       }
-      IREE_RETURN_IF_ERROR(loom_low_materialize_allocation_build_table(
-          module, function.op, function_target_facts, descriptor_registry,
-          &allocation_options, pass->arena, &table));
-      return iree_ok_status();
+      return loom_low_allocation_diagnostics_emit(&table, /*flags=*/0,
+                                                  pass->diagnostic_emitter);
     }
     if (table.spill_plan_count == 0) {
       return iree_ok_status();
