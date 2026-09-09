@@ -709,7 +709,7 @@ loom_cc_library(
     iree::io::stream
     loom::codegen::low::descriptors
     loom::codegen::low::diagnostics
-    loom::codegen::low::frame
+    loom::codegen::low::function_requirements
     loom::ir
     loom::ops::encoding
     loom::ops::low
