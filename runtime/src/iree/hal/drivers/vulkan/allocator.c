@@ -2788,6 +2788,7 @@ static iree_status_t iree_hal_vulkan_allocator_virtual_memory_protect(
     iree_hal_buffer_t* IREE_RESTRICT virtual_buffer,
     iree_device_size_t virtual_offset, iree_device_size_t size,
     iree_hal_queue_family_affinity_t queue_family_affinity,
+    iree_hal_virtual_memory_access_scope_t access_scope,
     iree_hal_memory_protection_t protection) {
   iree_hal_vulkan_allocator_t* allocator =
       iree_hal_vulkan_allocator_cast(base_allocator);
@@ -2806,6 +2807,12 @@ static iree_status_t iree_hal_vulkan_allocator_virtual_memory_protect(
         "Vulkan virtual protection queue family affinity 0x%016" PRIx64
         " is outside the reservation affinity 0x%016" PRIx64,
         queue_family_affinity, reservation_affinity);
+  }
+  if (IREE_UNLIKELY(access_scope !=
+                    IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_DEVICE)) {
+    return iree_make_status(
+        IREE_STATUS_UNIMPLEMENTED,
+        "Vulkan sparse virtual memory supports only device access scope");
   }
   VkMemoryRequirements memory_requirements = {0};
   IREE_RETURN_IF_ERROR(iree_hal_vulkan_sparse_buffer_memory_requirements(

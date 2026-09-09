@@ -129,6 +129,62 @@ iree_status_t iree_hal_amdgpu_access_agent_list_resolve_queue_family_agents(
   return status;
 }
 
+iree_status_t iree_hal_amdgpu_access_agent_list_resolve_scope_agents(
+    const iree_hal_amdgpu_topology_t* topology,
+    iree_hal_queue_family_affinity_t queue_family_affinity,
+    iree_hal_virtual_memory_access_scope_t access_scope,
+    iree_hal_amdgpu_access_agent_list_t* out_agent_list) {
+  IREE_ASSERT_ARGUMENT(topology);
+  IREE_ASSERT_ARGUMENT(out_agent_list);
+  memset(out_agent_list, 0, sizeof(*out_agent_list));
+
+  if (IREE_UNLIKELY(
+          access_scope == IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_NONE ||
+          iree_any_bit_set(access_scope,
+                           ~(iree_hal_virtual_memory_access_scope_t)
+                               IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_ALL))) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "invalid AMDGPU virtual-memory access scope");
+  }
+
+  iree_hal_amdgpu_gpu_agent_mask_t gpu_agent_mask = 0;
+  IREE_RETURN_IF_ERROR(iree_hal_amdgpu_access_agent_list_select_families(
+      topology, queue_family_affinity, &gpu_agent_mask));
+
+  iree_status_t status = iree_ok_status();
+  for (iree_host_size_t physical_device_ordinal = 0;
+       physical_device_ordinal < topology->gpu_agent_count &&
+       iree_status_is_ok(status);
+       ++physical_device_ordinal) {
+    if (!iree_all_bits_set(gpu_agent_mask, ((uint64_t)1)
+                                               << physical_device_ordinal)) {
+      continue;
+    }
+    if (iree_any_bit_set(access_scope,
+                         IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_DEVICE)) {
+      status = iree_hal_amdgpu_access_agent_list_append_unique(
+          out_agent_list, topology->gpu_agents[physical_device_ordinal]);
+    }
+    if (iree_status_is_ok(status) &&
+        iree_any_bit_set(access_scope,
+                         IREE_HAL_VIRTUAL_MEMORY_ACCESS_SCOPE_HOST)) {
+      const iree_host_size_t cpu_agent_ordinal =
+          topology->gpu_cpu_map[physical_device_ordinal];
+      if (IREE_UNLIKELY(cpu_agent_ordinal >= topology->cpu_agent_count)) {
+        status =
+            iree_make_status(IREE_STATUS_OUT_OF_RANGE,
+                             "AMDGPU topology maps GPU agent ordinal %" PRIhsz
+                             " to invalid CPU agent ordinal %" PRIhsz,
+                             physical_device_ordinal, cpu_agent_ordinal);
+        break;
+      }
+      status = iree_hal_amdgpu_access_agent_list_append_unique(
+          out_agent_list, topology->cpu_agents[cpu_agent_ordinal]);
+    }
+  }
+  return status;
+}
+
 iree_status_t iree_hal_amdgpu_access_allow_agent_list(
     const iree_hal_amdgpu_libhsa_t* libhsa,
     const iree_hal_amdgpu_access_agent_list_t* agent_list, const void* ptr) {

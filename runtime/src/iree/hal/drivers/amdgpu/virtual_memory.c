@@ -502,6 +502,7 @@ iree_status_t iree_hal_amdgpu_virtual_memory_protect(
     iree_hal_buffer_t* virtual_buffer, iree_device_size_t virtual_offset,
     iree_device_size_t size,
     iree_hal_queue_family_affinity_t queue_family_affinity,
+    iree_hal_virtual_memory_access_scope_t access_scope,
     iree_hal_memory_protection_t protection) {
   IREE_ASSERT_ARGUMENT(state);
   IREE_ASSERT_ARGUMENT(virtual_buffer);
@@ -539,9 +540,8 @@ iree_status_t iree_hal_amdgpu_virtual_memory_protect(
         queue_family_affinity, range.queue_family_affinity);
   }
   iree_hal_amdgpu_access_agent_list_t agent_list;
-  IREE_RETURN_IF_ERROR(
-      iree_hal_amdgpu_access_agent_list_resolve_queue_family_agents(
-          state->topology, queue_family_affinity, &agent_list));
+  IREE_RETURN_IF_ERROR(iree_hal_amdgpu_access_agent_list_resolve_scope_agents(
+      state->topology, queue_family_affinity, access_scope, &agent_list));
 
   hsa_amd_memory_access_desc_t access_descs[IREE_HAL_AMDGPU_MAX_CPU_AGENT +
                                             IREE_HAL_AMDGPU_MAX_GPU_AGENT];

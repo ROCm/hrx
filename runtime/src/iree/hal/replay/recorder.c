@@ -364,6 +364,23 @@ iree_status_t iree_hal_replay_recorder_end_operation(
       pending_record, operation_status, 0, NULL);
 }
 
+iree_status_t iree_hal_replay_recorder_end_passthrough_operation_with_payload(
+    iree_hal_replay_pending_record_t* pending_record,
+    iree_status_t operation_status, iree_host_size_t iovec_count,
+    const iree_const_byte_span_t* iovecs) {
+  iree_hal_replay_recorder_t* recorder = pending_record->recorder;
+  if (!recorder) return operation_status;
+  pending_record->metadata.status_code =
+      (uint32_t)iree_status_code(operation_status);
+  iree_status_t record_status = iree_hal_replay_file_writer_append_record(
+      recorder->writer, &pending_record->metadata, iovec_count, iovecs, NULL);
+  iree_hal_replay_recorder_fail_locked(recorder,
+                                       iree_status_code(record_status));
+  iree_slim_mutex_unlock(&recorder->mutex);
+  iree_status_free(record_status);
+  return operation_status;
+}
+
 iree_status_t iree_hal_replay_recorder_end_creation_operation(
     iree_hal_replay_pending_record_t* pending_record,
     iree_status_t operation_status, iree_host_size_t operation_iovec_count,
