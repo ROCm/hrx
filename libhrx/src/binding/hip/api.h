@@ -162,6 +162,27 @@ typedef struct dim3 {
   unsigned int x, y, z;
 } dim3;
 
+// Per-device launch description used by multi-device launch APIs.
+typedef struct hipLaunchParams_t {
+  // Registered host function address.
+  void* func;
+  // Grid dimensions in blocks.
+  dim3 gridDim;
+  // Block dimensions in threads.
+  dim3 blockDim;
+  // Array of pointers to argument values.
+  void** args;
+  // Dynamic shared memory available to each block, in bytes.
+  size_t sharedMem;
+  // Explicit stream associated with the target device.
+  hipStream_t stream;
+} hipLaunchParams;
+
+// Omits synchronization of participating streams before the launch set.
+#define hipCooperativeLaunchMultiDeviceNoPreSync 0x01
+// Omits synchronization of participating streams after the launch set.
+#define hipCooperativeLaunchMultiDeviceNoPostSync 0x02
+
 // Pitched pointer type.
 typedef struct hipPitchedPtr {
   void* ptr;
@@ -1675,6 +1696,11 @@ HIPAPI const char* hipKernelNameRefByPtr(const void* hostFunction,
 HIPAPI hipError_t hipLaunchKernel(const void* function_address, dim3 numBlocks,
                                   dim3 dimBlocks, void** args,
                                   size_t sharedMemBytes, hipStream_t stream);
+// Enqueues matching registered kernel launches across explicit device streams.
+// This is a non-cooperative AMD extension; |flags| only control the optional
+// pre-launch and post-launch stream synchronization.
+HIPAPI hipError_t hipExtLaunchMultiKernelMultiDevice(
+    hipLaunchParams* launchParamsList, int numDevices, unsigned int flags);
 HIPAPI hipError_t hipLaunchCooperativeKernel(const void* function_address,
                                              dim3 grid_dim, dim3 block_dim,
                                              void** kernel_params,

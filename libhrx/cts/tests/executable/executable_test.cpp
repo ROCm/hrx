@@ -19,6 +19,7 @@ namespace {
 constexpr const char* kFixtureKernelNames[] = {
     "hrx_noop",
     "hrx_store_output",
+    "hrx_gated_store_output",
     "hrx_transform_nested_pointers",
     "hrx_spin_dependent_chain",
 };

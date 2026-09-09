@@ -12,6 +12,7 @@
 #include "common/fat_binary.h"
 #include "common/function_attributes.h"
 #include "common/hrx_bridge.h"
+#include "common/stream.h"
 #include "iree/async/frontier_tracker.h"
 #include "iree/async/util/proactor_pool.h"
 #include "iree/base/api.h"
@@ -58,8 +59,6 @@ typedef struct iree_hal_streaming_graph_node_t iree_hal_streaming_graph_node_t;
 typedef struct iree_hal_streaming_module_t iree_hal_streaming_module_t;
 typedef struct iree_hal_streaming_module_registration_t
     iree_hal_streaming_module_registration_t;
-typedef struct iree_hal_streaming_stream_t iree_hal_streaming_stream_t;
-typedef struct iree_hal_streaming_symbol_t iree_hal_streaming_symbol_t;
 // async commit context removed (dead code, pool is now hrx_mem_pool_t).
 
 //===----------------------------------------------------------------------===//
@@ -1054,33 +1053,6 @@ static inline iree_hal_buffer_ref_t iree_hal_streaming_convert_range_buffer_ref(
 }
 
 //===----------------------------------------------------------------------===//
-// Dispatch types
-//===----------------------------------------------------------------------===//
-
-// Dispatch flags for kernel launches.
-typedef enum iree_hal_streaming_dispatch_flag_bits_e {
-  IREE_HAL_STREAMING_DISPATCH_FLAG_NONE = 0ull,
-  // Cooperative kernel launch.
-  IREE_HAL_STREAMING_DISPATCH_FLAG_COOPERATIVE = 1ull << 0,
-  // The parameters are an array of pointers to values.
-  IREE_HAL_STREAMING_DISPATCH_FLAG_ARGS_ARRAY = 1ull << 1,
-  // The parameter buffer is already packed in the kernel's native ABI format.
-  // The launch path preserves the byte image and does not rewrite reflected
-  // pointer slots into HAL bindings.
-  IREE_HAL_STREAMING_DISPATCH_FLAG_PRE_PACKED = 1ull << 2,
-} iree_hal_streaming_dispatch_flags_t;
-
-// Dispatch parameters for kernel launches.
-typedef struct iree_hal_streaming_dispatch_params_t {
-  uint32_t grid_dim[3];
-  uint32_t block_dim[3];
-  uint32_t shared_memory_bytes;
-  void* buffer;
-  size_t buffer_size;  // Size of the buffer in bytes (for native kernels)
-  iree_hal_streaming_dispatch_flags_t flags;
-} iree_hal_streaming_dispatch_params_t;
-
-//===----------------------------------------------------------------------===//
 // Graph types
 //===----------------------------------------------------------------------===//
 
@@ -1824,12 +1796,6 @@ bool iree_hal_streaming_stream_has_memory_reuse_dependency(
 //===----------------------------------------------------------------------===//
 // Execution control
 //===----------------------------------------------------------------------===//
-
-// Synchronization: none (enqueues kernel launch, non-blocking).
-iree_status_t iree_hal_streaming_launch_kernel(
-    iree_hal_streaming_symbol_t* symbol,
-    const iree_hal_streaming_dispatch_params_t* params,
-    iree_hal_streaming_stream_t* stream);
 
 // Launches a host function on the stream.
 // The function will be called with user_data when the stream reaches this

@@ -60,7 +60,6 @@ typedef struct hipGraphicsResource hipGraphicsResource;
 typedef hipGraphicsResource* hipGraphicsResource_t;
 typedef struct hipKernel_st* hipKernel_t;
 typedef struct hipLaunchConfig_st hipLaunchConfig_t;
-typedef struct hipLaunchParams_t hipLaunchParams;
 typedef struct hipLibrary_st* hipLibrary_t;
 typedef struct ihipLinkState_t* hipLinkState_t;
 typedef struct hipMemcpy3DPeerParms hipMemcpy3DPeerParms;
@@ -729,14 +728,6 @@ HIPAPI hipError_t hipExtGetLinkTypeAndHopCount(int device1, int device2,
   (void)device2;
   (void)linktype;
   (void)hopcount;
-  return hipErrorNotSupported;
-}
-
-HIPAPI hipError_t hipExtLaunchMultiKernelMultiDevice(
-    hipLaunchParams* launchParamsList, int numDevices, unsigned int flags) {
-  (void)launchParamsList;
-  (void)numDevices;
-  (void)flags;
   return hipErrorNotSupported;
 }
 
