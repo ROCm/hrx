@@ -147,6 +147,7 @@ iree_status_t iree_hal_streaming_context_create(
   context->stream_wait_frontier = NULL;
   context->event_record_timeline = (iree_hal_streaming_operation_timeline_t){0};
   iree_slim_mutex_initialize(&context->event_record_mutex);
+  context->stream_value_wait_queue = NULL;
 
   // Initialize default limits.
   // These are typical defaults matching CUDA/HIP behavior.
@@ -321,6 +322,11 @@ static void iree_hal_streaming_context_destroy(
 
   // Now release the context's reference to default stream.
   iree_hal_streaming_stream_release(default_stream);
+
+  // The value-wait queue is acquired lazily and can only be released after all
+  // stream work that may reference it has completed.
+  iree_hal_queue_release(context->stream_value_wait_queue);
+  context->stream_value_wait_queue = NULL;
 
   // Free stream tracking resources.
   if (context->streams) {

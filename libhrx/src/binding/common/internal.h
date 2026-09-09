@@ -292,6 +292,10 @@ struct iree_hal_streaming_context_t {
   // streams. Immutable once published and guarded by |stream_list_mutex|.
   iree_hal_fence_t* stream_wait_frontier;
 
+  // Exact queue used only for memory waits that can block until an independent
+  // producer runs. Lazily acquired and owned by the context.
+  iree_hal_queue_t* stream_value_wait_queue;
+
   // Dedicated mutex for stream list access.
   iree_slim_mutex_t stream_list_mutex;
 
@@ -601,7 +605,7 @@ static inline iree_status_t iree_hal_streaming_stream_reserve_next_value_locked(
     iree_hal_streaming_stream_t* stream, uint64_t* out_wait_value,
     uint64_t* out_signal_value) {
   const uint64_t wait_value = stream->pending_value;
-  if (IREE_UNLIKELY(wait_value == UINT64_MAX)) {
+  if (IREE_UNLIKELY(wait_value >= IREE_HAL_SEMAPHORE_MAX_VALUE)) {
     return iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
                             "stream timeline value overflow");
   }

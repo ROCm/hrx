@@ -134,6 +134,17 @@ hrx_cc_library(
 )
 
 hrx_cc_library(
+    name = "stream_value",
+    srcs = ["stream_value.c"],
+    hdrs = ["stream_value.h"],
+    includes = ["../.."],
+    deps = [
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+    ],
+)
+
+hrx_cc_library(
     name = "handle_registry",
     srcs = ["handle_registry.c"],
     hdrs = ["handle_registry.h"],
@@ -240,6 +251,7 @@ hrx_cc_shared_library(
         ":handle_registry",
         ":launch_params",
         ":stream",
+        ":stream_value",
         "//libhrx/src/binding/common",
         "//runtime/src/iree/base",
         "//runtime/src/iree/base/threading",
@@ -271,6 +283,16 @@ hrx_cc_test(
         "//runtime/src/iree/base",
         "//runtime/src/iree/hal",
         "//runtime/src/iree/hal/testing:mock_device",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+hrx_cc_test(
+    name = "stream_value_test",
+    srcs = ["stream_value_test.cc"],
+    deps = [
+        ":stream_value",
         "//runtime/src/iree/testing:gtest",
         "//runtime/src/iree/testing:gtest_main",
     ],
