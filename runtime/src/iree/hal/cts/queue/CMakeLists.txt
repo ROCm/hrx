@@ -69,6 +69,19 @@ iree_cc_library(
 
 iree_cc_library(
   NAME
+    queue_cooperative_dispatch_test
+  SRCS
+    "queue_cooperative_dispatch_test.cc"
+  DEPS
+    iree::hal
+    iree::hal::cts::util::test_base
+  TESTONLY
+  ALWAYSLINK
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
     queue_dispatch_concurrency_test
   SRCS
     "queue_dispatch_concurrency_test.cc"

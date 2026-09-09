@@ -65,6 +65,17 @@ iree_runtime_cc_library(
 )
 
 iree_runtime_cc_library(
+    name = "queue_cooperative_dispatch_test",
+    testonly = True,
+    srcs = ["queue_cooperative_dispatch_test.cc"],
+    deps = [
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/cts/util:test_base",
+    ],
+    alwayslink = True,
+)
+
+iree_runtime_cc_library(
     name = "queue_dispatch_concurrency_test",
     testonly = True,
     srcs = ["queue_dispatch_concurrency_test.cc"],

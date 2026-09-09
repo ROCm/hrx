@@ -313,32 +313,16 @@ iree_cc_library(
 endif()
 
 if(IREE_HAL_DRIVER_AMDGPU)
-iree_cc_library(
-  NAME
-    cooperative_dispatch_test
-  SRCS
-    "cooperative_dispatch_test.cc"
-  DEPS
-    iree::hal
-    iree::hal::cts::util::test_base
-    iree::testing::gtest
-  TESTONLY
-  ALWAYSLINK
-  PUBLIC
-)
-endif()
-
-if(IREE_HAL_DRIVER_AMDGPU)
 iree_cc_test(
   NAME
-    cooperative_dispatch_tests
+    queue_cooperative_dispatch_tests
   SRCS
     "${PROJECT_SOURCE_DIR}/runtime/src/iree/hal/cts/util/test_main.cc"
   DEPS
     ::backends
-    ::cooperative_dispatch_test
     ::cooperative_testdata_amdgpu
     iree::base::tooling::flags
+    iree::hal::cts::queue::queue_cooperative_dispatch_test
     iree::hal::cts::util::registry
     iree::hal::cts::util::test_base
     iree::testing::gtest

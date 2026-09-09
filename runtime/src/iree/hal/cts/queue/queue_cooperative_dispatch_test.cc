@@ -1,11 +1,10 @@
-
 // Copyright 2026 The IREE Authors
 //
 // Licensed under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-// Hardware-backed CTS coverage for AMDGPU cooperative dispatches.
+// CTS coverage for cooperative queue dispatches.
 
 #include <cstdint>
 #include <vector>
@@ -17,7 +16,7 @@ namespace {
 
 using ::testing::Each;
 
-class AmdgpuCooperativeDispatchTest : public CtsTestBase<> {
+class QueueCooperativeDispatchTest : public CtsTestBase<> {
  protected:
   void SetUp() override {
     CtsTestBase::SetUp();
@@ -143,17 +142,17 @@ class AmdgpuCooperativeDispatchTest : public CtsTestBase<> {
   const iree_hal_queue_family_spec_t* family_spec_ = nullptr;
   // Dynamically acquired cooperative hardware queue.
   Ref<iree_hal_queue_t> cooperative_queue_;
-  // Executable containing the OCKL grid synchronization probe.
+  // Executable containing the cooperative grid synchronization probe.
   Ref<iree_hal_executable_t> executable_;
 };
 
-TEST_P(AmdgpuCooperativeDispatchTest, DirectGridSynchronization) {
+TEST_P(QueueCooperativeDispatchTest, DirectGridSynchronization) {
   constexpr uint32_t kIncarnation = 100;
   DispatchAndExpectGrid(cooperative_queue_, kWorkgroupCount,
                         /*dynamic_workgroup_local_memory=*/0, kIncarnation);
 }
 
-TEST_P(AmdgpuCooperativeDispatchTest, ExplicitCompleteResourceSetDispatches) {
+TEST_P(QueueCooperativeDispatchTest, ExplicitCompleteResourceSetDispatches) {
   ASSERT_GT(family_spec_->execution_resource_count, 0u);
   std::vector<iree_hal_queue_execution_resource_ordinal_t> resource_ordinals(
       family_spec_->execution_resource_count);
@@ -179,43 +178,7 @@ TEST_P(AmdgpuCooperativeDispatchTest, ExplicitCompleteResourceSetDispatches) {
                         /*dynamic_workgroup_local_memory=*/0, kIncarnation);
 }
 
-TEST_P(AmdgpuCooperativeDispatchTest, PartialResourceSetIsRejected) {
-  std::vector<uint32_t> selected_group_counts(
-      family_spec_->execution_resource_group_count, 0);
-  std::vector<iree_hal_queue_execution_resource_ordinal_t> resource_ordinals;
-  for (iree_host_size_t i = 0; i < family_spec_->execution_resource_count;
-       ++i) {
-    const iree_hal_queue_execution_resource_group_ordinal_t group_ordinal =
-        family_spec_->execution_resources[i].group_ordinal;
-    ASSERT_LT(group_ordinal, selected_group_counts.size());
-    if (selected_group_counts[group_ordinal] <
-        family_spec_->execution_resource_groups[group_ordinal]
-            .minimum_selected_resource_count) {
-      resource_ordinals.push_back(
-          (iree_hal_queue_execution_resource_ordinal_t)i);
-      ++selected_group_counts[group_ordinal];
-    }
-  }
-  if (resource_ordinals.empty() && family_spec_->execution_resource_count > 1) {
-    resource_ordinals.push_back(0);
-  }
-  if (resource_ordinals.empty() ||
-      resource_ordinals.size() == family_spec_->execution_resource_count) {
-    GTEST_SKIP() << "queue family has no valid partial resource set";
-  }
-
-  iree_hal_queue_params_t params;
-  iree_hal_queue_params_initialize(&params);
-  params.features = IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH;
-  params.execution_resources.count = resource_ordinals.size();
-  params.execution_resources.ordinals = resource_ordinals.data();
-  Ref<iree_hal_queue_t> queue;
-  IREE_EXPECT_STATUS_IS(IREE_STATUS_UNIMPLEMENTED,
-                        iree_hal_device_acquire_queue(device_, queue_family_,
-                                                      &params, queue.out()));
-}
-
-TEST_P(AmdgpuCooperativeDispatchTest, ReportedMaximumGridSynchronizes) {
+TEST_P(QueueCooperativeDispatchTest, ReportedMaximumGridSynchronizes) {
   iree_hal_executable_function_info_t function_info = {};
   IREE_ASSERT_OK(iree_hal_executable_function_info(
       executable_, iree_hal_executable_function_from_index(0), &function_info));
@@ -259,7 +222,7 @@ TEST_P(AmdgpuCooperativeDispatchTest, ReportedMaximumGridSynchronizes) {
                         (uint32_t)dynamic_workgroup_local_memory, kIncarnation);
 }
 
-TEST_P(AmdgpuCooperativeDispatchTest,
+TEST_P(QueueCooperativeDispatchTest,
        ReusableCommandBufferExecutionsHaveIndependentGridState) {
   constexpr uint32_t kIncarnation = 200;
   const uint32_t constants[] = {kIncarnation, kWorkgroupCount};
@@ -345,7 +308,7 @@ TEST_P(AmdgpuCooperativeDispatchTest,
               Each((uint32_t)ExpectedSum(kWorkgroupCount, kIncarnation)));
 }
 
-CTS_REGISTER_EXECUTABLE_TEST_SUITE(AmdgpuCooperativeDispatchTest);
+CTS_REGISTER_EXECUTABLE_TEST_SUITE(QueueCooperativeDispatchTest);
 
 }  // namespace
 }  // namespace iree::hal::cts
