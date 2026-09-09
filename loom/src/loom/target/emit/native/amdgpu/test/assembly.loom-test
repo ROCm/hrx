@@ -10,8 +10,8 @@ low.func.def target<amdgpu.rdna3.core>(@gfx11_target) @gfx11_constants(%resource
 }
 
 // ----
-  s_mov_b32 s4, 7
   v_mov_b32 v1, 9
+  s_mov_b32 s4, 7
   v_add_u32 v1, 123, v1
   buffer_store_dword v1, v0, s[0:3], s4 offen offset:12
   s_endpgm
@@ -2489,17 +2489,17 @@ low.func.def target<amdgpu.rdna3.core>(@gfx11_target) @gfx11_guarded_scalar_exec
 }
 
 // ----
+  s_mov_b64_exec_read s[8:9]
   s_mov_b32 s3, 0
-  s_mov_b32 s8, 1
-  s_mov_b64_exec_read s[10:11]
+  s_mov_b32 s10, 1
   s_cmp_eq_i32 s0, s3
-  s_cselect_b32 s0, s8, s3
+  s_cselect_b32 s0, s10, s3
   s_cmp_eq_i32 s1, s3
-  s_cselect_b32 s1, s8, s3
+  s_cselect_b32 s1, s10, s3
   s_and_b32 s0, s0, s1
   s_cmp_lg_i32 s0, s3
-  s_cselect_b32 s0, s10, s3
-  s_cselect_b32 s1, s11, s3
+  s_cselect_b32 s0, s8, s3
+  s_cselect_b32 s1, s9, s3
   s_and_saveexec_b64 s[0:1], s[0:1]
   s_cbranch_scc0 .Lbb2
 .Lbb1:
@@ -2658,8 +2658,8 @@ low.func.def target<amdgpu.rdna3.core>(@gfx11_target) @gfx11_predicated_tile_swe
 // ----
   s_mov_b32 s6, 16
   s_mov_b32 s7, 128
-  s_mov_b32 s8, 0
   v_mov_b32 v1, 0
+  s_mov_b32 s8, 0
   global_load_d16_b16 v2, v1, s[0:1] offset:0
   v_cvt_f32_f16 v2, v2
 .Lbb1:
@@ -2676,13 +2676,13 @@ low.func.def target<amdgpu.rdna3.core>(@gfx11_target) @gfx11_predicated_tile_swe
   s_cbranch_scc0 .Lbb5
 .Lbb4:
   v_mov_b32_copy v4, s8
-  v_mov_b32 v5, 15
-  v_mov_b32 v6, 64
-  v_lshrrev_b32 v7, 4, v2
-  v_and_b32 v5, v2, v5
-  v_add_u32 v4, v4, v5
-  v_mad_u32_u24 v4, v7, 3072, v4
-  v_add_u32 v2, v2, v6
+  v_lshrrev_b32 v5, 4, v2
+  v_mov_b32 v6, 15
+  v_mov_b32 v7, 64
+  v_and_b32 v6, v2, v6
+  v_add_u32 v4, v4, v6
+  v_mad_u32_u24 v4, v5, 3072, v4
+  v_add_u32 v2, v2, v7
   v_lshlrev_b32 v4, 2, v4
   global_load_b32 v4, v4, s[2:3] offset:0
   v_add_f32 v3, v3, v4
@@ -3240,18 +3240,18 @@ low.func.def target<amdgpu.rdna3.core>(@gfx11_target) @gfx11_stress_fragment(%s0
 }
 
 // ----
+  v_wmma_f32_16x16x16_f16 v[0:7], v[16:23], v[24:31], v[0:7]
   buffer_load_dword v11, v10, s[4:7], s8 offen offset:4
   buffer_load_b128 v[12:15], v10, s[4:7], s8 offen offset:16
   s_load_dwordx2 s[10:11], s[0:1], s8 offset:16
   s_buffer_load_dword s0, s[4:7], s8 offset:0
-  v_wmma_f32_16x16x16_f16 v[0:7], v[16:23], v[24:31], v[0:7]
   s_add_u32 s1, s2, s3
   v_add_u32 v8, v8, v9
-  v_wmma_f32_16x16x16_f16 v[0:7], v[16:23], v[24:31], v[0:7]
   s_add_u32 s0, s1, s0
-  v_add_u32 v4, v8, v11
-  buffer_store_dword v4, v10, s[4:7], s0 offen offset:8
+  v_add_u32 v8, v8, v11
+  buffer_store_dword v8, v10, s[4:7], s0 offen offset:8
   buffer_store_b128 v[12:15], v10, s[4:7], s10 offen offset:32
+  v_wmma_f32_16x16x16_f16 v[0:7], v[16:23], v[24:31], v[0:7]
   buffer_store_b128 v[0:3], v10, s[4:7], s8 offen offset:48
   s_waitcnt vmcnt(0) lgkmcnt(0)
   s_waitcnt_depctr depctr(0)

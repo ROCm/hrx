@@ -954,6 +954,10 @@ static void loom_low_schedule_score_candidate_schedule_class(
     const loom_low_schedule_build_state_t* state,
     const loom_low_schedule_class_t* schedule_class,
     loom_low_schedule_candidate_score_t* score) {
+  score->flags &= ~LOOM_LOW_SCHEDULE_CANDIDATE_FLAG_HAS_ISSUE_USE;
+  if (schedule_class && schedule_class->issue_use_count != 0) {
+    score->flags |= LOOM_LOW_SCHEDULE_CANDIDATE_FLAG_HAS_ISSUE_USE;
+  }
   loom_low_schedule_score_candidate_hazards(state, schedule_class, score);
   const uint32_t prerequisite_stall_cycles = iree_max(
       score->data_ready_stall_cycles,
@@ -1045,6 +1049,7 @@ static void loom_low_schedule_select_candidate_schedule_class(
     score->resource_stall_cycles = alternative_score.resource_stall_cycles;
     score->effective_stall_cycles = alternative_score.effective_stall_cycles;
     score->bottleneck_resource_id = alternative_score.bottleneck_resource_id;
+    score->flags = alternative_score.flags;
     score->selected_descriptor_ordinal =
         alternative->alternative_descriptor_ordinal;
   }

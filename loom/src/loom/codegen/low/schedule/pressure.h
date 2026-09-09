@@ -347,6 +347,9 @@ enum loom_low_schedule_candidate_flag_bits_e {
   // Candidate has exact identity with the selected active register-packing
   // completion.
   LOOM_LOW_SCHEDULE_CANDIDATE_FLAG_EXACT_PACKING_COMPLETION = 1u << 9,
+  // Selected schedule class consumes at least one issue resource. Zero-cost
+  // materializations cannot hide latency by moving into an issue window.
+  LOOM_LOW_SCHEDULE_CANDIDATE_FLAG_HAS_ISSUE_USE = 1u << 10,
   // Candidate exposes actionable structural storage setup. Numeric identity
   // with LOOM_LOW_SCHEDULE_NODE_FLAG_DESCRIPTOR_SETUP lets final-producer
   // publication copy the fact without a branch or lookup.
@@ -354,7 +357,7 @@ enum loom_low_schedule_candidate_flag_bits_e {
       LOOM_LOW_SCHEDULE_NODE_FLAG_DESCRIPTOR_SETUP,
 };
 static_assert(
-    LOOM_LOW_SCHEDULE_CANDIDATE_FLAG_EXACT_PACKING_COMPLETION <= UINT16_MAX,
+    LOOM_LOW_SCHEDULE_CANDIDATE_FLAG_HAS_ISSUE_USE <= UINT16_MAX,
     "candidate flags must fit in loom_low_schedule_candidate_score_t");
 static_assert(
     (LOOM_LOW_SCHEDULE_NODE_FLAG_PAIR_TRANSPARENT << 1u) ==

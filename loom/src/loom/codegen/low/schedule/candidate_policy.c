@@ -81,12 +81,9 @@ static bool loom_low_schedule_candidate_defers_storage_setup(
 }
 
 // Returns true when an operand-free rematerializable descriptor would create
-// a live value. Keeping these materializations demand-driven is especially
-// important after allocation repair has cloned a shared value next to each
-// use. A clone that exposes its consumer remains deferred relative to that
-// consumer: after one clone opens a chain, ordinary work closes the chain
-// before another clone can recreate the pressure that rematerialization
-// removed.
+// a live value. Prefer its consumer once ready so independent materializations
+// do not accumulate live storage. In the absence of pressure risk, this soft
+// preference follows ready packet pairing and issue cost.
 static bool loom_low_schedule_candidate_defers_rematerializable_leaf(
     loom_low_schedule_candidate_compare_mode_t compare_mode,
     const loom_low_schedule_candidate_score_t* score) {
@@ -115,6 +112,25 @@ static bool loom_low_schedule_candidate_unlocks_descriptor(
     const loom_low_schedule_candidate_score_t* score) {
   return iree_any_bit_set(score->flags,
                           LOOM_LOW_SCHEDULE_CANDIDATE_FLAG_UNLOCKS_DESCRIPTOR);
+}
+
+static int loom_low_schedule_compare_candidate_materialization(
+    loom_low_schedule_candidate_compare_mode_t compare_mode,
+    const loom_low_schedule_candidate_score_t* lhs,
+    const loom_low_schedule_candidate_score_t* rhs) {
+  const bool lhs_defers =
+      loom_low_schedule_candidate_defers_materialization(compare_mode, lhs);
+  const bool rhs_defers =
+      loom_low_schedule_candidate_defers_materialization(compare_mode, rhs);
+  if (lhs_defers != rhs_defers) return lhs_defers ? 1 : -1;
+  if (!lhs_defers) return 0;
+  const bool lhs_unlocks = loom_low_schedule_candidate_unlocks_descriptor(lhs);
+  const bool rhs_unlocks = loom_low_schedule_candidate_unlocks_descriptor(rhs);
+  if (lhs_unlocks != rhs_unlocks) return lhs_unlocks ? -1 : 1;
+  if (lhs->pressure_cliff_penalty != rhs->pressure_cliff_penalty) {
+    return lhs->pressure_cliff_penalty < rhs->pressure_cliff_penalty ? -1 : 1;
+  }
+  return 0;
 }
 
 static bool loom_low_schedule_candidate_exceeds_unspillable_capacity(
@@ -227,6 +243,36 @@ static bool loom_low_schedule_candidate_has_ready_pair_affinity(
          score->data_ready_stall_cycles == 0 && score->hazard_stall_cycles == 0;
 }
 
+static int loom_low_schedule_compare_candidate_issue_cost(
+    const loom_low_schedule_candidate_score_t* lhs,
+    const loom_low_schedule_candidate_score_t* rhs) {
+  const bool lhs_has_ready_pair_affinity =
+      loom_low_schedule_candidate_has_ready_pair_affinity(lhs);
+  const bool rhs_has_ready_pair_affinity =
+      loom_low_schedule_candidate_has_ready_pair_affinity(rhs);
+  if (lhs_has_ready_pair_affinity != rhs_has_ready_pair_affinity) {
+    return lhs_has_ready_pair_affinity ? -1 : 1;
+  }
+  if (lhs_has_ready_pair_affinity &&
+      loom_low_schedule_candidate_pair_affinity_differs(lhs, rhs)) {
+    return loom_low_schedule_candidate_has_better_pair_affinity(lhs, rhs) ? -1
+                                                                          : 1;
+  }
+  if (lhs->effective_stall_cycles != rhs->effective_stall_cycles) {
+    return lhs->effective_stall_cycles < rhs->effective_stall_cycles ? -1 : 1;
+  }
+  if (lhs->hazard_stall_cycles != rhs->hazard_stall_cycles) {
+    return lhs->hazard_stall_cycles < rhs->hazard_stall_cycles ? -1 : 1;
+  }
+  if (lhs->resource_stall_cycles != rhs->resource_stall_cycles) {
+    return lhs->resource_stall_cycles < rhs->resource_stall_cycles ? -1 : 1;
+  }
+  if (lhs->data_ready_stall_cycles != rhs->data_ready_stall_cycles) {
+    return lhs->data_ready_stall_cycles < rhs->data_ready_stall_cycles ? -1 : 1;
+  }
+  return 0;
+}
+
 static loom_low_schedule_candidate_compare_mode_t
 loom_low_schedule_choose_candidate_compare_mode(
     const loom_low_schedule_candidate_score_t* scores,
@@ -252,10 +298,6 @@ static bool loom_low_schedule_candidate_score_less(
     loom_low_schedule_candidate_compare_mode_t compare_mode,
     const loom_low_schedule_candidate_score_t* lhs,
     const loom_low_schedule_candidate_score_t* rhs) {
-  const bool lhs_defers_materialization =
-      loom_low_schedule_candidate_defers_materialization(compare_mode, lhs);
-  const bool rhs_defers_materialization =
-      loom_low_schedule_candidate_defers_materialization(compare_mode, rhs);
   const bool lhs_exceeds_unspillable_capacity =
       loom_low_schedule_candidate_exceeds_unspillable_capacity(lhs);
   const bool rhs_exceeds_unspillable_capacity =
@@ -288,21 +330,19 @@ static bool loom_low_schedule_candidate_score_less(
       lhs->source_ordinal != rhs->source_ordinal) {
     return lhs->source_ordinal < rhs->source_ordinal;
   }
-  if (lhs_defers_materialization != rhs_defers_materialization) {
-    return !lhs_defers_materialization;
-  }
-  if (lhs_defers_materialization) {
-    const bool lhs_unlocks_descriptor =
-        loom_low_schedule_candidate_unlocks_descriptor(lhs);
-    const bool rhs_unlocks_descriptor =
-        loom_low_schedule_candidate_unlocks_descriptor(rhs);
-    if (lhs_unlocks_descriptor != rhs_unlocks_descriptor) {
-      return lhs_unlocks_descriptor;
-    }
-  }
-  if (lhs_defers_materialization &&
-      lhs->pressure_cliff_penalty != rhs->pressure_cliff_penalty) {
-    return lhs->pressure_cliff_penalty < rhs->pressure_cliff_penalty;
+  const int materialization_order =
+      loom_low_schedule_compare_candidate_materialization(compare_mode, lhs,
+                                                          rhs);
+  // Inactive storage setup and issue-free materializations cannot fill a
+  // latency window. Issued descriptors compare issue opportunities first when
+  // headroom is available; otherwise materialization remains demand-driven.
+  if (materialization_order != 0 &&
+      (compare_mode != LOOM_LOW_SCHEDULE_CANDIDATE_COMPARE_DEFAULT ||
+       loom_low_schedule_candidate_defers_storage_setup(lhs) ||
+       loom_low_schedule_candidate_defers_storage_setup(rhs) ||
+       !iree_any_bit_set((materialization_order < 0 ? rhs : lhs)->flags,
+                         LOOM_LOW_SCHEDULE_CANDIDATE_FLAG_HAS_ISSUE_USE))) {
+    return materialization_order < 0;
   }
   const int pressure_order =
       loom_low_schedule_compare_candidate_pressure(lhs, rhs);
@@ -335,28 +375,10 @@ static bool loom_low_schedule_candidate_score_less(
         return lhs->critical_path_cycles > rhs->critical_path_cycles;
       }
     }
-    const bool lhs_has_ready_pair_affinity =
-        loom_low_schedule_candidate_has_ready_pair_affinity(lhs);
-    const bool rhs_has_ready_pair_affinity =
-        loom_low_schedule_candidate_has_ready_pair_affinity(rhs);
-    if (lhs_has_ready_pair_affinity != rhs_has_ready_pair_affinity) {
-      return lhs_has_ready_pair_affinity;
-    }
-    if (lhs_has_ready_pair_affinity &&
-        loom_low_schedule_candidate_pair_affinity_differs(lhs, rhs)) {
-      return loom_low_schedule_candidate_has_better_pair_affinity(lhs, rhs);
-    }
-    if (lhs->effective_stall_cycles != rhs->effective_stall_cycles) {
-      return lhs->effective_stall_cycles < rhs->effective_stall_cycles;
-    }
-    if (lhs->hazard_stall_cycles != rhs->hazard_stall_cycles) {
-      return lhs->hazard_stall_cycles < rhs->hazard_stall_cycles;
-    }
-    if (lhs->resource_stall_cycles != rhs->resource_stall_cycles) {
-      return lhs->resource_stall_cycles < rhs->resource_stall_cycles;
-    }
-    if (lhs->data_ready_stall_cycles != rhs->data_ready_stall_cycles) {
-      return lhs->data_ready_stall_cycles < rhs->data_ready_stall_cycles;
+    const int issue_cost_order =
+        loom_low_schedule_compare_candidate_issue_cost(lhs, rhs);
+    if (issue_cost_order != 0) {
+      return issue_cost_order < 0;
     }
     if (compare_mode == LOOM_LOW_SCHEDULE_CANDIDATE_COMPARE_DEFAULT &&
         lhs->opened_completion_latency_cycles !=
@@ -367,6 +389,7 @@ static bool loom_low_schedule_candidate_score_less(
     if (loom_low_schedule_candidate_pair_affinity_differs(lhs, rhs)) {
       return loom_low_schedule_candidate_has_better_pair_affinity(lhs, rhs);
     }
+    if (materialization_order != 0) return materialization_order < 0;
     if (live_value_order != 0 &&
         (loom_low_schedule_candidate_compacts_live_values(lhs) ||
          loom_low_schedule_candidate_compacts_live_values(rhs)) &&
@@ -407,6 +430,7 @@ static bool loom_low_schedule_candidate_score_less(
   if (loom_low_schedule_candidate_pair_affinity_differs(lhs, rhs)) {
     return loom_low_schedule_candidate_has_better_pair_affinity(lhs, rhs);
   }
+  if (materialization_order != 0) return materialization_order < 0;
   if (pressure_efficiency_order != 0) {
     return pressure_efficiency_order < 0;
   }
