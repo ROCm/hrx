@@ -164,7 +164,9 @@ using ScopedStream = std::unique_ptr<hipStream_st, StreamDeleter>;
 
 struct ScopedRegistration {
   ~ScopedRegistration() {
-    if (value) unregister(value);
+    if (value) {
+      unregister(value);
+    }
   }
 
   // Compiler-style fat-binary registration released at scope exit.
@@ -175,7 +177,10 @@ struct ScopedRegistration {
 
 struct ScopedDeviceSelection {
   ~ScopedDeviceSelection() {
-    if (set_device) EXPECT_EQ(hipSuccess, set_device(original_device));
+    if (set_device) {
+      const hipError_t result = set_device(original_device);
+      EXPECT_EQ(hipSuccess, result);
+    }
   }
 
   // Device that was selected before the test began switching devices.
@@ -277,7 +282,8 @@ struct MultiDeviceLaunchState {
       stream = nullptr;
     }
     if (output) {
-      EXPECT_EQ(hipSuccess, free_memory(output));
+      const hipError_t free_result = free_memory(output);
+      EXPECT_EQ(hipSuccess, free_result);
       output = nullptr;
     }
     if (host_gate) {

@@ -69,7 +69,10 @@ using HipRegisterFunctionFn = void (*)(
 
 struct ScopedModule {
   ~ScopedModule() {
-    if (value) EXPECT_EQ(hipSuccess, unload(value));
+    if (value) {
+      const hipError_t result = unload(value);
+      EXPECT_EQ(hipSuccess, result);
+    }
   }
 
   // Loaded module released at scope exit.
@@ -80,7 +83,9 @@ struct ScopedModule {
 
 struct ScopedRegistration {
   ~ScopedRegistration() {
-    if (value) unregister(value);
+    if (value) {
+      unregister(value);
+    }
   }
 
   // Compiler-style fat-binary registration released at scope exit.
