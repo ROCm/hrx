@@ -96,7 +96,9 @@ static void ExpectQueuePropertiesSupportedByFamily(
   std::vector<iree_host_size_t> group_resource_counts(
       family_spec->execution_resource_group_count, 0);
   for (iree_host_size_t i = 0; i < resources.count; ++i) {
-    if (i > 0) EXPECT_LT(resources.ordinals[i - 1], resources.ordinals[i]);
+    if (i > 0) {
+      EXPECT_LT(resources.ordinals[i - 1], resources.ordinals[i]);
+    }
     ASSERT_LT(resources.ordinals[i], family_spec->execution_resource_count);
     const iree_hal_queue_execution_resource_group_ordinal_t group_ordinal =
         family_spec->execution_resources[resources.ordinals[i]].group_ordinal;
