@@ -1,0 +1,241 @@
+# Copyright 2026 The IREE Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+load("//runtime/build_tools/bazel:cc.bzl", "iree_runtime_cc_library")
+load("//runtime/build_tools/bazel:cc_benchmark.bzl", "iree_runtime_cc_benchmark")
+load("//runtime/build_tools/bazel:cc_fuzz.bzl", "iree_runtime_cc_fuzz")
+load("//runtime/build_tools/bazel:cc_test.bzl", "iree_runtime_cc_test")
+
+package(
+    default_visibility = ["//visibility:public"],
+    features = ["layering_check"],
+    licenses = ["notice"],
+)
+
+iree_runtime_cc_library(
+    name = "vm",
+    srcs = [
+        "buffer.c",
+        "environment.c",
+        "execution.c",
+        "invocation.c",
+        "invocation_storage.h",
+        "module.c",
+        "process.c",
+        "process_storage.h",
+        "program.c",
+        "program_storage.h",
+        "ref.c",
+        "reflection.c",
+        "sync.c",
+        "variant.c",
+    ],
+    hdrs = [
+        "buffer.h",
+        "buffer_provider.h",
+        "environment.h",
+        "execution.h",
+        "function.h",
+        "invocation.h",
+        "module.h",
+        "process.h",
+        "program.h",
+        "ref.h",
+        "reflection.h",
+        "scalar.h",
+        "sync.h",
+        "variant.h",
+    ],
+    deps = [
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/base/internal:fpu_state",
+        "//runtime/src/iree/base/internal:unicode",
+        "//runtime/src/iree/base/threading",
+    ],
+)
+
+iree_runtime_cc_library(
+    name = "module_test_provider",
+    testonly = True,
+    srcs = ["module_test_provider.c"],
+    hdrs = ["module_test_provider.h"],
+    deps = [":vm"],
+)
+
+iree_runtime_cc_library(
+    name = "invocation_test_module",
+    testonly = True,
+    srcs = ["invocation_test_module.c"],
+    hdrs = ["invocation_test_module.h"],
+    deps = [":vm"],
+)
+
+iree_runtime_cc_library(
+    name = "test_support",
+    testonly = True,
+    hdrs = [
+        "module_test_util.h",
+        "test_allocator.h",
+    ],
+    deps = [
+        ":vm",
+        "//runtime/src/iree/base",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "buffer_test",
+    srcs = ["buffer_test.cc"],
+    deps = [
+        ":test_support",
+        ":vm",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "environment_test",
+    srcs = ["environment_test.cc"],
+    deps = [
+        ":test_support",
+        ":vm",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "execution_test",
+    srcs = ["execution_test.cc"],
+    deps = [
+        ":vm",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "invocation_test",
+    srcs = ["invocation_test.cc"],
+    deps = [
+        ":invocation_test_module",
+        ":vm",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_fuzz(
+    name = "invocation_fuzz",
+    srcs = ["invocation_fuzz.cc"],
+    deps = [
+        ":invocation_test_module",
+        ":vm",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "module_test",
+    srcs = ["module_test.cc"],
+    deps = [
+        ":module_test_provider",
+        ":vm",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "module_validation_test",
+    srcs = ["module_validation_test.cc"],
+    deps = [
+        ":test_support",
+        ":vm",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "program_test",
+    srcs = [
+        "program_storage.h",
+        "program_test.cc",
+    ],
+    deps = [
+        ":test_support",
+        ":vm",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "process_test",
+    srcs = ["process_test.cc"],
+    deps = [
+        ":test_support",
+        ":vm",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "ref_test",
+    srcs = ["ref_test.cc"],
+    deps = [
+        ":vm",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "reflection_test",
+    srcs = ["reflection_test.cc"],
+    deps = [
+        ":module_test_provider",
+        ":vm",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "sync_test",
+    srcs = ["sync_test.cc"],
+    deps = [
+        ":invocation_test_module",
+        ":vm",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "variant_test",
+    srcs = ["variant_test.cc"],
+    deps = [
+        ":vm",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+        "//runtime/src/iree/vm/bytecode:wire",
+    ],
+)
+
+iree_runtime_cc_benchmark(
+    name = "execution_benchmark",
+    srcs = ["execution_benchmark.cc"],
+    deps = [
+        ":invocation_test_module",
+        ":vm",
+        "//runtime/src/iree/testing:benchmark",
+        "//runtime/src/iree/testing:benchmark_main",
+    ],
+)

@@ -28,6 +28,7 @@ GLOBAL_TEST_TRIGGERS = (
     ".bazel_to_cmake.cfg.py",
     "requirements",
 )
+RESOURCE_TEST_TAG_FILTERS = ("-iree-run-requirement=runtime.resource.amd_gpu",)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -68,11 +69,18 @@ def should_run_tests(files_from: str | None) -> bool:
     )
 
 
+def bazel_test_command() -> list[str]:
+    return [
+        "bazel",
+        "test",
+        "--config=presubmit",
+        "--test_tag_filters=" + ",".join(RESOURCE_TEST_TAG_FILTERS),
+        "//libhrx/...",
+    ]
+
+
 def run_bazel_tests() -> bool:
-    return run_command(
-        ["bazel", "test", "--config=presubmit", "//libhrx/..."],
-        "Bazel tests",
-    )
+    return run_command(bazel_test_command(), "Bazel tests")
 
 
 def run_cmake_tests() -> bool:

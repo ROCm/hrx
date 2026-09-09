@@ -590,6 +590,23 @@ class ExecutionRunner:
                 raise CaseFailure(
                     f"{case_name}:{step_name}: expected file {path} to be non-empty"
                 )
+            if "equals" in spec:
+                expected_path = Path(
+                    _as_string(
+                        spec["equals"],
+                        f"{case_name}:{step_name}.files[{index}].equals",
+                    )
+                )
+                if not expected_path.exists():
+                    raise CaseFailure(
+                        f"{case_name}:{step_name}: expected comparison file "
+                        f"{expected_path} to exist"
+                    )
+                if path.read_bytes() != expected_path.read_bytes():
+                    raise CaseFailure(
+                        f"{case_name}:{step_name}: file {path} differs from "
+                        f"{expected_path}"
+                    )
 
     def _fail_command(
         self,

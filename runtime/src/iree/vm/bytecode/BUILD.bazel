@@ -1,0 +1,662 @@
+# Copyright 2026 The IREE Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+load("//build_tools/bazel:cmake.bzl", "iree_cmake_extra_content")
+load("//build_tools/bazel:generate.bzl", "iree_generated_files")
+load("//build_tools/embed_data:build_defs.bzl", "iree_c_embed_data")
+load("//runtime/build_tools/bazel:cc.bzl", "iree_runtime_cc_library")
+load("//runtime/build_tools/bazel:cc_benchmark.bzl", "iree_runtime_cc_benchmark")
+load("//runtime/build_tools/bazel:cc_fuzz.bzl", "iree_runtime_cc_fuzz")
+load("//runtime/build_tools/bazel:cc_test.bzl", "iree_runtime_cc_test")
+
+package(
+    default_visibility = ["//visibility:public"],
+    features = ["layering_check"],
+    licenses = ["notice"],
+)
+
+iree_generated_files(
+    name = "runtime_projections",
+    outs = [
+        "interpreter_tables.inl",
+        "layout_tables.inl",
+        "verifier_data.c",
+        "verifier_instruction_cases.inl",
+        "verifier_module_cases.inl",
+        "wire/assertions.c",
+        "wire/core.h",
+        "wire/module.h",
+    ],
+    output_args = {
+        "interpreter_tables.inl": "--interpreter-data={path}",
+        "layout_tables.inl": "--layout-data={path}",
+        "verifier_data.c": "--verifier-source={path}",
+        "verifier_instruction_cases.inl": "--instruction-verifier-cases={path}",
+        "verifier_module_cases.inl": "--module-verifier-cases={path}",
+        "wire/assertions.c": "--wire-assertions-source={path}",
+        "wire/core.h": "--wire-core-header={path}",
+        "wire/module.h": "--wire-module-header={path}",
+    },
+    tags = ["skip-bazel_to_cmake"],
+    tool = "//runtime/src/iree/vm/bytecode/spec:generate_runtime",
+)
+
+iree_generated_files(
+    name = "conversion_test_projection",
+    testonly = True,
+    outs = ["interpreter_conversion_test_vectors.inl"],
+    output_args = {
+        "interpreter_conversion_test_vectors.inl": "--conversion-test-vectors={path}",
+    },
+    tags = ["skip-bazel_to_cmake"],
+    tool = "//runtime/src/iree/vm/bytecode/spec:generate_conversion_tests",
+)
+
+iree_generated_files(
+    name = "tooling_projection",
+    outs = [
+        "assembler_tables.inl",
+        "disassembler_tables.inl",
+    ],
+    output_args = {
+        "assembler_tables.inl": "--assembler-data={path}",
+        "disassembler_tables.inl": "--disassembler-data={path}",
+    },
+    tags = ["skip-bazel_to_cmake"],
+    tool = "//runtime/src/iree/vm/bytecode/spec:generate_tooling",
+)
+
+iree_generated_files(
+    name = "documentation_projection",
+    outs = ["docs/specification.md"],
+    output_args = {
+        "docs/specification.md": "--documentation={path}",
+    },
+    tags = ["skip-bazel_to_cmake"],
+    tool = "//runtime/src/iree/vm/bytecode/spec:generate_documentation",
+)
+
+iree_runtime_cc_library(
+    name = "wire",
+    srcs = ["wire/assertions.c"],
+    hdrs = [
+        "wire/core.h",
+        "wire/module.h",
+    ],
+    deps = ["//runtime/src/iree/base:core_headers"],
+)
+
+iree_c_embed_data(
+    name = "execution_testdata",
+    testonly = True,
+    srcs = ["testdata/core_execution.vmasm"],
+    c_file_output = "execution_testdata.c",
+    flatten = True,
+    h_file_output = "execution_testdata.h",
+    identifier = "iree_vm_bytecode_execution_testdata",
+)
+
+iree_c_embed_data(
+    name = "launch_config_testdata",
+    testonly = True,
+    srcs = ["testdata/launch_config.vmasm"],
+    c_file_output = "launch_config_testdata.c",
+    flatten = True,
+    h_file_output = "launch_config_testdata.h",
+    identifier = "iree_vm_bytecode_launch_config_testdata",
+)
+
+iree_c_embed_data(
+    name = "verifier_testdata",
+    testonly = True,
+    srcs = ["testdata/structural.vmasm"],
+    c_file_output = "verifier_testdata.c",
+    flatten = True,
+    h_file_output = "verifier_testdata.h",
+    identifier = "iree_vm_bytecode_verifier_testdata",
+)
+
+iree_runtime_cc_library(
+    name = "layout",
+    srcs = [
+        "layout.c",
+        "layout_tables.inl",
+    ],
+    hdrs = ["layout.h"],
+    deps = [
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/vm",
+    ],
+)
+
+iree_runtime_cc_library(
+    name = "verifier",
+    srcs = [
+        "verifier.c",
+        "verifier_data.c",
+        "verifier_data.h",
+        "verifier_instruction_cases.inl",
+        "verifier_module_cases.inl",
+    ],
+    hdrs = ["verifier.h"],
+    deps = [
+        ":layout",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal:unicode",
+        "//runtime/src/iree/vm",
+    ],
+)
+
+iree_runtime_cc_library(
+    name = "assembler",
+    srcs = [
+        "assembler.c",
+        "assembler_lexer.c",
+        "assembler_lexer.h",
+        "assembler_module.c",
+        "assembler_module.h",
+        "assembler_symbols.c",
+        "assembler_symbols.h",
+        "assembler_tables.inl",
+    ],
+    hdrs = ["assembler.h"],
+    deps = [
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal:unicode",
+        "//runtime/src/iree/io:stream",
+        "//runtime/src/iree/vm",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "assembler_lexer_test",
+    srcs = [
+        "assembler_lexer.h",
+        "assembler_lexer_test.cc",
+    ],
+    deps = [
+        ":assembler",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "assembler_symbols_test",
+    srcs = [
+        "assembler_symbols.h",
+        "assembler_symbols_test.cc",
+    ],
+    deps = [
+        ":assembler",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_library(
+    name = "module_fixture",
+    testonly = True,
+    srcs = ["module_fixture.c"],
+    hdrs = ["module_fixture.h"],
+    visibility = [":__pkg__"],
+    deps = [
+        ":assembler",
+        "//runtime/src/iree/base",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "assembler_test",
+    srcs = ["assembler_test.cc"],
+    deps = [
+        ":assembler",
+        ":disassembler",
+        ":execution_testdata",
+        ":launch_config_testdata",
+        ":verifier_testdata",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_fuzz(
+    name = "assembler_fuzz",
+    srcs = ["assembler_fuzz.cc"],
+    deps = [
+        ":assembler",
+        ":disassembler",
+        ":execution_testdata",
+        ":launch_config_testdata",
+        ":verifier",
+        "//runtime/src/iree/base",
+    ],
+)
+
+iree_runtime_cc_library(
+    name = "disassembler",
+    srcs = [
+        "disassembler.c",
+        "disassembler_tables.inl",
+    ],
+    hdrs = ["disassembler.h"],
+    deps = [
+        ":verifier",
+        ":wire",
+        "//runtime/src/iree/base",
+    ],
+)
+
+iree_runtime_cc_library(
+    name = "module",
+    srcs = [
+        "image.c",
+        "image.h",
+        "interpreter.c",
+        "interpreter.h",
+        "interpreter_atomic.c",
+        "interpreter_atomic.h",
+        "interpreter_buffer.h",
+        "interpreter_call.c",
+        "interpreter_call.h",
+        "interpreter_conversion.c",
+        "interpreter_conversion.h",
+        "interpreter_float.h",
+        "interpreter_float_impl.inl",
+        "interpreter_float_math.c",
+        "interpreter_float_math.h",
+        "interpreter_frame.c",
+        "interpreter_frame.h",
+        "interpreter_integer.h",
+        "interpreter_integer_impl.inl",
+        "interpreter_memory.h",
+        "interpreter_tables.inl",
+        "module.c",
+        "process.c",
+        "process.h",
+        "reflection.c",
+        "reflection.h",
+    ],
+    hdrs = ["module.h"],
+    deps = [
+        ":layout",
+        ":verifier",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base:core_headers",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/math",
+        "//runtime/src/iree/vm",
+    ],
+)
+
+iree_runtime_cc_benchmark(
+    name = "module_benchmark",
+    srcs = ["module_benchmark.cc"],
+    deps = [
+        ":launch_config_testdata",
+        ":layout",
+        ":module",
+        ":module_fixture",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:benchmark",
+        "//runtime/src/iree/testing:benchmark_main",
+        "//runtime/src/iree/vm",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_test",
+    srcs = ["interpreter_test.cc"],
+    deps = [
+        ":execution_testdata",
+        ":module",
+        ":module_fixture",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+        "//runtime/src/iree/vm",
+        "//runtime/src/iree/vm:invocation_test_module",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "module_test",
+    srcs = [
+        "image.h",
+        "module_test.cc",
+    ],
+    deps = [
+        ":execution_testdata",
+        ":launch_config_testdata",
+        ":layout",
+        ":module",
+        ":module_fixture",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+        "//runtime/src/iree/vm",
+        "//runtime/src/iree/vm:test_support",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "verifier_test",
+    srcs = [
+        "verifier_data.h",
+        "verifier_test.cc",
+    ],
+    deps = [
+        ":execution_testdata",
+        ":module_fixture",
+        ":verifier",
+        ":verifier_testdata",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_benchmark(
+    name = "verifier_benchmark",
+    srcs = ["verifier_benchmark.cc"],
+    deps = [
+        ":module_fixture",
+        ":verifier",
+        ":verifier_testdata",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:benchmark",
+        "//runtime/src/iree/testing:benchmark_main",
+    ],
+)
+
+iree_runtime_cc_fuzz(
+    name = "verifier_fuzz",
+    srcs = ["verifier_fuzz.cc"],
+    deps = [
+        ":module_fixture",
+        ":verifier",
+        ":verifier_testdata",
+        "//runtime/src/iree/base",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "disassembler_test",
+    srcs = ["disassembler_test.cc"],
+    deps = [
+        ":disassembler",
+        ":execution_testdata",
+        ":module_fixture",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "reflection_test",
+    srcs = [
+        "image.h",
+        "reflection.h",
+        "reflection_test.cc",
+    ],
+    deps = [
+        ":execution_testdata",
+        ":layout",
+        ":module",
+        ":module_fixture",
+        ":verifier",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+        "//runtime/src/iree/vm",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "process_test",
+    srcs = [
+        "image.h",
+        "process.h",
+        "process_test.cc",
+    ],
+    deps = [
+        ":layout",
+        ":module",
+        ":module_fixture",
+        ":verifier",
+        ":verifier_testdata",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+        "//runtime/src/iree/vm",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_atomic_test",
+    srcs = [
+        "interpreter_atomic.h",
+        "interpreter_atomic_test.cc",
+    ],
+    deps = [
+        ":module",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base:core_headers",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_buffer_test",
+    srcs = [
+        "interpreter_buffer.h",
+        "interpreter_buffer_test.cc",
+    ],
+    deps = [
+        ":module",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+        "//runtime/src/iree/vm",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_conversion_test",
+    srcs = [
+        "interpreter_conversion.h",
+        "interpreter_conversion_test.cc",
+        "interpreter_conversion_test_vectors.inl",
+    ],
+    deps = [
+        ":module",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_memory_test",
+    srcs = [
+        "interpreter_memory.h",
+        "interpreter_memory_test.cc",
+    ],
+    deps = [
+        ":module",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base:core_headers",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_float_math_test",
+    srcs = [
+        "interpreter_float.h",
+        "interpreter_float_impl.inl",
+        "interpreter_float_math.h",
+        "interpreter_float_math_test.cc",
+    ],
+    deps = [
+        ":module",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal:fpu_state",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_float_test",
+    srcs = [
+        "interpreter_float.h",
+        "interpreter_float_impl.inl",
+        "interpreter_float_math.h",
+        "interpreter_float_test.cc",
+    ],
+    deps = [
+        ":module",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "interpreter_integer_test",
+    srcs = [
+        "interpreter_integer.h",
+        "interpreter_integer_impl.inl",
+        "interpreter_integer_test.cc",
+    ],
+    deps = [
+        ":module",
+        ":wire",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+test_suite(
+    name = "tests",
+    tests = [
+        ":assembler_lexer_test",
+        ":assembler_symbols_test",
+        ":assembler_test",
+        ":disassembler_test",
+        ":interpreter_atomic_test",
+        ":interpreter_buffer_test",
+        ":interpreter_conversion_test",
+        ":interpreter_float_math_test",
+        ":interpreter_float_test",
+        ":interpreter_integer_test",
+        ":interpreter_memory_test",
+        ":interpreter_test",
+        ":module_test",
+        ":process_test",
+        ":reflection_test",
+        ":verifier_test",
+    ],
+)
+
+iree_cmake_extra_content(
+    content = """
+iree_py_generated_files(
+  NAME
+    runtime_projections
+  GENERATOR
+    iree::vm::bytecode::spec::generate_runtime
+  OUTPUTS
+    "interpreter_tables.inl"
+    "layout_tables.inl"
+    "verifier_data.c"
+    "verifier_instruction_cases.inl"
+    "verifier_module_cases.inl"
+    "wire/assertions.c"
+    "wire/core.h"
+    "wire/module.h"
+  OUTPUT_FLAGS
+    "--interpreter-data"
+    "--layout-data"
+    "--verifier-source"
+    "--instruction-verifier-cases"
+    "--module-verifier-cases"
+    "--wire-assertions-source"
+    "--wire-core-header"
+    "--wire-module-header"
+  COMMENT
+    "Generating shipping VM runtime projections"
+)
+
+iree_py_generated_files(
+  NAME
+    conversion_test_projection
+  GENERATOR
+    iree::vm::bytecode::spec::generate_conversion_tests
+  OUTPUTS
+    "interpreter_conversion_test_vectors.inl"
+  OUTPUT_FLAGS
+    "--conversion-test-vectors"
+  COMMENT
+    "Generating VM conversion test vectors"
+)
+
+iree_py_generated_files(
+  NAME
+    tooling_projection
+  GENERATOR
+    iree::vm::bytecode::spec::generate_tooling
+  OUTPUTS
+    "assembler_tables.inl"
+    "disassembler_tables.inl"
+  OUTPUT_FLAGS
+    "--assembler-data"
+    "--disassembler-data"
+  COMMENT
+    "Generating VM textual-tool projections"
+)
+
+iree_py_generated_files(
+  NAME
+    documentation_projection
+  GENERATOR
+    iree::vm::bytecode::spec::generate_documentation
+  OUTPUTS
+    "docs/specification.md"
+  OUTPUT_FLAGS
+    "--documentation"
+  COMMENT
+    "Generating VM specification documentation"
+)
+
+""",
+    inline = True,
+)

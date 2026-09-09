@@ -455,7 +455,7 @@ static iree_status_t iree_io_vec_stream_read(
     }
     IREE_ASSERT(block);
     iree_host_size_t block_bytes =
-        iree_min(read_bytes - read_offset, block->length);
+        iree_min(read_bytes - read_offset, block->length - block_offset);
     memcpy(buffer_ptr, &block->contents[block_offset], block_bytes);
     buffer_ptr += block_bytes;
     read_offset += block_bytes;

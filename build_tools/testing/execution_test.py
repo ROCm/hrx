@@ -156,6 +156,27 @@ class ExecutionUnitTest(unittest.TestCase):
                 {"empty": True, "non_empty": True},
             )
 
+    def test_file_equality_compares_exact_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            actual_path = Path(directory) / "actual.bin"
+            expected_path = Path(directory) / "expected.bin"
+            actual_path.write_bytes(b"\x00fixture\xff")
+            expected_path.write_bytes(b"\x00fixture\xff")
+            runner = execution.ExecutionRunner(tools={})
+
+            runner._check_files(
+                "case",
+                "step",
+                [{"path": str(actual_path), "equals": str(expected_path)}],
+            )
+            expected_path.write_bytes(b"\x00fixture\xfe")
+            with self.assertRaisesRegex(execution.CaseFailure, "differs from"):
+                runner._check_files(
+                    "case",
+                    "step",
+                    [{"path": str(actual_path), "equals": str(expected_path)}],
+                )
+
     def test_sanitizer_env_resolves_suppressions_runfile(self):
         with tempfile.TemporaryDirectory() as directory:
             runfiles_dir = Path(directory)
