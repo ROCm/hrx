@@ -87,6 +87,7 @@ iree_cc_library(
     "peer.c"
     "registry.c"
     "stream.c"
+    "stream_host_call.c"
     "tls.c"
   DEPS
     ::execution_resource
