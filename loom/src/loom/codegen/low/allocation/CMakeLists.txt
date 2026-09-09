@@ -417,6 +417,7 @@ loom_cc_library(
     loom::codegen::low::descriptors
     loom::ir
     loom::target::registers
+    loom::util::adaptive_sort
   PUBLIC
 )
 
@@ -610,6 +611,7 @@ loom_cc_test(
     iree::testing::gtest
     iree::testing::gtest_main
     loom::error::error_defs
+    loom::ir
     loom::ops::test
     loom::target::facts_builder
     loom::target::test::descriptors
