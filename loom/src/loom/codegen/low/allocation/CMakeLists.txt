@@ -485,6 +485,7 @@ loom_cc_library(
     "interval_assignment.c"
   DEPS
     ::active_set
+    ::active_unit
     ::assignment
     ::assignment_map
     ::coalescing
