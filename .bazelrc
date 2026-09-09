@@ -46,20 +46,14 @@ build --enable_runfiles
 # runfiles trees, which is brittle around symlinked source runfiles.
 build --incompatible_default_to_explicit_init_py
 
-# Bazel 8+ selects clang-cl through an execution platform and the dedicated
-# rules_cc toolchain. Windows uses clang-cl by default; the MSVC config clears
-# those repeatable selections when it is layered after the host-OS default.
-build:windows --config=windows-clang-cl
-build:windows-clang-cl --extra_toolchains=@local_config_cc//:cc-toolchain-x64_windows-clang-cl
-build:windows-clang-cl --extra_execution_platforms=//build_tools/bazel:x64_windows_clang_cl
-build:windows-msvc --extra_toolchains=
-build:windows-msvc --extra_execution_platforms=
+# Windows compiler presets select one compiler policy; registered toolchains
+# match it to the host and destination. Native Windows defaults to clang-cl.
+build:windows-clang-cl --//build_tools/windows:compiler=clang-cl
+build:windows-msvc --//build_tools/windows:compiler=msvc
 
-# Destination configs preserve the build host for code generators. Windows
-# libraries expose their ABI through explicit exports or .def files.
+# Destinations are independent of compiler selection. Native builds infer their
+# destination; cross builds preserve the native host for code generators.
 build:windows-x86_64 --platforms=//build_tools/windows:windows_x86_64
-build:windows-x86_64 --extra_toolchains=@iree_windows_toolchain//:toolchain,@iree_windows_toolchain//:masm_toolchain
-build:windows-x86_64 --features=no_windows_export_all_symbols
 
 # -----------------------------------------------------------------------------
 # Test presets.
@@ -109,7 +103,6 @@ build:asan --copt=-fsanitize=address
 build:asan --copt=-fsanitize-address-use-after-scope
 build:asan --cc_output_directory_tag=asan
 build:asan --copt=-DADDRESS_SANITIZER
-build:asan --@rules_cc//:link_extra_libs=//build_tools/bazel:address_sanitizer_runtime
 
 # MemorySanitizer.
 build:msan --config=sanitizer
@@ -157,7 +150,6 @@ build:fuzzer --copt=-fsanitize=fuzzer-no-link
 build:fuzzer --linkopt=-fsanitize=fuzzer-no-link
 build:fuzzer --cc_output_directory_tag=asan-fuzzer
 build:fuzzer --copt=-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
-build:fuzzer --@rules_cc//:link_extra_libs=//build_tools/bazel:address_sanitizer_runtime
 
 # -----------------------------------------------------------------------------
 # Local/generated configuration.

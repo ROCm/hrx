@@ -30,5 +30,5 @@ cc_binary(
     linkopts = cc_opts.iree_code_link_options(),
     linkstatic = False,
     tags = ["manual"],
-    deps = cc_opts.iree_code_link_dependencies([":library"]),
+    deps = [":library"],
 )

@@ -4,7 +4,32 @@
 # Bazel toolchain configuration has no CMake target surface.
 # bazel-to-cmake: skip
 
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load(":cc_toolchain.bzl", "windows_toolchains")
+
 package(default_visibility = ["//visibility:public"])
+
+# Compiler policy applies to Windows outputs, including native host generators.
+string_flag(
+    name = "compiler",
+    build_setting_default = "clang-cl",
+    values = [
+        "clang-cl",
+        "msvc",
+    ],
+)
+
+config_setting(
+    name = "compiler_clang_cl",
+    flag_values = {":compiler": "clang-cl"},
+)
+
+config_setting(
+    name = "compiler_msvc",
+    flag_values = {":compiler": "msvc"},
+)
+
+windows_toolchains()
 
 platform(
     name = "windows_x86_64",

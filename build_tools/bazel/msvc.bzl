@@ -8,31 +8,12 @@
 
 load("@rules_cc//cc:action_names.bzl", "ASSEMBLE_ACTION_NAME")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_cc//cc:find_cc_toolchain.bzl", "CC_TOOLCHAIN_ATTRS", "find_cc_toolchain", "use_cc_toolchain")
+load("@rules_cc//cc:find_cc_toolchain.bzl", "CC_TOOLCHAIN_TYPE", "find_cc_toolchain", "use_cc_toolchain")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
-
-_MASM_TOOLCHAIN_TYPE = Label("//build_tools/bazel:msvc_masm_toolchain_type")
-
-def _iree_msvc_masm_toolchain_impl(ctx):
-    return [platform_common.ToolchainInfo(
-        assembler = ctx.file.assembler,
-        arguments = ctx.attr.arguments,
-        files = depset([ctx.file.assembler] + ctx.files.data),
-    )]
-
-iree_msvc_masm_toolchain = rule(
-    implementation = _iree_msvc_masm_toolchain_impl,
-    attrs = {
-        "arguments": attr.string_list(doc = "Assembler flags before the output and source paths."),
-        "assembler": attr.label(allow_single_file = True, cfg = "exec", mandatory = True),
-        "data": attr.label_list(allow_files = True, cfg = "exec", doc = "Assembler executable and loader dependencies."),
-    },
-    doc = "Defines a MASM assembler independently of generic C/C++ assembly.",
-)
 
 def _iree_msvc_masm_object_impl(ctx):
     cc_toolchain = find_cc_toolchain(ctx)
-    masm_toolchain = ctx.toolchains[_MASM_TOOLCHAIN_TYPE]
+    masm_toolchain = ctx.toolchains[CC_TOOLCHAIN_TYPE].masm
     feature_configuration = cc_common.configure_features(
         ctx = ctx,
         cc_toolchain = cc_toolchain,
@@ -54,8 +35,8 @@ def _iree_msvc_masm_object_impl(ctx):
 
     # rules_cc includes globally enabled C/C++ default compilation flags in its
     # assemble command line. Keep the toolchain environment but construct the
-    # MASM-only command line from the assembler toolchain. Generic assembly may
-    # use clang-cl even when MASM requires ml64 or llvm-ml.
+    # MASM-only command line from the selected Windows toolchain. Generic
+    # assembly may use clang-cl even when MASM requires ml64 or llvm-ml.
     arguments = ctx.actions.args()
     arguments.add_all(masm_toolchain.arguments)
     arguments.add("/Fo" + object_file.path)
@@ -82,14 +63,14 @@ def _iree_msvc_masm_object_impl(ctx):
 
 _iree_msvc_masm_object = rule(
     implementation = _iree_msvc_masm_object_impl,
-    attrs = dict(CC_TOOLCHAIN_ATTRS, **{
+    attrs = {
         "src": attr.label(
             allow_single_file = [".asm"],
             mandatory = True,
         ),
-    }),
+    },
     fragments = ["cpp"],
-    toolchains = use_cc_toolchain(mandatory = True) + [_MASM_TOOLCHAIN_TYPE],
+    toolchains = use_cc_toolchain(mandatory = True),
 )
 
 def iree_msvc_masm_library(

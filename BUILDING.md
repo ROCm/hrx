@@ -48,12 +48,30 @@ python dev.py cmake hook
 
 ## Command Shape
 
-### Windows targets from Linux
+### Windows targets
 
-`--config=windows-x86_64` builds Windows x86-64 executables and DLLs using
-clang-cl, lld-link, and llvm-ml from the selected Linux LLVM installation.
-Build-time generators continue to run on Linux. Native Windows uses its existing
-clang-cl toolchain with the same destination config.
+Bazel destination and compiler choices are independent:
+
+| Build host | Destination/compiler | Configs |
+| --- | --- | --- |
+| Linux | Windows x86-64, clang-cl | `--config=windows-x86_64` |
+| Windows x64 | Native, clang-cl (default) | None |
+| Windows x64 | Native, MSVC | `--config=windows-msvc` |
+
+`windows-x86_64` sets only the destination platform. Native builds infer their
+destination from the host; explicitly adding that config on Windows is
+equivalent. `windows-clang-cl` and `windows-msvc` choose the compiler for Windows
+outputs. Either compiler preset can precede or follow the destination preset.
+MSVC requires a Windows build host; Linux-to-Windows builds use clang-cl.
+
+The selected C/C++ toolchain also supplies the MASM assembler and sanitizer
+runtimes. Native Windows uses the tools discovered in its Visual Studio/LLVM
+environment. Linux cross builds use clang-cl, lld-link, and llvm-ml from the
+selected Linux LLVM installation. Build-time generators use the host toolchain
+and remain executable on the build host. Native builds do not fetch the cross
+SDK repository.
+
+#### Cross-compilation from Linux
 
 Provide a Linux LLVM installation and a Windows SDK/MSVC sysroot. The Bazel
 repository reads `LLVM_ROOT` and `WINSDK_ROOT` from the environment or explicit
@@ -82,11 +100,12 @@ iree-bazel-build --config=windows-x86_64 -c dbg \
 iree-bazel-build --config=windows-x86_64 -c opt //tools:iree-dump-cpuinfo
 ```
 
-Debug and fastbuild outputs include PDBs. DLLs declare exports with
-`__declspec(dllexport)` or a `win_def_file`; this config disables Bazel's
-Windows-only automatic export extractor. The default CRT is dynamic (`/MD`,
-or `/MDd` in debug). Execution requires the corresponding Windows runtime DLLs,
-installed on the Windows machine or deployed beside the executable.
+Debug and fastbuild outputs include PDBs. Cross-built DLLs declare exports with
+`__declspec(dllexport)` or a `win_def_file`; the cross toolchain disables Bazel's
+Windows-only automatic export extractor. Native Windows retains that capability.
+The default CRT is dynamic (`/MD`, or `/MDd` in debug). Execution requires the
+corresponding Windows runtime DLLs, installed on the Windows machine or deployed
+beside the executable.
 `--features=static_link_msvcrt` selects `/MT` or `/MTd` when a consumer requires
 a static CRT.
 
@@ -97,9 +116,24 @@ execution. Target selection does not configure a remote executor or test runner.
 Starlark test wrappers require a matching test execution platform during
 analysis; build their source binary targets when only producing artifacts.
 
-Windows ASAN requires compiler-rt libraries and DLLs matching the selected LLVM.
-This local toolchain does not yet configure Windows compiler-rt; selecting
-`--config=asan` reports that missing runtime during analysis.
+For cross-built AddressSanitizer targets, add `--config=asan` and set
+`WINDOWS_COMPILER_RT_ROOT` (or `--repo_env=WINDOWS_COMPILER_RT_ROOT=...`) to the
+`lib/clang/<version>/lib/windows` directory from a Windows LLVM distribution
+matching the Linux compiler. It must contain:
+
+- `clang_rt.asan_dynamic-x86_64.dll`
+- `clang_rt.asan_dynamic-x86_64.lib`
+- `clang_rt.asan_dynamic_runtime_thunk-x86_64.lib`
+- `clang_rt.asan_static_runtime_thunk-x86_64.lib`
+
+The SDK's `VC/Tools/MSVC/<version>/lib/x64` directory must also contain
+`stl_asan.lib` for instrumented C++ standard library containers. Microsoft ships
+it in the matching Visual Studio ASAN component; xwin's desktop CRT package may
+omit it. Native Windows obtains sanitizer artifacts from the selected LLVM or
+Visual Studio installation automatically. Both dynamic and static CRT builds
+deploy the sanitizer DLL beside each instrumented executable. Bazel supplies
+these runtimes to library and executable link actions, including third-party
+`cc_library`, `cc_binary`, and `cc_test` targets.
 
 Compiler/SDK paths visible to Windows build actions are relative to the Bazel
 execution root. Compiler and linker actions declare separate file sets and
@@ -730,9 +764,10 @@ python dev.py bazel build `
   //loom/binding/c:loomc
 ```
 
-Use the explicit MSVC lane when checking both host compilers. It clears the
-clang-cl execution-platform selection while preserving the same configured
-feature and dependency graph:
+Use `--config=windows-msvc` when checking the MSVC compiler. It changes the
+Windows compiler choice while preserving the configured feature and dependency
+graph. `--config=windows-clang-cl` explicitly selects the default compiler.
+Neither native command needs `--config=windows-x86_64`:
 
 ```powershell
 python dev.py bazel build `

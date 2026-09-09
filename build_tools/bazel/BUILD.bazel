@@ -12,7 +12,6 @@ load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 load("//build_tools/bazel:cc.bzl", "iree_cc_binary", "iree_cc_library")
 load("//build_tools/bazel:cc_link.bzl", "cc_link")
-load("//build_tools/bazel:msvc.bzl", "iree_msvc_masm_toolchain")
 load("//build_tools/bazel:python.bzl", "iree_py_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -39,41 +38,6 @@ iree_cc_library(
 iree_cc_library(
     name = "rt",
     linkopts = cc_link.rt_linkopts(),
-)
-
-platform(
-    name = "x64_windows_clang_cl",
-    constraint_values = [
-        "@platforms//cpu:x86_64",
-        "@platforms//os:windows",
-        "@bazel_tools//tools/cpp:clang-cl",
-    ],
-)
-
-toolchain_type(name = "msvc_masm_toolchain_type")
-
-iree_msvc_masm_toolchain(
-    name = "msvc_masm",
-    arguments = [
-        "/nologo",
-        "/Zi",
-        "/c",
-    ],
-    assembler = ":msvc_masm_wrapper.bat",
-)
-
-toolchain(
-    name = "msvc_masm_toolchain",
-    exec_compatible_with = [
-        "@platforms//cpu:x86_64",
-        "@platforms//os:windows",
-    ],
-    target_compatible_with = [
-        "@platforms//cpu:x86_64",
-        "@platforms//os:windows",
-    ],
-    toolchain = ":msvc_masm",
-    toolchain_type = ":msvc_masm_toolchain_type",
 )
 
 exports_files([
@@ -190,11 +154,6 @@ config_setting(
     },
 )
 
-config_setting(
-    name = "target_cpu_x86_64",
-    constraint_values = ["@platforms//cpu:x86_64"],
-)
-
 selects.config_setting_group(
     name = "address_sanitizer_cc_compiler_clang",
     match_all = [
@@ -204,40 +163,11 @@ selects.config_setting_group(
 )
 
 selects.config_setting_group(
-    name = "address_sanitizer_cc_compiler_clang_cl_x86_64",
-    match_all = [
-        ":address_sanitizer_target",
-        ":cc_compiler_clang_cl",
-        ":target_cpu_x86_64",
-    ],
-)
-
-selects.config_setting_group(
     name = "address_sanitizer_cc_compiler_gcc",
     match_all = [
         ":address_sanitizer_target",
         ":cc_compiler_gcc",
     ],
-)
-
-selects.config_setting_group(
-    name = "address_sanitizer_cc_compiler_msvc",
-    match_all = [
-        ":address_sanitizer_target",
-        ":cc_compiler_msvc",
-    ],
-)
-
-# Runtime linked into every rules_cc executable in Windows clang-cl ASAN
-# configurations. Other target configurations receive an empty C/C++ library.
-iree_cc_library(
-    name = "address_sanitizer_runtime",
-    deps = select({
-        ":address_sanitizer_cc_compiler_clang_cl_x86_64": [
-            "@iree_windows_toolchain//:address_sanitizer_runtime",
-        ],
-        "//conditions:default": [],
-    }),
 )
 
 config_setting(

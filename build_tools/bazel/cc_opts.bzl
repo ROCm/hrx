@@ -148,22 +148,11 @@ _SANITIZER_FRAME_POINTER_COPTS = select({
     "//conditions:default": [],
 })
 
-# AddressSanitizer links through the compiler driver on Unix, but the Windows
-# clang-cl toolchain invokes lld-link directly. Mirror the runtime libraries
-# that clang-cl would have added while leaving build-time executables in their
-# unsanitized execution configuration.
+# Unix links AddressSanitizer through the compiler driver. Windows runtime
+# dependencies are supplied by the selected C/C++ runtimes toolchain.
 _ADDRESS_SANITIZER_LINKOPTS = select({
     "//build_tools/bazel:address_sanitizer_cc_compiler_clang": ["-fsanitize=address"],
-    "//build_tools/bazel:address_sanitizer_cc_compiler_clang_cl_x86_64": [],
     "//build_tools/bazel:address_sanitizer_cc_compiler_gcc": ["-fsanitize=address"],
-    "//build_tools/bazel:address_sanitizer_cc_compiler_msvc": ["/INFERASANLIBS"],
-    "//conditions:default": [],
-})
-
-_ADDRESS_SANITIZER_LINK_DEPS = select({
-    "//build_tools/bazel:address_sanitizer_cc_compiler_clang_cl_x86_64": [
-        "//build_tools/bazel:address_sanitizer_runtime",
-    ],
     "//conditions:default": [],
 })
 
@@ -231,12 +220,7 @@ def _iree_code_link_options(linkopts = None):
     """Returns linker options for first-party IREE executable targets."""
     return _append(_ADDRESS_SANITIZER_LINKOPTS, linkopts)
 
-def _iree_code_link_dependencies(deps = None):
-    """Returns link dependencies for first-party IREE executable targets."""
-    return _append(deps, _ADDRESS_SANITIZER_LINK_DEPS)
-
 cc_opts = struct(
     iree_code_compiler_options = _iree_code_compiler_options,
-    iree_code_link_dependencies = _iree_code_link_dependencies,
     iree_code_link_options = _iree_code_link_options,
 )

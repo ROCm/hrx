@@ -7,14 +7,9 @@
 # buildifier: disable=bzl-visibility
 load("@rules_cc//cc/private/toolchain:windows_cc_toolchain_config.bzl", "cc_toolchain_config")
 load("@rules_cc//cc/toolchains:cc_toolchain.bzl", "cc_toolchain")
-load("//build_tools/bazel:msvc.bzl", "iree_msvc_masm_toolchain")
+load(":cc_toolchain.bzl", "windows_cc_toolchain")
 
-def _unavailable_asan_runtime_impl(ctx):
-    fail("%s requires Windows compiler-rt libraries and DLLs matching the selected LLVM. Windows compiler-rt is not configured for this local toolchain. Use a build without --config=asan." % ctx.label)
-
-_unavailable_asan_runtime = rule(implementation = _unavailable_asan_runtime_impl)
-
-def windows_cc_toolchain(name, repository_path, execution_architecture, msvc_version):
+def windows_cross_toolchain(name, repository_path, execution_architecture, msvc_version):
     """Defines the x86-64 Windows compiler and its action-specific file inputs.
 
     Args:
@@ -52,7 +47,10 @@ def windows_cc_toolchain(name, repository_path, execution_architecture, msvc_ver
         name = "all_files",
         srcs = [":compiler_files", ":linker_files", ":archiver_files"] + native.glob(["bin/*", "tools/*"]),
     )
-    _unavailable_asan_runtime(name = "address_sanitizer_runtime")
+    native.filegroup(
+        name = "address_sanitizer_files",
+        srcs = native.glob(["runtime/*"], allow_empty = True),
+    )
 
     include_directories = [repository_path + "/resource/include"] + [
         repository_path + "/include/" + component
@@ -107,6 +105,7 @@ def windows_cc_toolchain(name, repository_path, execution_architecture, msvc_ver
         dbg_mode_debug_flag = "/DEBUG",
         fastbuild_mode_debug_flag = "/DEBUG",
         supports_parse_showincludes = True,
+        supports_windows_export_all_symbols = False,
     )
     cc_toolchain(
         name = "cc_toolchain",
@@ -122,23 +121,14 @@ def windows_cc_toolchain(name, repository_path, execution_architecture, msvc_ver
         strip_files = ":all_files",
         supports_param_files = 1,
     )
-    native.toolchain(
+    windows_cc_toolchain(
         name = name,
-        exec_compatible_with = ["@platforms//cpu:" + execution_architecture, "@platforms//os:linux"],
-        target_compatible_with = ["@platforms//cpu:x86_64", "@platforms//os:windows"],
-        toolchain = ":cc_toolchain",
-        toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
-    )
-    iree_msvc_masm_toolchain(
-        name = "masm",
-        arguments = ["-m64", "/c"],
-        assembler = "tools/llvm-ml",
-        data = ["bin/llvm-ml", ":host_dynamic_libraries"],
-    )
-    native.toolchain(
-        name = "masm_toolchain",
-        exec_compatible_with = ["@platforms//cpu:" + execution_architecture, "@platforms//os:linux"],
-        target_compatible_with = ["@platforms//cpu:x86_64", "@platforms//os:windows"],
-        toolchain = ":masm",
-        toolchain_type = Label("//build_tools/bazel:msvc_masm_toolchain_type"),
+        cc = ":cc_toolchain",
+        masm = "tools/llvm-ml",
+        masm_arguments = ["-m64", "/c"],
+        masm_files = ["bin/llvm-ml", ":host_dynamic_libraries"],
+        address_sanitizer_files = select({
+            Label("//build_tools/bazel:address_sanitizer_target"): [":address_sanitizer_files"],
+            "//conditions:default": [],
+        }),
     )

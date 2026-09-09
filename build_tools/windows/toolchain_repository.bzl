@@ -32,7 +32,7 @@ exec "$tool_root/bin/{tool}" "$@"
 def _required_path(repository_ctx, path):
     path = repository_ctx.path(path)
     if not path.exists:
-        fail("Windows toolchain requires %s; check LLVM_ROOT and WINSDK_ROOT." % path)
+        fail("Windows toolchain requires %s; check the selected LLVM, Windows SDK, and compiler-rt inputs in BUILDING.md." % path)
     repository_ctx.watch(path)
     canonical_path = path.realpath
     repository_ctx.watch(canonical_path)
@@ -49,16 +49,8 @@ def _version_directory(repository_ctx, parent):
     return _required_path(repository_ctx, versions[0])
 
 def _windows_toolchain_repository_impl(repository_ctx):
-    if repository_ctx.os.name == "windows":
-        repository_ctx.file("BUILD.bazel", """
-package(default_visibility = ["//visibility:public"])
-alias(name = "toolchain", actual = "@local_config_cc//:cc-toolchain-x64_windows-clang-cl")
-alias(name = "masm_toolchain", actual = {masm_toolchain})
-alias(name = "address_sanitizer_runtime", actual = "@local_config_cc//:clang_cl_x64_asan_runtime")
-""".format(masm_toolchain = repr(str(repository_ctx.attr._masm_toolchain))))
-        return
     if repository_ctx.os.name != "linux":
-        fail("The local Windows toolchain currently executes on Linux or Windows; host is %s." % repository_ctx.os.name)
+        fail("The Windows cross toolchain requires a Linux host; native Windows uses local_config_cc. Host is %s." % repository_ctx.os.name)
     architecture = repository_ctx.os.arch
     if architecture in ["amd64", "x86_64"]:
         architecture = "x86_64"
@@ -93,6 +85,17 @@ alias(name = "address_sanitizer_runtime", actual = "@local_config_cc//:clang_cl_
     resource_root = _required_path(repository_ctx, resource_result.stdout.strip())
     _project(repository_ctx, resource_root.get_child("include"), "resource/include")
 
+    runtime_root = repository_ctx.getenv("WINDOWS_COMPILER_RT_ROOT")
+    if runtime_root:
+        runtime_root = _required_path(repository_ctx, runtime_root)
+        for name in [
+            "clang_rt.asan_dynamic-x86_64.dll",
+            "clang_rt.asan_dynamic-x86_64.lib",
+            "clang_rt.asan_dynamic_runtime_thunk-x86_64.lib",
+            "clang_rt.asan_static_runtime_thunk-x86_64.lib",
+        ]:
+            _project(repository_ctx, runtime_root.get_child(name), "runtime/" + name)
+
     crt_root = _version_directory(repository_ctx, sdk_root.get_child("VC", "Tools", "MSVC"))
     sdk_include_root = _version_directory(repository_ctx, sdk_root.get_child("Windows Kits", "10", "Include"))
     sdk_library_root = sdk_root.get_child("Windows Kits", "10", "Lib", sdk_include_root.basename)
@@ -104,9 +107,9 @@ alias(name = "address_sanitizer_runtime", actual = "@local_config_cc//:clang_cl_
         _project(repository_ctx, sdk_library_root.get_child(component, "x64"), "lib/" + component)
 
     repository_ctx.file("BUILD.bazel", """
-load({toolchain_bzl}, "windows_cc_toolchain")
+load({toolchain_bzl}, "windows_cross_toolchain")
 package(default_visibility = ["//visibility:public"])
-windows_cc_toolchain(
+windows_cross_toolchain(
     name = "toolchain",
     repository_path = {repository_path},
     execution_architecture = {execution_architecture},
@@ -122,7 +125,6 @@ windows_cc_toolchain(
 windows_toolchain_repository = repository_rule(
     implementation = _windows_toolchain_repository_impl,
     attrs = {
-        "_masm_toolchain": attr.label(default = Label("//build_tools/bazel:msvc_masm_toolchain")),
         "_toolchain_bzl": attr.label(default = Label("//build_tools/windows:toolchain.bzl")),
     },
     local = True,

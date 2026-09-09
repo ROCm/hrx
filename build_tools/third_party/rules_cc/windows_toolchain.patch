@@ -1,0 +1,132 @@
+diff --git a/cc/private/toolchain/BUILD.windows.tpl b/cc/private/toolchain/BUILD.windows.tpl
+--- a/cc/private/toolchain/BUILD.windows.tpl
++++ b/cc/private/toolchain/BUILD.windows.tpl
+@@ -57,6 +57,26 @@
+ filegroup(
+     name = "clangcl_compiler_files",
+     srcs = [":builtin_include_directory_paths_clangcl"]
++)
++
++filegroup(
++    name = "clang_cl_x64_asan_files",
++    srcs = [
++        "clang_rt.asan_dynamic-x86_64.dll",
++        "clang_rt.asan_dynamic-x86_64.lib",
++        "clang_rt.asan_dynamic_runtime_thunk-x86_64.lib",
++        "clang_rt.asan_static_runtime_thunk-x86_64.lib",
++    ],
++)
++
++filegroup(
++    name = "msvc_x64_asan_files",
++    srcs = [
++        "msvc_asan/clang_rt.asan_dynamic-x86_64.dll",
++        "msvc_asan/clang_rt.asan_dynamic-x86_64.lib",
++        "msvc_asan/clang_rt.asan_dynamic_runtime_thunk-x86_64.lib",
++        "msvc_asan/clang_rt.asan_static_runtime_thunk-x86_64.lib",
++    ],
+ )
+
+ filegroup(
+diff --git a/cc/private/toolchain/windows_cc_configure.bzl b/cc/private/toolchain/windows_cc_configure.bzl
+--- a/cc/private/toolchain/windows_cc_configure.bzl
++++ b/cc/private/toolchain/windows_cc_configure.bzl
+@@ -724,6 +724,22 @@
+             build_tools["LIB"] = find_msvc_tool(repository_ctx, vc_path, "lib.exe", "x64")
+     else:
+         build_tools = _find_msvc_tools(repository_ctx, vc_path, target_arch)
++
++    if target_arch == "x64":
++        runtime_name = "clang_rt.asan_dynamic-x86_64.dll"
++        runtime_path = find_msvc_tool(repository_ctx, vc_path, runtime_name, "x64")
++        if runtime_path:
++            repository_ctx.symlink(runtime_path, "msvc_asan/" + runtime_name)
++        for runtime_name in [
++            "clang_rt.asan_dynamic-x86_64.lib",
++            "clang_rt.asan_dynamic_runtime_thunk-x86_64.lib",
++            "clang_rt.asan_static_runtime_thunk-x86_64.lib",
++        ]:
++            for directory in env["LIB"].split(";"):
++                runtime_path = repository_ctx.path(directory.replace("\\\\", "\\").replace("%%", "%")).get_child(runtime_name)
++                if runtime_path.exists:
++                    repository_ctx.symlink(runtime_path, "msvc_asan/" + runtime_name)
++                    break
+
+     escaped_cxx_include_directories = []
+     for path in escaped_include_paths.split(";"):
+@@ -819,9 +835,21 @@
+     clang_version = _get_clang_version(repository_ctx, clang_cl_path)
+     clang_dir = _get_clang_dir(repository_ctx, llvm_path, clang_version)
+     clang_include_path = (clang_dir + "\\include").replace("\\", "\\\\")
++    clang_share_path = (clang_dir + "\\share").replace("\\", "\\\\")
+     clang_lib_path = (clang_dir + "\\lib\\windows").replace("\\", "\\\\")
+
+-    clang_cl_include_directories = msvc_vars["%{msvc_cxx_builtin_include_directories_" + target_arch + "}"] + (",\n        \"%s\"" % clang_include_path)
++    if target_arch == "x64":
++        for runtime_file in [
++            "clang_rt.asan_dynamic-x86_64.dll",
++            "clang_rt.asan_dynamic-x86_64.lib",
++            "clang_rt.asan_dynamic_runtime_thunk-x86_64.lib",
++            "clang_rt.asan_static_runtime_thunk-x86_64.lib",
++        ]:
++            runtime_path = repository_ctx.path(clang_dir + "\\lib\\windows\\" + runtime_file)
++            if runtime_path.exists:
++                repository_ctx.symlink(runtime_path, runtime_file)
++
++    clang_cl_include_directories = msvc_vars["%{msvc_cxx_builtin_include_directories_" + target_arch + "}"] + (",\n        \"%s\",\n        \"%s\"" % (clang_include_path, clang_share_path))
+     write_builtin_include_directory_paths(repository_ctx, "clang-cl", [clang_cl_include_directories], file_suffix = "_clangcl")
+     clang_cl_vars = {
+         "%{clang_cl_env_tmp_" + target_arch + "}": msvc_vars["%{msvc_env_tmp_" + target_arch + "}"],
+diff --git a/cc/private/toolchain/windows_cc_toolchain_config.bzl b/cc/private/toolchain/windows_cc_toolchain_config.bzl
+--- a/cc/private/toolchain/windows_cc_toolchain_config.bzl
++++ b/cc/private/toolchain/windows_cc_toolchain_config.bzl
+@@ -1033,7 +1033,10 @@
+
+         windows_export_all_symbols_feature = feature(name = "windows_export_all_symbols")
+
+-        no_windows_export_all_symbols_feature = feature(name = "no_windows_export_all_symbols")
++        no_windows_export_all_symbols_feature = feature(
++            name = "no_windows_export_all_symbols",
++            enabled = not ctx.attr.supports_windows_export_all_symbols,
++        )
+
+         include_paths_feature = feature(
+             name = "include_paths",
+@@ -1330,6 +1333,18 @@
+                 ),
+             ],
+             implies = ["msvc_compile_env", "msvc_link_env"],
++        )
++
++        # MSVC requires CodeView information for usable ASAN diagnostics even
++        # in fastbuild and opt. Apply this to all instrumented dependencies.
++        asan_feature = feature(
++            name = "asan",
++            flag_sets = [
++                flag_set(
++                    actions = all_compile_actions,
++                    flag_groups = [flag_group(flags = ["/Z7"])],
++                ),
++            ],
+         )
+
+         symbol_check_feature = feature(
+@@ -1398,6 +1413,7 @@
+             supports_dynamic_linker_feature,
+             supports_interface_shared_libraries_feature,
+             symbol_check_feature,
++            asan_feature,
+         ]
+     else:
+         targets_windows_feature = feature(
+@@ -1755,6 +1771,10 @@
+ cc_toolchain_config = rule(
+     implementation = _impl,
+     attrs = {
++        "supports_windows_export_all_symbols": attr.bool(
++            default = True,
++            doc = "Whether the execution toolchain supports automatic Windows DLL exports.",
++        ),
+         "abi_libc_version": attr.string(),
+         "abi_version": attr.string(),
+         "archiver_flags": attr.string_list(default = []),
