@@ -201,6 +201,8 @@ TEST_F(Aie2pLeafObjectTest, LowFunctionsEmitOptimizedVectorLeaves) {
   // RET advances over the five-bundle delay window so the final store occupies
   // its last delay slot. The independently retained physical sequence is 32
   // bytes because it leaves one trailing NOP after the store; Low needs 30.
+  // The two loaded vectors pack into x0/x1, preserving other wide views.
+  // LLVM-AIE independently assembles the load bundle and each add below.
   struct TestCase {
     std::string_view vector_shape;
     std::string_view mnemonic;
@@ -210,23 +212,23 @@ TEST_F(Aie2pLeafObjectTest, LowFunctionsEmitOptimizedVectorLeaves) {
       {
           "i32x16",
           "vadd.32",
-          {0x3c, 0x68, 0x09, 0x72, 0x83, 0x00, 0x00, 0x00, 0x00, 0x00,
+          {0x3c, 0xe8, 0x08, 0x72, 0x83, 0x00, 0x00, 0x00, 0x00, 0x00,
            0x00, 0x00, 0x18, 0x00, 0x28, 0x10, 0x00, 0x00, 0x00, 0x00,
-           0x78, 0x2d, 0x10, 0x18, 0x00, 0x00, 0x18, 0x13, 0x04, 0x0a},
+           0x78, 0x2d, 0x08, 0x18, 0x00, 0x00, 0x18, 0x13, 0x04, 0x0a},
       },
       {
           "i16x32",
           "vadd.16",
-          {0x3c, 0x68, 0x09, 0x72, 0x83, 0x00, 0x00, 0x00, 0x00, 0x00,
+          {0x3c, 0xe8, 0x08, 0x72, 0x83, 0x00, 0x00, 0x00, 0x00, 0x00,
            0x00, 0x00, 0x18, 0x00, 0x28, 0x10, 0x00, 0x00, 0x00, 0x00,
-           0x78, 0x1d, 0x10, 0x18, 0x00, 0x00, 0x18, 0x13, 0x04, 0x0a},
+           0x78, 0x1d, 0x08, 0x18, 0x00, 0x00, 0x18, 0x13, 0x04, 0x0a},
       },
       {
           "i8x64",
           "vadd.8",
-          {0x3c, 0x68, 0x09, 0x72, 0x83, 0x00, 0x00, 0x00, 0x00, 0x00,
+          {0x3c, 0xe8, 0x08, 0x72, 0x83, 0x00, 0x00, 0x00, 0x00, 0x00,
            0x00, 0x00, 0x18, 0x00, 0x28, 0x10, 0x00, 0x00, 0x00, 0x00,
-           0x78, 0x0d, 0x10, 0x18, 0x00, 0x00, 0x18, 0x13, 0x04, 0x0a},
+           0x78, 0x0d, 0x08, 0x18, 0x00, 0x00, 0x18, 0x13, 0x04, 0x0a},
       },
   };
 
@@ -235,6 +237,15 @@ TEST_F(Aie2pLeafObjectTest, LowFunctionsEmitOptimizedVectorLeaves) {
     CompiledLeaf leaf;
     IREE_ASSERT_OK(
         CompileVectorAdd(test_case.vector_shape, test_case.mnemonic, &leaf));
+    ExpectPhysicalRegisters(leaf,
+                            loom_low_packet_at_node(&leaf.frame.schedule, 0),
+                            {IREE_SV("x0"), IREE_SV("p0")});
+    ExpectPhysicalRegisters(leaf,
+                            loom_low_packet_at_node(&leaf.frame.schedule, 1),
+                            {IREE_SV("x1"), IREE_SV("p1")});
+    ExpectPhysicalRegisters(leaf,
+                            loom_low_packet_at_node(&leaf.frame.schedule, 2),
+                            {IREE_SV("x0"), IREE_SV("x1"), IREE_SV("x0")});
 
     ASSERT_EQ(leaf.frame.schedule.issue_group_count, 4u);
     EXPECT_EQ(leaf.frame.schedule.issue_groups[0].issue_cycle, 0u);
@@ -444,11 +455,11 @@ TEST_F(Aie2pLeafObjectTest, IndependentFifoRefillsPreserveBothPhysicalTuples) {
 
 TEST_F(Aie2pLeafObjectTest, FifoStoresRetainPendingDataUntilFlush) {
   // LLVM-AIE BinaryOutput/vst.mir supplies these independent I32_ST encodings:
-  // push x0, push x2, then flush the fixed sf/p2/r26 tuple. Repack each emitted
+  // push x0, push x1, then flush the fixed sf/p2/r26 tuple. Repack each emitted
   // slot in that format so the witness is independent of bundle scheduling.
   constexpr std::array<std::array<uint8_t, 4>, 3> kExpected = {{
       {0x18, 0x03, 0x80, 0x0c},
-      {0x18, 0x83, 0x80, 0x0c},
+      {0x18, 0x43, 0x80, 0x0c},
       {0x18, 0x03, 0x00, 0x08},
   }};
   const loom_aie2p_bundle_format_id_t format =
@@ -491,7 +502,7 @@ TEST_F(Aie2pLeafObjectTest, FifoStoresRetainPendingDataUntilFlush) {
       if (store_count < 2) {
         ExpectPhysicalRegisters(
             leaf, packet,
-            {store_count == 0 ? IREE_SV("x0") : IREE_SV("x2"), IREE_SV("p2"),
+            {store_count == 0 ? IREE_SV("x0") : IREE_SV("x1"), IREE_SV("p2"),
              IREE_SV("r26")},
             4);
       }
@@ -514,9 +525,9 @@ TEST_F(Aie2pLeafObjectTest, FifoStoresRetainPendingDataUntilFlush) {
 
 TEST_F(Aie2pLeafObjectTest, ResourceImportsAnchorRegistersWithoutEmittingCode) {
   constexpr std::array<uint8_t, 30> kExpected = {
-      0x3c, 0x68, 0x09, 0x72, 0x83, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x3c, 0xe8, 0x08, 0x72, 0x83, 0x00, 0x00, 0x00, 0x00, 0x00,
       0x00, 0x00, 0x18, 0x00, 0x28, 0x10, 0x00, 0x00, 0x00, 0x00,
-      0x78, 0x2d, 0x01, 0x18, 0x00, 0x00, 0x18, 0x13, 0x04, 0x0a,
+      0x78, 0xad, 0x00, 0x18, 0x00, 0x00, 0x18, 0x13, 0x04, 0x0a,
   };
   CompiledLeaf leaf;
   IREE_ASSERT_OK(CompileResourceVectorAdd(&leaf));
