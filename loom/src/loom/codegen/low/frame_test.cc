@@ -24,6 +24,13 @@ namespace {
 
 using ModulePtr = ::loom::testing::ModulePtr;
 
+constexpr loom_low_schedule_strategy_t kScheduleStrategies[] = {
+    LOOM_LOW_SCHEDULE_STRATEGY_SOURCE_PRIORITY,
+    LOOM_LOW_SCHEDULE_STRATEGY_PRESSURE,
+    LOOM_LOW_SCHEDULE_STRATEGY_LATENCY_HIDING,
+    LOOM_LOW_SCHEDULE_STRATEGY_RESOURCE_STALL,
+};
+
 class LowEmissionFrameTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -131,13 +138,8 @@ low.func.def target<test.low.core> @structural_model() -> (reg<test.i32 x4>) asm
 };
 
 TEST_F(LowEmissionFrameTest, EveryStrategyEnforcesIssueResourceCapacity) {
-  constexpr loom_low_schedule_strategy_t kStrategies[] = {
-      LOOM_LOW_SCHEDULE_STRATEGY_SOURCE_PRIORITY,
-      LOOM_LOW_SCHEDULE_STRATEGY_PRESSURE,
-      LOOM_LOW_SCHEDULE_STRATEGY_LATENCY_HIDING,
-      LOOM_LOW_SCHEDULE_STRATEGY_RESOURCE_STALL,
-  };
-  for (const loom_low_schedule_strategy_t strategy : kStrategies) {
+  for (const loom_low_schedule_strategy_t strategy : kScheduleStrategies) {
+    SCOPED_TRACE(static_cast<int>(strategy));
     ModulePtr module = ParseModule(R"(
 low.func.def target<test.low.core> @resource_capacity(%lhs: reg<test.i32>, %rhs: reg<test.i32>) -> (reg<test.i32>, reg<test.i32>) asm {
   %first = test.resource.serial.i32 %lhs, %rhs
@@ -150,6 +152,48 @@ low.func.def target<test.low.core> @resource_capacity(%lhs: reg<test.i32>, %rhs:
     ASSERT_GE(frame.schedule.node_count, 2u);
     EXPECT_EQ(frame.schedule.nodes[0].issue_cycle, 0u);
     EXPECT_EQ(frame.schedule.nodes[1].issue_cycle, 4u);
+  }
+}
+
+TEST_F(LowEmissionFrameTest, EveryStrategyClosesSingletonBeforeReopening) {
+  for (const loom_low_schedule_strategy_t strategy : kScheduleStrategies) {
+    SCOPED_TRACE(static_cast<int>(strategy));
+    ModulePtr module = ParseModule(R"(
+low.func.def target<test.low.core> @singleton(%condition: reg<test.i32>, %lhs: reg<test.i32>, %rhs: reg<test.i32>) -> (reg<test.i32>, reg<test.i32>) asm {
+  %prepared = test.mul.i32 %lhs, %rhs
+  %first = copy %condition : reg<test.i32> -> reg<test.fixed.r0>
+  %selected0 = test.fixed.select.i32 %prepared, %rhs, %first
+  %second = copy %prepared : reg<test.i32> -> reg<test.fixed.r0>
+  %selected1 = test.fixed.select.i32 %lhs, %rhs, %second
+  return %selected0, %selected1
+}
+)");
+    loom_low_emission_frame_t frame = {};
+    IREE_ASSERT_OK(BuildFrame(module.get(), {}, &frame, strategy));
+    EXPECT_EQ(frame.schedule.error_count, 0u);
+    EXPECT_EQ(frame.allocation.error_count, 0u);
+    EXPECT_EQ(frame.allocation.spill_count, 0u);
+  }
+}
+
+TEST_F(LowEmissionFrameTest, EveryStrategyPreservesAggregateRegisterCapacity) {
+  for (const loom_low_schedule_strategy_t strategy : kScheduleStrategies) {
+    SCOPED_TRACE(static_cast<int>(strategy));
+    // The two legal pairs are (r0, r2) and (r1, r3). Placing the scalars in
+    // preference order (r0, r1) strands two free units in different pairs.
+    ModulePtr module = ParseModule(R"(
+low.func.def target<test.low.core> @aggregate(%lhs: reg<test.i32>, %rhs: reg<test.i32>, %pair: reg<test.i32 x2>) -> (reg<test.explicit32>, reg<test.explicit32>, reg<test.explicit32 x2>) asm {
+  %first = copy %lhs : reg<test.i32> -> reg<test.explicit32>
+  %second = copy %rhs : reg<test.i32> -> reg<test.explicit32>
+  %wide = copy %pair : reg<test.i32 x2> -> reg<test.explicit32 x2>
+  return %first, %second, %wide
+}
+)");
+    loom_low_emission_frame_t frame = {};
+    IREE_ASSERT_OK(BuildFrame(module.get(), {}, &frame, strategy));
+    EXPECT_EQ(frame.schedule.error_count, 0u);
+    EXPECT_EQ(frame.allocation.error_count, 0u);
+    EXPECT_EQ(frame.allocation.spill_count, 0u);
   }
 }
 
