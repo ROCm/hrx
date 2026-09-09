@@ -84,33 +84,33 @@ bool loom_low_allocation_unit_location_is_live_at_point(
             descriptor_set, assignment, &location_assignment)) {
       continue;
     }
-    uint32_t unit_offset = UINT32_MAX;
-    if (loom_low_allocation_storage_assignment_uses_explicit_physical_register(
-            descriptor_set, assignment)) {
-      for (uint32_t i = 0; i < assignment->location_count; ++i) {
-        if (loom_low_allocation_storage_assignment_subranges_overlap(
-                descriptor_set, assignment, i, &location_assignment, 0,
-                /*unit_count=*/1)) {
-          unit_offset = i;
-          break;
-        }
+    // A single explicit wide register can alias several independently live
+    // units of the assignment. Every overlapping unit must be dead before
+    // that register is available as scratch. Linear classes map one-to-one.
+    const bool is_explicit =
+        loom_low_allocation_storage_assignment_uses_explicit_physical_register(
+            descriptor_set, assignment);
+    const uint32_t unit_begin =
+        is_explicit ? 0 : location->location - assignment->location_base;
+    const uint32_t unit_end =
+        is_explicit ? assignment->location_count : unit_begin + 1u;
+    for (uint32_t unit_offset = unit_begin; unit_offset < unit_end;
+         ++unit_offset) {
+      const uint32_t unit_start_point =
+          loom_low_allocation_live_range_assignment_unit_start_point(
+              unit_liveness->start_points, unit_liveness->point_count,
+              assignment, unit_offset);
+      const uint32_t unit_end_point =
+          loom_low_allocation_live_range_assignment_unit_end_point(
+              unit_liveness->end_points, unit_liveness->point_count, assignment,
+              unit_offset);
+      if (point < unit_start_point || point >= unit_end_point) continue;
+      if (!is_explicit ||
+          loom_low_allocation_storage_assignment_subranges_overlap(
+              descriptor_set, assignment, unit_offset, &location_assignment, 0,
+              /*unit_count=*/1)) {
+        return true;
       }
-      if (unit_offset == UINT32_MAX) {
-        continue;
-      }
-    } else {
-      unit_offset = (uint32_t)(location->location - assignment->location_base);
-    }
-    const uint32_t unit_start_point =
-        loom_low_allocation_live_range_assignment_unit_start_point(
-            unit_liveness->start_points, unit_liveness->point_count, assignment,
-            unit_offset);
-    const uint32_t unit_end_point =
-        loom_low_allocation_live_range_assignment_unit_end_point(
-            unit_liveness->end_points, unit_liveness->point_count, assignment,
-            unit_offset);
-    if (point >= unit_start_point && point < unit_end_point) {
-      return true;
     }
   }
   return false;
