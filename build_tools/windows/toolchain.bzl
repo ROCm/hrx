@@ -21,7 +21,7 @@ def windows_cross_toolchain(name, repository_path, execution_architecture, msvc_
     native.filegroup(name = "empty")
     native.filegroup(
         name = "host_dynamic_libraries",
-        srcs = native.glob(["host_dynamic_libraries/*"]),
+        srcs = native.glob(["host_dynamic_libraries/*"], allow_empty = True),
     )
     native.filegroup(
         name = "compiler_files",
