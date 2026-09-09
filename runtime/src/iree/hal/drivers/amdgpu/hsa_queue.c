@@ -53,14 +53,10 @@ iree_status_t iree_hal_amdgpu_hsa_queue_create(
       .callback_data = params->error_callback_data,
       .engine.compute =
           {
-              // ROCr exposes one shared cooperative queue per agent. Applying
-              // a mask through the descriptor would mutate that shared queue;
-              // verify its achieved full-resource mask below instead.
-              .cu_mask = is_cooperative ? NULL : params->compute_unit_mask,
+              .cu_mask = NULL,
               .type = params->type,
               .private_segment_size = HSA_AMD_PRIVATE_SEGMENT_SIZE_DEFAULT,
-              .cu_mask_count =
-                  is_cooperative ? 0 : params->compute_unit_mask_bit_count,
+              .cu_mask_count = 0,
           },
   };
   iree_status_t status = iree_hsa_amd_queue_create(IREE_LIBHSA(params->libhsa),
@@ -70,6 +66,18 @@ iree_status_t iree_hal_amdgpu_hsa_queue_create(
     status = iree_make_status(
         IREE_STATUS_INTERNAL,
         "HSA reported successful queue creation without returning a queue");
+  }
+  // The descriptor mask is not honored by all ROCr implementations exposing
+  // hsa_amd_queue_create. Apply the mask through the dedicated queue operation
+  // while the queue remains private, then verify the achieved mask below.
+  // ROCr exposes one shared cooperative queue per agent, so never mutate its
+  // mask and instead require its existing mask to exactly match the full
+  // resource set.
+  if (iree_status_is_ok(status) && !is_cooperative &&
+      params->compute_unit_mask_bit_count) {
+    status = iree_hsa_amd_queue_cu_set_mask(
+        IREE_LIBHSA(params->libhsa), descriptor.queue,
+        params->compute_unit_mask_bit_count, params->compute_unit_mask);
   }
 
   uint32_t* achieved_mask = NULL;
