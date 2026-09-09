@@ -105,6 +105,8 @@ loom_cc_library(
         "diagnostics.c",
         "effect_dependencies.c",
         "effect_dependencies.h",
+        "fixed_storage.c",
+        "fixed_storage.h",
         "graph.c",
         "graph.h",
         "json.c",
@@ -164,6 +166,24 @@ loom_cc_library(
         "//runtime/src/iree/base",
         "//runtime/src/iree/base/internal",
         "//runtime/src/iree/base/internal:arena",
+    ],
+)
+
+loom_cc_test(
+    name = "fixed_storage_test",
+    srcs = ["fixed_storage_test.cc"],
+    deps = [
+        ":schedule",
+        "//loom/src/loom/codegen/low:frame",
+        "//loom/src/loom/codegen/low:text_asm",
+        "//loom/src/loom/format/text:parser",
+        "//loom/src/loom/ir",
+        "//loom/src/loom/ops/low",
+        "//loom/src/loom/target/test:low_registry",
+        "//loom/src/loom/testing:module_ptr",
+        "//runtime/src/iree/base/internal:arena",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
     ],
 )
 

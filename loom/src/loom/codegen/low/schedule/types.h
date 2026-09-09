@@ -37,6 +37,8 @@ extern "C" {
 #endif
 
 typedef struct loom_low_allocation_budget_t loom_low_allocation_budget_t;
+typedef struct loom_low_allocation_fixed_value_t
+    loom_low_allocation_fixed_value_t;
 
 // Sentinel for absent schedule node indices.
 #define LOOM_LOW_SCHEDULE_NODE_NONE UINT32_MAX
@@ -677,6 +679,10 @@ typedef struct loom_low_schedule_options_t {
   const loom_low_allocation_budget_t* allocation_budgets;
   // Number of entries in |allocation_budgets|.
   iree_host_size_t allocation_budget_count;
+  // Explicit ABI/storage bindings whose reuse constrains logical ordering.
+  const loom_low_allocation_fixed_value_t* fixed_values;
+  // Number of entries in |fixed_values|.
+  iree_host_size_t fixed_value_count;
   // Optional target-provided pair-affinity table.
   loom_low_schedule_pair_affinity_list_t pair_affinities;
   // Optional concrete pair groups preferred when rescheduling rewritten IR.

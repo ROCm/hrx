@@ -42,7 +42,7 @@ enum loom_low_schedule_dependency_kind_e {
   LOOM_LOW_SCHEDULE_DEPENDENCY_EFFECT = 2,
   // Target architectural state dependency such as flags or special registers.
   LOOM_LOW_SCHEDULE_DEPENDENCY_STATE = 3,
-  // Tied-result storage dependency keeping older readers before an overwrite.
+  // Tied or fixed storage dependency keeping older accesses before overwrite.
   LOOM_LOW_SCHEDULE_DEPENDENCY_STORAGE = 4,
 };
 

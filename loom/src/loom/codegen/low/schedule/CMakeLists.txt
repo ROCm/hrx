@@ -127,6 +127,8 @@ loom_cc_library(
     "diagnostics.c"
     "effect_dependencies.c"
     "effect_dependencies.h"
+    "fixed_storage.c"
+    "fixed_storage.h"
     "graph.c"
     "graph.h"
     "json.c"
@@ -179,6 +181,25 @@ loom_cc_library(
     loom::util::segmented_storage
     loom::util::stream
   PUBLIC
+)
+
+loom_cc_test(
+  NAME
+    fixed_storage_test
+  SRCS
+    "fixed_storage_test.cc"
+  DEPS
+    ::schedule
+    iree::base::internal::arena
+    iree::testing::gtest
+    iree::testing::gtest_main
+    loom::codegen::low::frame
+    loom::codegen::low::text_asm
+    loom::format::text::parser
+    loom::ir
+    loom::ops::low
+    loom::target::test::low_registry
+    loom::testing::module_ptr
 )
 
 loom_cc_test(

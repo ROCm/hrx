@@ -11,6 +11,7 @@
 
 #include "loom/codegen/low/schedule/diagnostics.h"
 #include "loom/codegen/low/schedule/effect_dependencies.h"
+#include "loom/codegen/low/schedule/fixed_storage.h"
 #include "loom/codegen/low/storage_relation.h"
 #include "loom/ops/low/ops.h"
 #include "loom/ops/op_defs.h"
@@ -399,7 +400,7 @@ static bool loom_low_schedule_reg_class_is_state(
          state->reg_class_state_flags[reg_class_id] != 0;
 }
 
-static const uint16_t* loom_low_schedule_index_descriptor_operands(
+const uint16_t* loom_low_schedule_index_descriptor_operands(
     loom_low_schedule_build_state_t* state,
     const loom_low_descriptor_t* descriptor, uint16_t operand_count) {
   if (descriptor == NULL) return NULL;
@@ -435,8 +436,7 @@ static const uint16_t* loom_low_schedule_index_descriptor_operands(
   return state->descriptor_operands.indices;
 }
 
-static loom_low_schedule_dependency_endpoint_t
-loom_low_schedule_value_write_endpoint(
+loom_low_schedule_dependency_endpoint_t loom_low_schedule_value_write_endpoint(
     const loom_low_schedule_build_state_t* state,
     loom_value_ordinal_t value_ordinal) {
   const uint32_t producer_node = state->values[value_ordinal].producer_node;
@@ -467,7 +467,7 @@ loom_low_schedule_value_write_endpoint(
   return loom_low_schedule_dependency_endpoint_none();
 }
 
-static loom_low_schedule_dependency_endpoint_t
+loom_low_schedule_dependency_endpoint_t
 loom_low_schedule_descriptor_operand_read_endpoint(
     const loom_low_schedule_build_state_t* state,
     const loom_low_descriptor_t* descriptor,
@@ -1580,5 +1580,6 @@ iree_status_t loom_low_schedule_build_dependencies(
     }
     loom_low_schedule_reset_storage_reads(state);
   }
-  return loom_low_schedule_build_effect_dependencies(state);
+  IREE_RETURN_IF_ERROR(loom_low_schedule_build_effect_dependencies(state));
+  return loom_low_schedule_build_fixed_storage_dependencies(state);
 }

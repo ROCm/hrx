@@ -222,6 +222,8 @@ static iree_status_t loom_low_emission_frame_build_impl(
       .residency_model = options->residency_model,
       .allocation_budgets = options->allocation_budgets,
       .allocation_budget_count = options->allocation_budget_count,
+      .fixed_values = options->allocation_fixed_values,
+      .fixed_value_count = options->allocation_fixed_value_count,
       .pair_affinities = options->schedule_pair_affinities,
       .preferred_pair_uses = preferred_pair_uses,
       .structural_state_reads = options->schedule_structural_state_reads,
