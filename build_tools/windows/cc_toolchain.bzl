@@ -121,6 +121,7 @@ def windows_toolchains():
         ]:
             windows_cc_toolchain(
                 name = "native_" + compiler,
+                tags = ["manual"],
                 cc = "@local_config_cc//:" + cc_target,
                 masm = "//build_tools/bazel:msvc_masm_wrapper.bat",
                 masm_arguments = ["/nologo", "/Zi", "/c"],
@@ -149,8 +150,8 @@ def windows_toolchains():
     else:
         return
 
-    _address_sanitizer_runtime(name = "address_sanitizer_runtime")
-    _runtimes_toolchain(name = "address_sanitizer_runtimes", runtimes = [":address_sanitizer_runtime"])
+    _address_sanitizer_runtime(name = "address_sanitizer_runtime", tags = ["manual"])
+    _runtimes_toolchain(name = "address_sanitizer_runtimes", runtimes = [":address_sanitizer_runtime"], tags = ["manual"])
     native.toolchain(
         name = "windows_x86_64_address_sanitizer",
         exec_compatible_with = HOST_CONSTRAINTS,
