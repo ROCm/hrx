@@ -212,8 +212,11 @@ static iree_status_t iree_hal_amdgpu_host_queue_validate_dispatch_binding(
   IREE_RETURN_IF_ERROR(iree_hal_buffer_validate_access(
       iree_hal_buffer_allowed_access(binding->buffer),
       IREE_HAL_MEMORY_ACCESS_ANY));
-  return iree_hal_buffer_validate_range(binding->buffer, binding->offset,
-                                        binding->length);
+  iree_device_size_t binding_offset = 0;
+  iree_device_size_t binding_length = 0;
+  return iree_hal_buffer_calculate_range(
+      /*base_offset=*/0, iree_hal_buffer_byte_length(binding->buffer),
+      binding->offset, binding->length, &binding_offset, &binding_length);
 }
 
 static iree_status_t
