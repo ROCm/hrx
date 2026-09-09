@@ -16,8 +16,6 @@
 namespace iree::hip {
 namespace {
 
-using iree::testing::status::StatusIs;
-
 static constexpr iree_hal_queue_priority_t kQueuePriorities[] = {
     IREE_HAL_QUEUE_PRIORITY_NORMAL,
 };
@@ -298,26 +296,27 @@ TEST_F(ExecutionResourceTest, RejectsInexactCuMasksWithoutPublishing) {
   const iree_hal_streaming_execution_resource_set_t* output = sentinel;
 
   const uint32_t partial_resource_mask[] = {0x00000001u};
-  EXPECT_THAT(iree_hip_execution_resource_intern_sm_cu_mask(
-                  &device_, uniform_queue_family(),
-                  IREE_ARRAYSIZE(partial_resource_mask), partial_resource_mask,
-                  &output),
-              StatusIs(StatusCode::kInvalidArgument));
+  IREE_EXPECT_STATUS_IS(StatusCode::kInvalidArgument,
+                        iree_hip_execution_resource_intern_sm_cu_mask(
+                            &device_, uniform_queue_family(),
+                            IREE_ARRAYSIZE(partial_resource_mask),
+                            partial_resource_mask, &output));
   EXPECT_EQ(output, sentinel);
 
   const uint32_t missing_group_mask[] = {0x00000033u};
-  EXPECT_THAT(
+  IREE_EXPECT_STATUS_IS(
+      StatusCode::kInvalidArgument,
       iree_hip_execution_resource_intern_sm_cu_mask(
           &device_, uniform_queue_family(), IREE_ARRAYSIZE(missing_group_mask),
-          missing_group_mask, &output),
-      StatusIs(StatusCode::kInvalidArgument));
+          missing_group_mask, &output));
   EXPECT_EQ(output, sentinel);
 
   uint32_t untouched_mask = 0xA5A5A5A5u;
-  EXPECT_THAT(iree_hip_execution_resource_write_sm_cu_mask(
-                  uniform_queue_family(), {/*.count=*/0, /*.ordinals=*/nullptr},
-                  /*mask_word_count=*/0, &untouched_mask),
-              StatusIs(StatusCode::kInvalidArgument));
+  IREE_EXPECT_STATUS_IS(
+      StatusCode::kInvalidArgument,
+      iree_hip_execution_resource_write_sm_cu_mask(
+          uniform_queue_family(), {/*.count=*/0, /*.ordinals=*/nullptr},
+          /*mask_word_count=*/0, &untouched_mask));
   EXPECT_EQ(untouched_mask, 0xA5A5A5A5u);
 }
 
@@ -325,11 +324,11 @@ TEST_F(ExecutionResourceTest, RejectsStaleAndTamperedCopies) {
   hipDevResource unchanged_resource;
   std::memset(&unchanged_resource, 0xA5, sizeof(unchanged_resource));
   const hipDevResource expected_unchanged_resource = unchanged_resource;
-  EXPECT_THAT(iree_hip_execution_resource_create_sm(
-                  &device_, variable_queue_family(),
-                  {/*.count=*/0, /*.ordinals=*/nullptr}, /*flags=*/2,
-                  &unchanged_resource),
-              StatusIs(StatusCode::kInvalidArgument));
+  IREE_EXPECT_STATUS_IS(StatusCode::kInvalidArgument,
+                        iree_hip_execution_resource_create_sm(
+                            &device_, variable_queue_family(),
+                            {/*.count=*/0, /*.ordinals=*/nullptr}, /*flags=*/2,
+                            &unchanged_resource));
   EXPECT_EQ(std::memcmp(&unchanged_resource, &expected_unchanged_resource,
                         sizeof(unchanged_resource)),
             0);

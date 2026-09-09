@@ -13,8 +13,6 @@
 namespace iree::hal::streaming {
 namespace {
 
-using ::iree::testing::status::StatusIs;
-
 static constexpr iree_hal_queue_priority_t kQueuePriorities[] = {
     IREE_HAL_QUEUE_PRIORITY_NORMAL,
 };
@@ -181,30 +179,31 @@ TEST_F(ExecutionResourceTableTest, InternsCanonicalResourceSets) {
 TEST_F(ExecutionResourceTableTest, RejectsSetsThatCannotNameAnExactQueue) {
   const iree_hal_queue_execution_resource_ordinal_t missing_group[] = {0, 1};
   iree_hal_streaming_execution_resource_set_id_t set_id = 42;
-  EXPECT_THAT(iree_hal_streaming_execution_resource_table_intern(
-                  &table_, queue_family(),
-                  {/*.count=*/IREE_ARRAYSIZE(missing_group),
-                   /*.ordinals=*/missing_group},
-                  &set_id),
-              StatusIs(StatusCode::kInvalidArgument));
+  IREE_EXPECT_STATUS_IS(StatusCode::kInvalidArgument,
+                        iree_hal_streaming_execution_resource_table_intern(
+                            &table_, queue_family(),
+                            {/*.count=*/IREE_ARRAYSIZE(missing_group),
+                             /*.ordinals=*/missing_group},
+                            &set_id));
   EXPECT_EQ(set_id, 42u);
 
   const iree_hal_queue_execution_resource_ordinal_t unsorted[] = {2, 0};
-  EXPECT_THAT(iree_hal_streaming_execution_resource_table_intern(
-                  &table_, queue_family(),
-                  {/*.count=*/IREE_ARRAYSIZE(unsorted),
-                   /*.ordinals=*/unsorted},
-                  &set_id),
-              StatusIs(StatusCode::kInvalidArgument));
+  IREE_EXPECT_STATUS_IS(
+      StatusCode::kInvalidArgument,
+      iree_hal_streaming_execution_resource_table_intern(
+          &table_, queue_family(),
+          {/*.count=*/IREE_ARRAYSIZE(unsorted), /*.ordinals=*/unsorted},
+          &set_id));
   EXPECT_EQ(set_id, 42u);
 
   iree_hal_device_spec_t* foreign_device_spec = CreateDeviceSpec();
   iree_hal_device_t* foreign_device = CreateMockDevice(foreign_device_spec);
   iree_hal_device_spec_release(foreign_device_spec);
-  EXPECT_THAT(iree_hal_streaming_execution_resource_table_intern(
-                  &table_, iree_hal_device_queue_family(foreign_device, 0),
-                  {/*.count=*/0, /*.ordinals=*/nullptr}, &set_id),
-              StatusIs(StatusCode::kInvalidArgument));
+  IREE_EXPECT_STATUS_IS(
+      StatusCode::kInvalidArgument,
+      iree_hal_streaming_execution_resource_table_intern(
+          &table_, iree_hal_device_queue_family(foreign_device, 0),
+          {/*.count=*/0, /*.ordinals=*/nullptr}, &set_id));
   EXPECT_EQ(set_id, 42u);
   iree_hal_device_release(foreign_device);
 }
