@@ -1500,58 +1500,6 @@ iree_status_t iree_hal_streaming_device_set_primary_context_flags(
     iree_hal_streaming_device_ordinal_t device_ordinal,
     const iree_hal_streaming_context_flags_t* flags);
 
-// Synchronization: none (queries kernel occupancy).
-iree_status_t iree_hal_streaming_calculate_max_active_blocks_per_multiprocessor(
-    iree_hal_streaming_device_t* device, iree_hal_streaming_symbol_t* symbol,
-    uint32_t block_size, uint32_t dynamic_shared_mem_size,
-    uint32_t* out_max_blocks);
-
-// Callback type for dynamic shared memory size calculation.
-// This callback is invoked during occupancy calculation to determine how much
-// dynamic shared memory a kernel needs for a specific block size.
-//
-// Parameters:
-//   block_size: The number of threads per block being tested.
-//   user_data: Optional user-provided context passed through from the caller.
-//
-// Returns:
-//   The number of bytes of dynamic shared memory required for the given block
-//   size.
-//
-// Example implementation for a matrix multiplication kernel that uses shared
-// memory based on tile size derived from block dimensions:
-// ```c
-// uint32_t matmul_dynamic_smem_callback(uint32_t block_size, void* user_data) {
-//   // Assume square blocks (e.g., 16x16 = 256 threads)
-//   uint32_t tile_size = (uint32_t)sqrt(block_size);
-//   // Need shared memory for two tiles (A and B matrices)
-//   return 2 * tile_size * tile_size * sizeof(float);
-// }
-// ```
-typedef uint32_t (*iree_hal_streaming_block_to_dynamic_smem_fn_t)(
-    uint32_t block_size);
-
-// Calculates optimal block size for a kernel with optional dynamic shared
-// memory callback. If smem_callback is NULL, dynamic_shared_mem_size is used as
-// a fixed value. If smem_callback is provided, it will be called for each block
-// size tested to determine the dynamic shared memory requirement.
-// Synchronization: none (queries kernel occupancy).
-iree_status_t iree_hal_streaming_calculate_optimal_block_size(
-    iree_hal_streaming_device_t* device, iree_hal_streaming_symbol_t* symbol,
-    uint32_t dynamic_shared_mem_size,
-    iree_hal_streaming_block_to_dynamic_smem_fn_t dynamic_shared_mem_callback,
-    uint32_t block_size_limit, uint32_t* out_block_size,
-    uint32_t* out_min_grid_size);
-
-// Returns the maximum number of blocks that can be launched for a cooperative
-// kernel on the device. If the device does not support cooperative launch,
-// returns OK with out_max_blocks set to 0.
-// Synchronization: none (queries kernel occupancy).
-iree_status_t iree_hal_streaming_calculate_max_cooperative_blocks(
-    iree_hal_streaming_device_t* device, iree_hal_streaming_symbol_t* symbol,
-    uint32_t block_size, uint32_t dynamic_shared_mem_size,
-    uint32_t* out_max_blocks);
-
 //===----------------------------------------------------------------------===//
 // Context management
 //===----------------------------------------------------------------------===//

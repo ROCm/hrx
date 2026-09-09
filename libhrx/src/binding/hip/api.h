@@ -1704,12 +1704,16 @@ HIPAPI hipError_t hipExtModuleLaunchKernel(
 HIPAPI hipError_t hipLaunchHostFunc(hipStream_t hStream, hipHostFn_t fn,
                                     void* userData);
 
-// Occupancy functions
+// Queries the maximum concurrently resident blocks per scheduling domain for
+// a loaded module function and exact launch configuration.
 HIPAPI hipError_t hipModuleOccupancyMaxActiveBlocksPerMultiprocessor(
     int* numBlocks, hipFunction_t f, int blockSize, size_t dynSharedMemPerBlk);
 HIPAPI hipError_t hipModuleOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
     int* numBlocks, hipFunction_t f, int blockSize, size_t dynSharedMemPerBlk,
     unsigned int flags);
+
+// Selects a block size maximizing resident invocations and returns the minimum
+// exact-queue grid size needed to occupy every scheduling domain.
 HIPAPI hipError_t hipModuleOccupancyMaxPotentialBlockSize(
     int* gridSize, int* blockSize, hipFunction_t f, size_t dynSharedMemPerBlk,
     int blockSizeLimit);
@@ -1717,12 +1721,18 @@ HIPAPI hipError_t hipModuleOccupancyMaxPotentialBlockSizeWithFlags(
     int* gridSize, int* blockSize, hipFunction_t f, size_t dynSharedMemPerBlk,
     int blockSizeLimit, unsigned int flags);
 
-// Runtime occupancy functions (for host function pointers)
+// Runtime occupancy equivalents resolving compiler-registered host functions.
 HIPAPI hipError_t hipOccupancyMaxActiveBlocksPerMultiprocessor(
     int* numBlocks, const void* f, int blockSize, size_t dynSharedMemPerBlk);
 HIPAPI hipError_t hipOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
     int* numBlocks, const void* f, int blockSize, size_t dynSharedMemPerBlk,
     unsigned int flags);
+
+// Finds the greatest dynamic shared-memory size preserving |numBlocks|
+// resident blocks per scheduling domain.
+HIPAPI hipError_t hipOccupancyAvailableDynamicSMemPerBlock(
+    size_t* dynamicSmemSize, const void* f, int numBlocks, int blockSize);
+
 HIPAPI hipError_t hipOccupancyMaxPotentialBlockSize(int* gridSize,
                                                     int* blockSize,
                                                     const void* f,

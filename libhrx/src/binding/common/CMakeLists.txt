@@ -62,6 +62,7 @@ iree_cc_library(
     "kpack.h"
     "memory.h"
     "module.h"
+    "occupancy.h"
     "stream.h"
     "tls.h"
   TEXTUAL_HDRS
@@ -82,6 +83,7 @@ iree_cc_library(
     "mem_pool.c"
     "memory.c"
     "module.c"
+    "occupancy.c"
     "peer.c"
     "registry.c"
     "stream.c"

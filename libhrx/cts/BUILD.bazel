@@ -236,6 +236,31 @@ hrx_cc_test(
 )
 
 hrx_cc_test(
+    name = "hip_occupancy_test",
+    srcs = [
+        "core/amdgpu_executable_test_data.hpp",
+        "core/amdgpu_test_data.hpp",
+        "tests/hip/occupancy_test.cpp",
+    ],
+    copts = ["-Wno-attributes"],
+    data = ["//libhrx/src/binding/hip:amdhip64"],
+    env = {
+        "HRX_TEST_LIBAMDHIP64": "$(location //libhrx/src/binding/hip:amdhip64)",
+    },
+    sanitizer_suppressions = hsa_suppressions,
+    tags = AMD_GPU_CTS_TAGS,
+    target_compatible_with = _HIP_GPU_COMPATIBILITY,
+    deps = [
+        ":amdgpu_executable_test_kernels",
+        "//build_tools/amdgpu:target_map_h",
+        "//build_tools/bazel:dl",
+        "//libhrx/src/binding/hip:launch_params",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+hrx_cc_test(
     name = "hip_device_event_sink_test",
     srcs = [
         "core/amdgpu_hip_printf_test_data.hpp",
