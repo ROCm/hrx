@@ -260,7 +260,7 @@ def _test_generated_kernel_binary_is_testonly_impl(env, target):
 
     binary = target[LoomBinaryInfo]
     env.expect.that_str(binary.primary_artifact.basename).equals(
-        "public_kernel_library_kernel_binary_gfx11_generic.hsaco",
+        "public_kernel_library_kernel_binary_gfx11_generic",
     )
     _expect_basename(
         env,
@@ -271,11 +271,13 @@ def _test_generated_kernel_binary_is_testonly_impl(env, target):
     action = _find_action(env, target[TestingAspectInfo].actions, "LoomKernelBinary")
     for expected_arg in [
         "--product=kernel",
-        "--format=amdgpu-hsaco",
         "--target=amdgpu:gfx11-generic",
     ]:
         if expected_arg not in action.argv:
             env.fail("expected %r in kernel binary arguments %r" % (expected_arg, action.argv))
+    for arg in action.argv:
+        if arg.startswith("--format="):
+            env.fail("unexpected exact format in kernel binary arguments %r" % action.argv)
 
 def _test_execution_profile_contract(name, **kwargs):
     analysis_test(

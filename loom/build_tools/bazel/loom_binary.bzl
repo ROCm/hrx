@@ -82,19 +82,21 @@ def _declare_binary_linked_module(ctx, product_kind, target_profile = None):
         linked_module = linked_module,
     )
 
-def _declare_amdgpu_kernel_product(
+def _declare_kernel_product(
         ctx,
         linked_module,
         target_profile,
-        output_stem,
+        artifact,
+        report_stem,
         mnemonic,
-        progress_message):
-    artifact = ctx.actions.declare_file(output_stem + ".hsaco")
-    compile_report = ctx.actions.declare_file(output_stem + ".compile.json")
+        progress_message,
+        exact_format = None):
+    compile_report = ctx.actions.declare_file(report_stem + ".compile.json")
     args = ctx.actions.args()
     args.add(linked_module)
     args.add("--product=kernel")
-    args.add("--format=amdgpu-hsaco")
+    if exact_format != None:
+        args.add("--format=%s" % exact_format)
     args.add("--target=%s:%s" % (
         target_profile.family,
         target_profile.selector,
@@ -149,17 +151,21 @@ def _declare_command_product(ctx, linked_module):
 
 def _loom_kernel_binary_impl(ctx):
     _require_binary_inputs(ctx)
-    target_profile = _require_amdgpu_target_profile(ctx, "kernel")
+    target_profile = ctx.attr.target[LoomTargetProfileInfo]
     linked = _declare_binary_linked_module(
         ctx,
         "kernel",
         target_profile = target_profile,
     )
-    product = _declare_amdgpu_kernel_product(
+    artifact = ctx.outputs.out
+    if artifact == None:
+        artifact = ctx.actions.declare_file(ctx.label.name)
+    product = _declare_kernel_product(
         ctx = ctx,
         linked_module = linked.linked_module,
         target_profile = target_profile,
-        output_stem = ctx.label.name,
+        artifact = artifact,
+        report_stem = ctx.label.name,
         mnemonic = "LoomKernelBinary",
         progress_message = "Compiling kernel binary %s for %s" % (
             ctx.label,
@@ -211,11 +217,18 @@ def _target_binary_attrs(target_doc):
     )
     return attrs
 
-loom_kernel_binary = rule(
-    implementation = _loom_kernel_binary_impl,
+def _kernel_binary_attrs():
     attrs = _target_binary_attrs(
         "Immutable target profile used for every emitted kernel.",
-    ),
+    )
+    attrs["out"] = attr.output(
+        doc = "Optional kernel artifact path. Defaults to the extensionless rule name.",
+    )
+    return attrs
+
+loom_kernel_binary = rule(
+    implementation = _loom_kernel_binary_impl,
+    attrs = _kernel_binary_attrs(),
     doc = "Links and emits one closed loader-ready kernel product.",
     toolchains = [
         _LOOM_COMPILE_TOOLCHAIN_TYPE,
@@ -232,16 +245,18 @@ def _loom_command_binary_impl(ctx):
         target_profile = target_profile,
     )
     command_product = _declare_command_product(ctx, linked.linked_module)
-    kernel_product = _declare_amdgpu_kernel_product(
+    kernel_product = _declare_kernel_product(
         ctx = ctx,
         linked_module = linked.linked_module,
         target_profile = target_profile,
-        output_stem = ctx.label.name + ".kernels",
+        artifact = ctx.actions.declare_file(ctx.label.name + ".kernels.hsaco"),
+        report_stem = ctx.label.name + ".kernels",
         mnemonic = "LoomCommandKernelBinary",
         progress_message = "Compiling command kernels for %s against %s" % (
             ctx.label,
             ctx.attr.target.label,
         ),
+        exact_format = "amdgpu-hsaco",
     )
     artifacts = [
         command_product.manifest,

@@ -1,0 +1,15 @@
+kernel.def export("copy_i32") @copy_i32() {
+  %unit = index.constant 1 : index
+  %workgroup_size = index.constant 4 : index
+  kernel.launch.config workgroups(%unit, %unit, %unit) workgroup_size(%workgroup_size, %unit, %unit) : index
+} launch(%input: buffer, %output: buffer) {
+  %base = index.constant 0 : offset
+  %lane = kernel.workitem.id<x> : index
+  %input_aligned = buffer.assume.alignment %input {minimum_alignment = 4} : buffer
+  %output_aligned = buffer.assume.alignment %output {minimum_alignment = 4} : buffer
+  %input_view = buffer.view %input_aligned[%base] : buffer -> view<4xi32>
+  %output_view = buffer.view %output_aligned[%base] : buffer -> view<4xi32>
+  %value = view.load %input_view[%lane] : view<4xi32> -> i32
+  view.store %value, %output_view[%lane] : i32, view<4xi32>
+  kernel.return
+}
