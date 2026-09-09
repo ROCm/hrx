@@ -69,47 +69,16 @@ iree_status_t iree_hal_amdgpu_hsa_queue_create(
   }
   // The descriptor mask is not honored by all ROCr implementations exposing
   // hsa_amd_queue_create. Apply the mask through the dedicated queue operation
-  // while the queue remains private, then verify the achieved mask below.
+  // while the queue remains private. hsa_amd_queue_cu_set_mask reports any
+  // device-wide reduction as a failure, preserving the exact HAL request.
   // ROCr exposes one shared cooperative queue per agent, so never mutate its
-  // mask and instead require its existing mask to exactly match the full
-  // resource set.
+  // mask; cooperative callers are restricted to the complete resource set.
   if (iree_status_is_ok(status) && !is_cooperative &&
       params->compute_unit_mask_bit_count) {
     status = iree_hsa_amd_queue_cu_set_mask(
         IREE_LIBHSA(params->libhsa), descriptor.queue,
         params->compute_unit_mask_bit_count, params->compute_unit_mask);
   }
-
-  uint32_t* achieved_mask = NULL;
-  const iree_host_size_t mask_word_count =
-      params->compute_unit_mask_bit_count / 32u;
-  if (iree_status_is_ok(status) && mask_word_count) {
-    status = iree_allocator_malloc_array(
-        params->host_allocator, mask_word_count, sizeof(*achieved_mask),
-        (void**)&achieved_mask);
-  }
-  if (iree_status_is_ok(status) && mask_word_count) {
-    status = iree_hsa_amd_queue_cu_get_mask(
-        IREE_LIBHSA(params->libhsa), descriptor.queue,
-        params->compute_unit_mask_bit_count, achieved_mask);
-  }
-  if (iree_status_is_ok(status) && mask_word_count &&
-      memcmp(params->compute_unit_mask, achieved_mask,
-             mask_word_count * sizeof(*achieved_mask)) != 0) {
-    uint32_t mismatch_word_index = 0;
-    while (params->compute_unit_mask[mismatch_word_index] ==
-           achieved_mask[mismatch_word_index]) {
-      ++mismatch_word_index;
-    }
-    status = iree_make_status(
-        IREE_STATUS_FAILED_PRECONDITION,
-        "HSA created a queue with a different compute-unit mask than "
-        "requested: word %u of %u is 0x%08" PRIx32 " instead of 0x%08" PRIx32,
-        mismatch_word_index, (uint32_t)mask_word_count,
-        achieved_mask[mismatch_word_index],
-        params->compute_unit_mask[mismatch_word_index]);
-  }
-  iree_allocator_free(params->host_allocator, achieved_mask);
 
   if (iree_status_is_ok(status)) {
     *out_queue = descriptor.queue;

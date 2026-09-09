@@ -478,12 +478,6 @@ IREE_HAL_AMDGPU_LIBHSA_PFN(TRACE_ALWAYS, hsa_status_t,
                            ARGS(queue, num_cu_mask_count, cu_mask))
 
 IREE_HAL_AMDGPU_LIBHSA_PFN(TRACE_ALWAYS, hsa_status_t,
-                           hsa_amd_queue_cu_get_mask,
-                           DECL(const hsa_queue_t* queue,
-                                uint32_t num_cu_mask_count, uint32_t* cu_mask),
-                           ARGS(queue, num_cu_mask_count, cu_mask))
-
-IREE_HAL_AMDGPU_LIBHSA_PFN(TRACE_ALWAYS, hsa_status_t,
                            hsa_amd_queue_set_priority,
                            DECL(hsa_queue_t* queue,
                                 hsa_amd_queue_priority_t priority),

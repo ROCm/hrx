@@ -993,7 +993,6 @@ iree_status_t iree_hal_amdgpu_host_queue_initialize(
         .compute_unit_mask = native_mask,
         .error_callback = iree_hal_amdgpu_host_queue_error_callback,
         .error_callback_data = out_queue,
-        .host_allocator = params->host_allocator,
     };
     status =
         iree_hal_amdgpu_hsa_queue_create(&hsa_queue_params, &hardware_queue);

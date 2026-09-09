@@ -36,8 +36,6 @@ typedef struct iree_hal_amdgpu_hsa_queue_params_t {
   void (*error_callback)(hsa_status_t status, hsa_queue_t* source, void* data);
   // Application data passed to |error_callback|.
   void* error_callback_data;
-  // Allocator used for temporary achieved-mask verification storage.
-  iree_allocator_t host_allocator;
 } iree_hal_amdgpu_hsa_queue_params_t;
 
 // Creates an unpublished native HSA queue with the exact |params|.
@@ -47,8 +45,7 @@ typedef struct iree_hal_amdgpu_hsa_queue_params_t {
 // failure |out_queue| is unchanged and any partially created queue is
 // destroyed before returning. Cooperative queues accept only normal priority,
 // are created without applying a compute-unit mask to ROCr's agent-shared
-// queue, and are accepted only when its achieved full-resource mask exactly
-// matches |params|.
+// queue, and require the complete execution-resource set.
 iree_status_t iree_hal_amdgpu_hsa_queue_create(
     const iree_hal_amdgpu_hsa_queue_params_t* params, hsa_queue_t** out_queue);
 
