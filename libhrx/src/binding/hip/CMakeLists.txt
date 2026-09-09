@@ -232,6 +232,7 @@ iree_cc_library(
   DEPS
     ::handle_registry
     iree::base
+    iree::base::internal
     iree::base::threading
     iree::hal
     libhrx::src::binding::common

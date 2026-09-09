@@ -106,11 +106,15 @@ using HipExtLaunchMultiKernelMultiDeviceFn = hipError_t (*)(
     hipLaunchParams* launch_params, int device_count, unsigned int flags);
 using HipRegisterFatBinaryFn = void** (*)(const void* image);
 using HipUnregisterFatBinaryFn = void (*)(void** registration);
+// The compiler ABI names these pointer-only metadata slots `uint3`. The local
+// binding's `dim3` has the same three-unsigned-component representation and the
+// CTS always passes null for both slots.
+using HipCompilerIndex = dim3;
 using HipRegisterFunctionFn = void (*)(
     void** registration, const void* host_function, char* device_function,
-    const char* device_name, unsigned int thread_limit, uint3* thread_index,
-    uint3* block_index, dim3* block_dimensions, dim3* grid_dimensions,
-    int* shared_memory_size);
+    const char* device_name, unsigned int thread_limit,
+    HipCompilerIndex* thread_index, HipCompilerIndex* block_index,
+    dim3* block_dimensions, dim3* grid_dimensions, int* shared_memory_size);
 using HipStreamBeginCaptureFn = hipError_t (*)(hipStream_t stream,
                                                hipStreamCaptureMode mode);
 using HipStreamEndCaptureFn = hipError_t (*)(hipStream_t stream,

@@ -112,7 +112,10 @@ struct ExecutionContextDeleter {
   HipExecutionCtxDestroyFn destroy = nullptr;
 
   void operator()(ihipExecutionCtx_t* context) const {
-    if (context) destroy(context);
+    if (context) {
+      const hipError_t result = destroy(context);
+      EXPECT_EQ(hipSuccess, result);
+    }
   }
 };
 
@@ -124,7 +127,10 @@ struct StreamDeleter {
   HipStreamDestroyFn destroy = nullptr;
 
   void operator()(hipStream_st* stream) const {
-    if (stream) destroy(stream);
+    if (stream) {
+      const hipError_t result = destroy(stream);
+      EXPECT_EQ(hipSuccess, result);
+    }
   }
 };
 
@@ -135,7 +141,10 @@ struct EventDeleter {
   HipEventDestroyFn destroy = nullptr;
 
   void operator()(hipEvent_st* event) const {
-    if (event) destroy(event);
+    if (event) {
+      const hipError_t result = destroy(event);
+      EXPECT_EQ(hipSuccess, result);
+    }
   }
 };
 
