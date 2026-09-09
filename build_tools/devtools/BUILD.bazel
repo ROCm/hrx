@@ -216,6 +216,15 @@ py_test(
 )
 
 py_test(
+    name = "doctor_test",
+    size = _PRESUBMIT_TEST_SIZE,
+    srcs = ["doctor_test.py"],
+    main = "doctor_test.py",
+    tags = _PRESUBMIT_TEST_TAGS,
+    deps = [":devtools"],
+)
+
+py_test(
     name = "environment_test",
     size = _PRESUBMIT_TEST_SIZE,
     srcs = [
@@ -312,6 +321,7 @@ test_suite(
         ":cmake_test",
         ":command_plan_test",
         ":ctest_test",
+        ":doctor_test",
         ":environment_test",
         ":hooks_test",
         ":install_test",
