@@ -8,11 +8,12 @@
 
 load("@rules_cc//cc:action_names.bzl", "ASSEMBLE_ACTION_NAME")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_cc//cc:find_cc_toolchain.bzl", "CC_TOOLCHAIN_ATTRS", "find_cc_toolchain", "use_cc_toolchain")
+load("@rules_cc//cc:find_cc_toolchain.bzl", "CC_TOOLCHAIN_TYPE", "find_cc_toolchain", "use_cc_toolchain")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 
 def _iree_msvc_masm_object_impl(ctx):
     cc_toolchain = find_cc_toolchain(ctx)
+    masm_toolchain = ctx.toolchains[CC_TOOLCHAIN_TYPE].masm
     feature_configuration = cc_common.configure_features(
         ctx = ctx,
         cc_toolchain = cc_toolchain,
@@ -34,13 +35,10 @@ def _iree_msvc_masm_object_impl(ctx):
 
     # rules_cc includes globally enabled C/C++ default compilation flags in its
     # assemble command line. Keep the toolchain environment but construct the
-    # MASM-only command line explicitly. The clang-cl toolchain intentionally
-    # selects clang-cl.exe for generic assembly, so invoke ml64.exe from the
-    # MSVC environment PATH for this explicitly MASM-only rule.
+    # MASM-only command line from the selected Windows toolchain. Generic
+    # assembly may use clang-cl even when MASM requires ml64 or llvm-ml.
     arguments = ctx.actions.args()
-    arguments.add("/nologo")
-    arguments.add("/Zi")
-    arguments.add("/c")
+    arguments.add_all(masm_toolchain.arguments)
     arguments.add("/Fo" + object_file.path)
     arguments.add(source_file.path)
     environment = cc_common.get_environment_variables(
@@ -52,10 +50,10 @@ def _iree_msvc_masm_object_impl(ctx):
     ctx.actions.run(
         arguments = [arguments],
         env = environment,
-        executable = ctx.file._masm_wrapper,
+        executable = masm_toolchain.assembler,
         inputs = depset(
             direct = [source_file],
-            transitive = [cc_toolchain.all_files],
+            transitive = [masm_toolchain.files],
         ),
         mnemonic = "IreeMsvcMasm",
         outputs = [object_file],
@@ -65,16 +63,12 @@ def _iree_msvc_masm_object_impl(ctx):
 
 _iree_msvc_masm_object = rule(
     implementation = _iree_msvc_masm_object_impl,
-    attrs = dict(CC_TOOLCHAIN_ATTRS, **{
+    attrs = {
         "src": attr.label(
             allow_single_file = [".asm"],
             mandatory = True,
         ),
-        "_masm_wrapper": attr.label(
-            allow_single_file = [".bat"],
-            default = Label("//build_tools/bazel:msvc_masm_wrapper.bat"),
-        ),
-    }),
+    },
     fragments = ["cpp"],
     toolchains = use_cc_toolchain(mandatory = True),
 )

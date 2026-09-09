@@ -48,6 +48,192 @@ python dev.py cmake hook
 
 ## Command Shape
 
+### Bazel target selection
+
+Bazel builds for the host by default. Destination and compiler choices are
+independent:
+
+| Build host | Destination/compiler | Configs |
+| --- | --- | --- |
+| Linux | Windows x86-64, clang-cl | `--config=windows-x86_64` |
+| Windows x64 | Native, clang-cl (default) | None |
+| Windows x64 | Native, MSVC | `--config=windows-msvc` |
+| Linux or macOS | macOS arm64 | `--config=macos-arm64` |
+| Linux or macOS | macOS x86-64 | `--config=macos-x86_64` |
+| macOS | Native, Xcode/Command Line Tools | None |
+
+Destination configs set only `--platforms`. Native builds infer their
+destination from the host, so adding a matching destination config is optional.
+For example, a native MSVC build needs only `--config=windows-msvc`; adding
+`--config=windows-x86_64` produces the same selection in either flag order.
+`windows-clang-cl` explicitly selects the default Windows compiler. MSVC requires
+a Windows build host; Linux-to-Windows builds use clang-cl. macOS destinations
+use Xcode/Command Line Tools on a Mac and LLVM on Linux.
+
+Build-time generators retain the host toolchain and remain executable on the
+build host. Native builds do not require either cross SDK installation. SDK
+acquisition is separate from Bazel configuration; the sections below describe
+the inputs for each destination.
+
+Linux cross builds use stable execution-root-relative compiler and SDK paths.
+Compiler and linker actions declare separate file sets, including LLVM's
+resolved non-glibc shared libraries; the host supplies its Linux loader and
+glibc. Native Windows retains upstream `local_config_cc` discovery and its
+installation paths. Shared remote caching and execution additionally require
+a specified execution environment; these local configurations do not define one.
+
+Cross-built executables run on their destination OS. Transfer the executable,
+dependent libraries, debug artifacts, and consumer runfiles to that host.
+Linux `bazel run` and `bazel test` cannot execute Windows or macOS binaries.
+Starlark test wrappers require a matching test execution platform even during
+build analysis; build their source binary targets when only producing artifacts.
+For example,
+`//runtime/src/iree/hal/drivers/task/executable/elf:elf_module_test_binary`
+is the artifact target for the `:elf_module_test` wrapper. Destination selection
+does not configure a remote executor or test runner.
+
+### Windows targets
+
+The selected C/C++ toolchain also supplies the MASM assembler and sanitizer
+runtimes. Native Windows uses the tools discovered in its Visual Studio/LLVM
+environment. Linux cross builds use clang-cl, lld-link, and llvm-ml from the
+selected Linux LLVM installation.
+
+#### Cross-compilation from Linux
+
+Provide a Linux LLVM installation and a Windows SDK/MSVC sysroot. The Bazel
+repository reads `LLVM_ROOT` and `WINSDK_ROOT` from the environment or explicit
+`--repo_env` options; acquisition is independent of the build configuration.
+For example, [xwin](https://github.com/Jake-Shadle/xwin) can prepare a sysroot
+with the required versioned MSVC/Windows Kits layout and case-correction
+symlinks:
+
+```bash
+xwin --accept-license --arch x86_64 splat \
+  --use-winsysroot-style --preserve-ms-arch-notation \
+  --include-debug-libs --output /path/to/windows-sysroot
+export LLVM_ROOT=/path/to/llvm
+export WINSDK_ROOT=/path/to/windows-sysroot
+```
+
+The build consumes headers and libraries; it does not require a particular
+installer or a runtime-DLL packaging layout.
+
+```bash
+iree-bazel-build --config=windows-x86_64 //tools:iree-dump-cpuinfo
+iree-bazel-build --config=windows-x86_64 -c dbg \
+  //runtime/src/iree/base/testing:dynamic_library_test
+iree-bazel-build --config=windows-x86_64 -c opt //tools:iree-dump-cpuinfo
+```
+
+Debug and fastbuild outputs include PDBs. Cross-built DLLs declare exports with
+`__declspec(dllexport)` or a `win_def_file`; the cross toolchain disables Bazel's
+Windows-only automatic export extractor. Native Windows retains that capability.
+The default CRT is dynamic (`/MD`, or `/MDd` in debug). Execution requires the
+corresponding Windows runtime DLLs, installed on the Windows machine or deployed
+beside the executable. `--features=static_link_msvcrt` selects `/MT` or `/MTd`
+when a consumer requires a static CRT.
+
+For cross-built AddressSanitizer targets, add `--config=asan` and set
+`WINDOWS_COMPILER_RT_ROOT` (or `--repo_env=WINDOWS_COMPILER_RT_ROOT=...`) to the
+`lib/clang/<version>/lib/windows` directory from a Windows LLVM distribution
+matching the Linux compiler. It must contain:
+
+- `clang_rt.asan_dynamic-x86_64.dll`
+- `clang_rt.asan_dynamic-x86_64.lib`
+- `clang_rt.asan_dynamic_runtime_thunk-x86_64.lib`
+- `clang_rt.asan_static_runtime_thunk-x86_64.lib`
+
+The SDK's `VC/Tools/MSVC/<version>/lib/x64` directory must also contain
+`stl_asan.lib` for instrumented C++ standard library containers. Microsoft ships
+it in the matching Visual Studio ASAN component; xwin's desktop CRT package may
+omit it. Native Windows obtains sanitizer artifacts from the selected LLVM or
+Visual Studio installation automatically. Both dynamic and static CRT builds
+deploy the sanitizer DLL beside each instrumented executable. Bazel supplies
+these runtimes to library and executable link actions, including third-party
+`cc_library`, `cc_binary`, and `cc_test` targets.
+
+### macOS targets
+
+Native builds use the Xcode or Command Line Tools selected by `xcode-select`
+or `DEVELOPER_DIR`. They ignore the Linux cross-toolchain environment variables.
+Linux builds use Clang, `ld64.lld`, and `llvm-libtool-darwin` from `LLVM_ROOT`.
+Both paths support C, C++, Objective-C, Objective-C++, static libraries, and
+Mach-O executables and dylibs.
+The default minimum deployment version is macOS 11.0, independent of the SDK
+version; the `macos_toolchain_repository` declaration owns that policy.
+
+Export an SDK on a Mac with Xcode or Command Line Tools installed:
+
+```bash
+python3 build_tools/macos/export_sdk.py --output macos-sdk.tar.gz
+```
+
+The archive preserves framework aliases and includes the matching libc++
+headers, including Xcode versions that store them outside the SDK. Transfer
+and unpack it into a versioned local installation directory on Linux, then set:
+
+```bash
+export LLVM_ROOT=/path/to/llvm
+export MACOS_SDK_ROOT=/path/to/macos-sdk/MacOSX.sdk
+iree-bazel-build --config=macos-arm64 //tools:iree-dump-cpuinfo
+iree-bazel-build --config=macos-x86_64 -c opt \
+  //runtime/src/iree/base/testing:dynamic_library_test
+```
+
+These paths can also be supplied with `--repo_env=LLVM_ROOT=...` and
+`--repo_env=MACOS_SDK_ROOT=...`.
+
+Framework consumers use ordinary dependencies such as
+`@iree_macos_toolchain//:Foundation` and `@iree_macos_toolchain//:Metal`.
+These provide public headers and framework link interfaces for the selected SDK.
+`objc_library` from `@rules_cc//cc:objc_library.bzl` handles `.m` and `.mm`
+sources, including ARC; its `CcInfo` also works with normal C/C++ rules.
+Framework dependencies carry the SDK files as well as link flags, so consumers
+do not need separate `sdk_frameworks` entries. The repository currently exposes
+CoreFoundation, CoreGraphics, Foundation, and Metal. Adding another framework
+to its explicit framework list inventories that framework's dependency closure.
+
+Compiler inputs include system headers and Clang resource headers. Framework
+headers enter through their dependencies; linker inputs include the SDK stubs
+actually opened by the selected linker, including re-exports. The full SDK and
+LLVM installation are not compiler or linker inputs. Both native and cross
+macOS actions use paths relative to the execution root, and the tool projection
+includes non-system loader libraries.
+
+The integration test embeds MSL with a host-built generator, compiles C and both
+Objective-C language modes, and dispatches and verifies a Metal compute kernel:
+
+```bash
+# On Linux, build and transfer the executable to a Mac for execution.
+iree-bazel-build --config=macos-arm64 //build_tools/macos/tests:metal_test
+
+# On a Mac with a Metal device, build and execute natively.
+iree-bazel-test //build_tools/macos/tests:metal_test
+```
+
+Metal compiles this source through its runtime API; no offline Apple shader
+compiler is required. Command-line programs using `MTLCreateSystemDefaultDevice`
+also link CoreGraphics, as required by
+[Apple's API contract](https://developer.apple.com/documentation/metal/mtlcreatesystemdefaultdevice%28%29?language=objc).
+Metal compute execution works over SSH without a desktop login.
+
+The toolchain adds `@loader_path` to the runtime library search path so deployed
+dylibs can sit beside their consumer. Preserve the library names in the
+consumer's load commands (`llvm-otool -L`), including Bazel's `_solib` names.
+Debug builds retain object debug information; LLVM's `dsymutil` can collect it
+into a `.dSYM` bundle before deployment.
+
+Native AddressSanitizer uses the selected Xcode runtime with `--config=asan`.
+For Linux cross builds, `MACOS_COMPILER_RT_ROOT` can supply the matching LLVM
+`lib/clang/<version>/lib/darwin` directory, including
+`libclang_rt.asan_osx_dynamic.dylib`. The runtime must match the compiler and
+support the destination architecture; the SDK itself does not provide it.
+Missing sanitizer artifacts fail during analysis. Bazel includes the runtime
+in native test runfiles; deploy the dylib beside cross-built executables.
+
+### Wrapper arguments
+
 Put wrapper execution and tool-environment options before the build-system
 command:
 
@@ -594,9 +780,10 @@ union produced by joining the selected CTest names with the validated
 
 Windows builds require an x64 MSVC ABI environment even when `clang-cl` is the
 host compiler. Install Python 3.12, Visual Studio 2022 Build Tools with the x64
-C++ tools and a Windows SDK, and Ninja. Install LLVM separately when building
-with `clang-cl`. The CI CMake version is 3.31.6; using that version locally
-removes an otherwise unhelpful source of generator differences.
+C++ tools and a Windows SDK, and Git for Windows. Bazel uses the Bash supplied
+by Git for Windows; the developer wrapper discovers it automatically. The
+managed developer environment installs Ninja and the CI-pinned CMake 3.31.6.
+Install LLVM separately when building with `clang-cl`.
 
 Start from an x64 Visual Studio developer shell so `INCLUDE`, `LIB`, the SDK
 tools, and the MSVC linker are available. Git for Windows also ships a Unix
@@ -608,13 +795,18 @@ where.exe link
 ```
 
 The first `link.exe` must be the MSVC linker, not Git's `usr\bin\link.exe`.
-Create the repository tool environment and add the CI-pinned CMake plus Ninja:
+Create the repository tool environment and check it:
 
 ```powershell
 python dev.py cmake setup --venv
-.\.venv\Scripts\python.exe -m pip install --upgrade cmake==3.31.6 ninja
 python dev.py cmake doctor
 ```
+
+Setup, configure, build, test, and doctor also work from an exported source
+snapshot. Setup and doctor omit Git-specific checks when `.git` is absent;
+installing hooks and running Git-based presubmit require a checkout. This lets
+a Windows build host consume source synchronized from another machine while
+Git operations remain on the source machine.
 
 Keep Windows build trees short and keep one tree per compiler. The `C:\b` CMake
 trees below remain within the legacy Win32 path limit and do not require the
@@ -662,9 +854,10 @@ python dev.py bazel build `
   //loom/binding/c:loomc
 ```
 
-Use the explicit MSVC lane when checking both host compilers. It clears the
-clang-cl execution-platform selection while preserving the same configured
-feature and dependency graph:
+Use `--config=windows-msvc` when checking the MSVC compiler. It changes the
+Windows compiler choice while preserving the configured feature and dependency
+graph. `--config=windows-clang-cl` explicitly selects the default compiler.
+Neither native command needs `--config=windows-x86_64`:
 
 ```powershell
 python dev.py bazel build `

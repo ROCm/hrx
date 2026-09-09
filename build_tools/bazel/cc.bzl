@@ -128,7 +128,7 @@ def _iree_cc_binary_impl(
         srcs = srcs,
         hdrs = None,
         textual_hdrs = None,
-        deps = cc_opts.iree_code_link_dependencies(deps),
+        deps = deps,
         data = data,
         copts = copts,
         conlyopts = conlyopts,

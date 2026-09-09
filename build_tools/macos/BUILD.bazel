@@ -1,0 +1,16 @@
+# Copyright 2026 The IREE Authors
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+# Bazel toolchain configuration has no CMake target surface.
+# bazel-to-cmake: skip
+
+load(":toolchain.bzl", "macos_toolchains")
+
+package(default_visibility = ["//visibility:public"])
+
+macos_toolchains()
+
+exports_files([
+    "sdk_metadata.py",
+    "toolchain.bzl",
+])

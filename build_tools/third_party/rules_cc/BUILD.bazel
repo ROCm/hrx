@@ -8,5 +8,6 @@
 # This package exports patches applied to the Bazel rules_cc module.
 
 exports_files([
-    "clang_cl_sanitizer_resources.patch",
+    "sanitizer_debug_info.patch",
+    "windows_toolchain.patch",
 ])

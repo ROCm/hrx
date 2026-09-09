@@ -12,12 +12,16 @@ bazel_dep(name = "rules_cc", version = "0.2.21")
 bazel_dep(name = "rules_python", version = "2.1.0")
 bazel_dep(name = "rules_shell", version = "0.6.1")
 
-# The Windows clang-cl toolchain must expose compiler-owned sanitizer files as
-# both dependency-scanner inputs and executable runtime dependencies.
+# Windows toolchains expose compiler-owned sanitizer artifacts and declare
+# whether the linker supports Bazel's automatic DLL export helper.
+# Sanitizer debug information uses compiler-specific feature flags on all hosts.
 single_version_override(
     module_name = "rules_cc",
     patch_strip = 1,
-    patches = ["//build_tools/third_party/rules_cc:clang_cl_sanitizer_resources.patch"],
+    patches = [
+        "//build_tools/third_party/rules_cc:sanitizer_debug_info.patch",
+        "//build_tools/third_party/rules_cc:windows_toolchain.patch",
+    ],
     version = "0.2.21",
 )
 
@@ -28,6 +32,24 @@ cc_configure = use_extension(
     "cc_configure_extension",
 )
 use_repo(cc_configure, "local_config_cc")
+
+windows_toolchain_repository = use_repo_rule(
+    "//build_tools/windows:toolchain_repository.bzl",
+    "windows_toolchain_repository",
+)
+
+windows_toolchain_repository(name = "iree_windows_toolchain")
+
+register_toolchains("//build_tools/windows:all")
+
+macos_toolchain_repository = use_repo_rule(
+    "//build_tools/macos:toolchain_repository.bzl",
+    "macos_toolchain_repository",
+)
+
+macos_toolchain_repository(name = "iree_macos_toolchain")
+
+register_toolchains("//build_tools/macos:all")
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 python.defaults(python_version = "3.12")
