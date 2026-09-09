@@ -119,25 +119,6 @@ iree_status_t AmdgpuQueueExecutionResourceTest::ObserveExecutionUnitIds(
   return iree_ok_status();
 }
 
-static std::vector<uint32_t> EligibleGfx942ExecutionUnitIds(
-    const iree_hal_queue_family_spec_t* family_spec,
-    const std::vector<iree_hal_queue_execution_resource_ordinal_t>&
-        resource_ordinals) {
-  std::vector<uint32_t> expected_ids;
-  expected_ids.reserve(resource_ordinals.size());
-  for (iree_hal_queue_execution_resource_ordinal_t resource_ordinal :
-       resource_ordinals) {
-    const uint32_t execution_unit =
-        family_spec->execution_resources[resource_ordinal]
-            .first_execution_unit_ordinal;
-    const uint32_t xcc_id = execution_unit % 8u;
-    const uint32_t shader_engine_id = execution_unit / 8u;
-    expected_ids.push_back((xcc_id << 6) | (shader_engine_id << 4));
-  }
-  std::sort(expected_ids.begin(), expected_ids.end());
-  return expected_ids;
-}
-
 TEST_P(AmdgpuQueueExecutionResourceTest,
        SelectedResourcesConstrainPhysicalExecution) {
   std::vector<iree_hal_queue_execution_resource_ordinal_t> first_resources(
@@ -235,18 +216,22 @@ TEST_P(AmdgpuQueueExecutionResourceTest,
   IREE_ASSERT_OK(ObserveExecutionUnitIds(second_queue, workgroup_count,
                                          workgroup_size, &second_observations));
 
-  const std::vector<uint32_t> first_eligible_ids =
-      EligibleGfx942ExecutionUnitIds(family_spec_, first_resources);
-  const std::vector<uint32_t> second_eligible_ids =
-      EligibleGfx942ExecutionUnitIds(family_spec_, second_resources);
-  // A queue mask constrains eligible execution units; it does not require the
-  // scheduler to visit every eligible unit during a finite dispatch.
-  EXPECT_TRUE(
-      std::includes(first_eligible_ids.begin(), first_eligible_ids.end(),
-                    first_observations.begin(), first_observations.end()));
-  EXPECT_TRUE(
-      std::includes(second_eligible_ids.begin(), second_eligible_ids.end(),
-                    second_observations.begin(), second_observations.end()));
+  // Native mask ordinals identify active execution units, whose physical
+  // (XCC, SE, CU) identities vary when a device has harvested CUs. Each HAL
+  // resource above covers one active unit, so neither selection may execute on
+  // more physical units than it contains and disjoint selections must never
+  // execute on the same physical unit. A finite dispatch is not required to
+  // visit every eligible unit.
+  EXPECT_LE(first_observations.size(), first_resources.size());
+  EXPECT_LE(second_observations.size(), second_resources.size());
+  for (uint32_t first_observation : first_observations) {
+    EXPECT_FALSE(std::binary_search(second_observations.begin(),
+                                    second_observations.end(),
+                                    first_observation))
+        << "disjoint queue resource selections both executed on physical "
+           "unit "
+        << first_observation;
+  }
 }
 
 CTS_REGISTER_EXECUTABLE_TEST_SUITE(AmdgpuQueueExecutionResourceTest);

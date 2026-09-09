@@ -69,8 +69,8 @@ iree_status_t iree_hal_amdgpu_hsa_queue_create(
   }
   // The descriptor mask is not honored by all ROCr implementations exposing
   // hsa_amd_queue_create. Apply the mask through the dedicated queue operation
-  // while the queue remains private. hsa_amd_queue_cu_set_mask reports any
-  // device-wide reduction as a failure, preserving the exact HAL request.
+  // while the queue remains private. Any native rejection prevents the queue
+  // from being published through the HAL.
   // ROCr exposes one shared cooperative queue per agent, so never mutate its
   // mask; cooperative callers are restricted to the complete resource set.
   if (iree_status_is_ok(status) && !is_cooperative &&
