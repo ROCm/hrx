@@ -20,6 +20,9 @@
 namespace loom {
 namespace {
 
+static constexpr iree_hal_queue_priority_t kNormalQueuePriority =
+    IREE_HAL_QUEUE_PRIORITY_NORMAL;
+
 static const loom_amdgpu_target_info_t* LookupTarget(const char* name) {
   const loom_amdgpu_target_info_t* target = nullptr;
   IREE_CHECK_OK(loom_amdgpu_target_info_lookup_target(
@@ -114,6 +117,13 @@ static iree_status_t CreateAmdgpuExecutableDeviceSpec(
       /*.name=*/IREE_SV("dispatch"),
       /*.provisioned_queue_count=*/1,
       /*.priority_count=*/1,
+      /*.priorities=*/&kNormalQueuePriority,
+      /*.execution_unit_count=*/0,
+      /*.execution_resource_group_count=*/0,
+      /*.execution_resource_groups=*/nullptr,
+      /*.execution_resource_count=*/0,
+      /*.execution_resources=*/nullptr,
+      /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
       /*.timestamp_valid_bits=*/0,
       /*.timestamp_frequency_hz=*/0,
       /*.physical_device_affinity=*/1,
@@ -163,6 +173,13 @@ static iree_status_t CreateSingleAmdgpuExecutableDeviceSpec(
       /*.name=*/IREE_SV("dispatch"),
       /*.provisioned_queue_count=*/1,
       /*.priority_count=*/1,
+      /*.priorities=*/&kNormalQueuePriority,
+      /*.execution_unit_count=*/0,
+      /*.execution_resource_group_count=*/0,
+      /*.execution_resource_groups=*/nullptr,
+      /*.execution_resource_count=*/0,
+      /*.execution_resources=*/nullptr,
+      /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
       /*.timestamp_valid_bits=*/0,
       /*.timestamp_frequency_hz=*/0,
       /*.physical_device_affinity=*/1,
@@ -255,7 +272,10 @@ class AmdgpuDeviceProviderTest : public ::testing::Test {
   void InitializeDevice() {
     device_.device_spec = device_spec_.get();
     iree_hal_resource_initialize(&kFakeHalDeviceVtable, &device_.resource);
-    iree_hal_queue_family_initialize(/*ordinal=*/0, &dispatch_queue_family_);
+    const iree_hal_queue_family_spec_t* queue_family_spec =
+        &iree_hal_device_spec_queues(device_spec_.get())->families[0];
+    iree_hal_queue_family_initialize(/*ordinal=*/0, queue_family_spec,
+                                     &dispatch_queue_family_);
     dispatch_queue_.queue_family = &dispatch_queue_family_;
     runtime_.device = reinterpret_cast<iree_hal_device_t*>(&device_);
     runtime_.dispatch_queue = &dispatch_queue_;

@@ -31,7 +31,7 @@ static iree_async_frontier_entry_t E(iree_async_axis_t axis, uint64_t epoch) {
 
 // Test axes: simple sequential values.
 static iree_async_axis_t TestQueueAxis(uint8_t queue_index) {
-  return iree_async_axis_make_queue(1, 0, 0, queue_index);
+  return iree_async_axis_make_queue(1, 0, 0, queue_index, 0);
 }
 
 // Helper: builds a frontier in pre-allocated storage.

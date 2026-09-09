@@ -125,6 +125,11 @@ void iree_task_executor_trim(iree_task_executor_t* executor);
 iree_host_size_t iree_task_executor_worker_count(
     iree_task_executor_t* executor);
 
+// Returns the minimum local-memory capacity across all executor workers.
+// Returns zero when the executor has no workers.
+iree_host_size_t iree_task_executor_minimum_worker_local_memory_size(
+    iree_task_executor_t* executor);
+
 // Wakes up to |count| workers for newly available parallel work.
 void iree_task_executor_wake_workers(iree_task_executor_t* executor,
                                      int32_t count);

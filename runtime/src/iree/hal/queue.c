@@ -6,6 +6,8 @@
 
 #include "iree/hal/queue.h"
 
+#include <string.h>
+
 #include "iree/hal/buffer.h"
 #include "iree/hal/command_buffer.h"
 #include "iree/hal/detail.h"
@@ -21,17 +23,33 @@
 // iree_hal_queue_family_t
 //===----------------------------------------------------------------------===//
 
+IREE_API_EXPORT void iree_hal_queue_params_initialize(
+    iree_hal_queue_params_t* out_params) {
+  IREE_ASSERT_ARGUMENT(out_params);
+  memset(out_params, 0, sizeof(*out_params));
+  out_params->priority = IREE_HAL_QUEUE_PRIORITY_NORMAL;
+}
+
 IREE_API_EXPORT iree_hal_queue_family_ordinal_t
 iree_hal_queue_family_ordinal(const iree_hal_queue_family_t* queue_family) {
   IREE_ASSERT_ARGUMENT(queue_family);
   return queue_family->ordinal;
 }
 
+IREE_API_EXPORT const iree_hal_queue_family_spec_t* iree_hal_queue_family_spec(
+    const iree_hal_queue_family_t* queue_family) {
+  IREE_ASSERT_ARGUMENT(queue_family);
+  return queue_family->spec;
+}
+
 IREE_API_EXPORT void iree_hal_queue_family_initialize(
     iree_hal_queue_family_ordinal_t ordinal,
+    const iree_hal_queue_family_spec_t* spec,
     iree_hal_queue_family_t* out_queue_family) {
+  IREE_ASSERT_ARGUMENT(spec);
   IREE_ASSERT_ARGUMENT(out_queue_family);
   out_queue_family->ordinal = ordinal;
+  out_queue_family->spec = spec;
 }
 
 //===----------------------------------------------------------------------===//
@@ -44,6 +62,24 @@ IREE_API_EXPORT const iree_hal_queue_family_t* iree_hal_queue_family(
     const iree_hal_queue_t* queue) {
   IREE_ASSERT_ARGUMENT(queue);
   return queue->queue_family;
+}
+
+IREE_API_EXPORT iree_hal_queue_priority_t
+iree_hal_queue_priority(const iree_hal_queue_t* queue) {
+  IREE_ASSERT_ARGUMENT(queue);
+  return queue->priority;
+}
+
+IREE_API_EXPORT iree_hal_queue_feature_flags_t
+iree_hal_queue_features(const iree_hal_queue_t* queue) {
+  IREE_ASSERT_ARGUMENT(queue);
+  return queue->features;
+}
+
+IREE_API_EXPORT iree_hal_queue_execution_resource_list_t
+iree_hal_queue_execution_resources(const iree_hal_queue_t* queue) {
+  IREE_ASSERT_ARGUMENT(queue);
+  return queue->execution_resources;
 }
 
 static iree_status_t iree_hal_queue_validate_semaphore_list(
@@ -203,6 +239,66 @@ iree_hal_queue_host_call(iree_hal_queue_t* queue,
   return status;
 }
 
+IREE_API_EXPORT iree_status_t iree_hal_queue_query_dispatch_concurrency(
+    iree_hal_queue_t* queue, iree_hal_executable_t* executable,
+    iree_hal_executable_function_t function,
+    iree_hal_queue_dispatch_concurrency_params_t params,
+    iree_hal_queue_dispatch_concurrency_flags_t flags,
+    iree_hal_queue_dispatch_concurrency_t* out_concurrency) {
+  IREE_TRACE_ZONE_BEGIN(z0);
+  if (IREE_UNLIKELY(!queue)) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(IREE_STATUS_INVALID_ARGUMENT, "queue is null"));
+  } else if (IREE_UNLIKELY(!executable)) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                             "dispatch executable is null"));
+  } else if (IREE_UNLIKELY(!out_concurrency)) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                             "dispatch concurrency output is null"));
+  } else if (IREE_UNLIKELY(iree_hal_executable_queue_family(executable) !=
+                           iree_hal_queue_family(queue))) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(
+                IREE_STATUS_INVALID_ARGUMENT,
+                "executable queue family %u does not match query queue "
+                "family %u",
+                iree_hal_queue_family_ordinal(
+                    iree_hal_executable_queue_family(executable)),
+                iree_hal_queue_family_ordinal(iree_hal_queue_family(queue))));
+  } else if (IREE_UNLIKELY(params.workgroup_size[0] == 0 ||
+                           params.workgroup_size[1] == 0 ||
+                           params.workgroup_size[2] == 0)) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                             "dispatch concurrency workgroup dimensions must "
+                             "all be non-zero"));
+  } else if (IREE_UNLIKELY(flags !=
+                           IREE_HAL_QUEUE_DISPATCH_CONCURRENCY_FLAG_NONE)) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(
+                IREE_STATUS_INVALID_ARGUMENT,
+                "unsupported queue dispatch concurrency flags: 0x%016" PRIx64,
+                flags));
+  }
+
+  iree_hal_queue_dispatch_concurrency_t concurrency = {0};
+  iree_status_t status = _VTABLE_DISPATCH(queue, query_dispatch_concurrency)(
+      queue, executable, function, params, flags, &concurrency);
+  if (iree_status_is_ok(status) &&
+      IREE_UNLIKELY(concurrency.scheduling_domain_count == 0)) {
+    status = iree_make_status(
+        IREE_STATUS_FAILED_PRECONDITION,
+        "queue returned dispatch concurrency with no scheduling domains");
+  }
+  if (iree_status_is_ok(status)) {
+    *out_concurrency = concurrency;
+  }
+  IREE_TRACE_ZONE_END(z0);
+  return status;
+}
+
 IREE_API_EXPORT iree_status_t iree_hal_queue_dispatch(
     iree_hal_queue_t* queue,
     const iree_hal_semaphore_list_t wait_semaphore_list,
@@ -219,7 +315,8 @@ IREE_API_EXPORT iree_status_t iree_hal_queue_dispatch(
       IREE_HAL_DISPATCH_FLAG_DYNAMIC_INDIRECT_ARGUMENTS |
       IREE_HAL_DISPATCH_FLAG_STATIC_INDIRECT_ARGUMENTS |
       IREE_HAL_DISPATCH_FLAG_ALLOW_INLINE_EXECUTION |
-      IREE_HAL_DISPATCH_FLAG_BORROW_RESOURCE_LIFETIMES;
+      IREE_HAL_DISPATCH_FLAG_BORROW_RESOURCE_LIFETIMES |
+      IREE_HAL_DISPATCH_FLAG_COOPERATIVE;
   if (IREE_UNLIKELY(!queue)) {
     IREE_RETURN_AND_END_ZONE_IF_ERROR(
         z0, iree_make_status(IREE_STATUS_INVALID_ARGUMENT, "queue is null"));
@@ -255,6 +352,16 @@ IREE_API_EXPORT iree_status_t iree_hal_queue_dispatch(
         z0,
         iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                          "unsupported dispatch flags: 0x%016" PRIx64, flags));
+  }
+  if (IREE_UNLIKELY(
+          iree_any_bit_set(flags, IREE_HAL_DISPATCH_FLAG_COOPERATIVE) &&
+          !iree_any_bit_set(
+              iree_hal_queue_features(queue),
+              IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH))) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_make_status(
+                IREE_STATUS_FAILED_PRECONDITION,
+                "cooperative dispatch requires a cooperative-capable queue"));
   }
   iree_status_t status = _VTABLE_DISPATCH(queue, dispatch)(
       queue, wait_semaphore_list, signal_semaphore_list, executable, function,
@@ -1017,10 +1124,15 @@ IREE_API_EXPORT iree_status_t iree_hal_queue_write(
 
 IREE_API_EXPORT void iree_hal_queue_initialize(
     const iree_hal_queue_family_t* queue_family,
+    const iree_hal_queue_params_t* params,
     const iree_hal_queue_vtable_t* vtable, iree_hal_queue_t* out_queue) {
   IREE_ASSERT_ARGUMENT(queue_family);
+  IREE_ASSERT_ARGUMENT(params);
   IREE_ASSERT_ARGUMENT(vtable);
   IREE_ASSERT_ARGUMENT(out_queue);
   iree_hal_resource_initialize(vtable, &out_queue->resource);
   out_queue->queue_family = queue_family;
+  out_queue->priority = params->priority;
+  out_queue->features = params->features;
+  out_queue->execution_resources = params->execution_resources;
 }

@@ -836,6 +836,22 @@ iree_hal_amdgpu_select_pm4_timestamp_strategy(
   }
 }
 
+iree_hal_amdgpu_grid_sync_strategy_t iree_hal_amdgpu_select_grid_sync_strategy(
+    iree_hal_amdgpu_gfxip_version_t version) {
+  // Mirrors the cooperative-groups device library gate. GFX942 and GFX950
+  // avoid GWS, as do all supported GFX11 and GFX12 targets. Other GFX9 and
+  // GFX10 targets use hardware GWS.
+  if ((version.major == 9 && version.minor == 4 && version.stepping == 2) ||
+      (version.major == 9 && version.minor == 5 && version.stepping == 0) ||
+      version.major == 11 || version.major == 12) {
+    return IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_MEMORY;
+  }
+  if (version.major == 9 || version.major == 10) {
+    return IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_GWS;
+  }
+  return IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_NONE;
+}
+
 iree_hal_amdgpu_wait_barrier_strategy_t
 iree_hal_amdgpu_select_wait_barrier_strategy(
     iree_hal_amdgpu_vendor_packet_capability_flags_t

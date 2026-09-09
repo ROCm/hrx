@@ -8,9 +8,11 @@
 #define IREE_EXPERIMENTAL_STREAMING_INTERNAL_H_
 
 #include "common/event_timestamp_pool.h"
+#include "common/execution_resource.h"
 #include "common/fat_binary.h"
 #include "common/function_attributes.h"
 #include "common/hrx_bridge.h"
+#include "common/stream.h"
 #include "iree/async/frontier_tracker.h"
 #include "iree/async/util/proactor_pool.h"
 #include "iree/base/api.h"
@@ -31,6 +33,17 @@ typedef struct iree_hal_streaming_context_module_entry_t
     iree_hal_streaming_context_module_entry_t;
 typedef struct iree_hal_streaming_context_symbol_map_t
     iree_hal_streaming_context_symbol_map_t;
+
+// Timeline advanced by accepted operations in one binding scheduling domain.
+// The semaphore is owned by the containing object and |pending_value| is the
+// largest value an accepted queue operation will signal. Callers provide the
+// synchronization protecting |pending_value|.
+typedef struct iree_hal_streaming_operation_timeline_t {
+  // Timeline semaphore signaled by operations in the scheduling domain.
+  iree_hal_semaphore_t* semaphore;
+  // Largest value an accepted operation will signal.
+  uint64_t pending_value;
+} iree_hal_streaming_operation_timeline_t;
 typedef struct iree_hal_streaming_deferred_device_free_t
     iree_hal_streaming_deferred_device_free_t;
 typedef struct iree_hal_streaming_device_t iree_hal_streaming_device_t;
@@ -46,8 +59,6 @@ typedef struct iree_hal_streaming_graph_node_t iree_hal_streaming_graph_node_t;
 typedef struct iree_hal_streaming_module_t iree_hal_streaming_module_t;
 typedef struct iree_hal_streaming_module_registration_t
     iree_hal_streaming_module_registration_t;
-typedef struct iree_hal_streaming_stream_t iree_hal_streaming_stream_t;
-typedef struct iree_hal_streaming_symbol_t iree_hal_streaming_symbol_t;
 // async commit context removed (dead code, pool is now hrx_mem_pool_t).
 
 //===----------------------------------------------------------------------===//
@@ -277,8 +288,18 @@ struct iree_hal_streaming_context_t {
   // Number of allocated entries in |streams|.
   iree_host_size_t stream_capacity;
 
+  // Outstanding context wait timepoints inherited by newly registered
+  // streams. Immutable once published and guarded by |stream_list_mutex|.
+  iree_hal_fence_t* stream_wait_frontier;
+
   // Dedicated mutex for stream list access.
   iree_slim_mutex_t stream_list_mutex;
+
+  // Timeline covering context-wide event records submitted on behalf of this
+  // context and every binding scheduling domain layered over it.
+  iree_hal_streaming_operation_timeline_t event_record_timeline;
+  // Serializes event record submission and |event_record_timeline| updates.
+  iree_slim_mutex_t event_record_mutex;
 
   // Global context list node pointers for cleanup tracking.
   // These are used to link all contexts in a global list for proper cleanup.
@@ -348,6 +369,10 @@ typedef struct iree_hal_streaming_device_t {
   // shares internal representations. Accessed via hrx_device_hal().
   iree_hal_device_t* hal_device;
   iree_hal_device_info_t info;
+
+  // Immutable execution-resource sets interned for copied compatibility API
+  // values. Entries live until this device incarnation is deinitialized.
+  iree_hal_streaming_execution_resource_table_t execution_resource_table;
 
   // Device capabilities.
   uint32_t compute_capability_major;
@@ -517,9 +542,13 @@ typedef struct iree_hal_streaming_stream_t {
   uint64_t pending_value;    // Last value a submission has been accepted for.
   uint64_t completed_value;  // Last value we've verified as completed
 
-  // Provisioned hardware queue used by this stream. Borrowed from the device
-  // retained by |context| and valid while the context remains attached.
+  // Exact hardware queue retained while the stream remains attached to its
+  // context.
   iree_hal_queue_t* queue;
+
+  // Lazily acquired cooperative realization of |queue| retaining its exact
+  // family, priority, and execution-resource set. NULL until first use.
+  iree_hal_queue_t* cooperative_queue;
 
   // Event dependencies that establish safe cross-stream allocation reuse.
   iree_hal_streaming_memory_reuse_dependency_t* memory_reuse_dependencies;
@@ -685,9 +714,7 @@ typedef struct iree_hal_streaming_symbol_t {
   iree_hal_executable_t* executable;
   iree_hal_executable_export_ordinal_t export_ordinal;
 
-  // Function attributes (only valid for FUNCTION type).
-  iree_hal_occupancy_info_t occupancy_info;
-  // Cached generic facts and mutable compatibility limits.
+  // Cached generic facts and mutable compatibility limits for functions.
   iree_hal_streaming_function_attributes_t function_attributes;
 
   // Function parameter information used for argument packing and unpacking.
@@ -1024,33 +1051,6 @@ static inline iree_hal_buffer_ref_t iree_hal_streaming_convert_range_buffer_ref(
     iree_hal_streaming_buffer_ref_t ref, iree_device_size_t length) {
   return iree_hal_make_buffer_ref(ref.buffer->buffer, ref.offset, length);
 }
-
-//===----------------------------------------------------------------------===//
-// Dispatch types
-//===----------------------------------------------------------------------===//
-
-// Dispatch flags for kernel launches.
-typedef enum iree_hal_streaming_dispatch_flag_bits_e {
-  IREE_HAL_STREAMING_DISPATCH_FLAG_NONE = 0ull,
-  // Cooperative kernel launch.
-  IREE_HAL_STREAMING_DISPATCH_FLAG_COOPERATIVE = 1ull << 0,
-  // The parameters are an array of pointers to values.
-  IREE_HAL_STREAMING_DISPATCH_FLAG_ARGS_ARRAY = 1ull << 1,
-  // The parameter buffer is already packed in the kernel's native ABI format.
-  // The launch path preserves the byte image and does not rewrite reflected
-  // pointer slots into HAL bindings.
-  IREE_HAL_STREAMING_DISPATCH_FLAG_PRE_PACKED = 1ull << 2,
-} iree_hal_streaming_dispatch_flags_t;
-
-// Dispatch parameters for kernel launches.
-typedef struct iree_hal_streaming_dispatch_params_t {
-  uint32_t grid_dim[3];
-  uint32_t block_dim[3];
-  uint32_t shared_memory_bytes;
-  void* buffer;
-  size_t buffer_size;  // Size of the buffer in bytes (for native kernels)
-  iree_hal_streaming_dispatch_flags_t flags;
-} iree_hal_streaming_dispatch_params_t;
 
 //===----------------------------------------------------------------------===//
 // Graph types
@@ -1399,6 +1399,13 @@ iree_status_t iree_hal_streaming_device_count(iree_host_size_t* out_count);
 iree_hal_streaming_device_t* iree_hal_streaming_device_entry(
     iree_hal_streaming_device_ordinal_t ordinal);
 
+// Selects the borrowed provisioned queue defining the device's primary
+// compatibility execution domain. Dynamic domains acquire queues from the same
+// family. |out_queue| is unchanged on failure.
+// Synchronization: none (queries immutable device facts).
+iree_status_t iree_hal_streaming_device_select_primary_queue(
+    iree_hal_streaming_device_t* device, iree_hal_queue_t** out_queue);
+
 // Synchronization: none (queries device properties).
 iree_status_t iree_hal_streaming_device_name(
     iree_hal_streaming_device_ordinal_t ordinal, char* name,
@@ -1445,17 +1452,17 @@ iree_status_t iree_hal_streaming_device_get_or_create_primary_context(
     iree_hal_streaming_device_t* device,
     iree_hal_streaming_context_t** out_context);
 
-// Retains the primary context, creating it if necessary.
-// Increments device-level reference count.
-// Returns the retained context.
+// Retains the primary context, creating it if necessary, and increments its
+// device-level usage count. The caller must balance the returned owning
+// reference with iree_hal_streaming_device_release_primary_context.
+// |out_context| is unchanged on failure.
 // Synchronization: thread-safe (serializes initialization and retention).
 iree_status_t iree_hal_streaming_device_retain_primary_context(
     iree_hal_streaming_device_t* device,
     iree_hal_streaming_context_t** out_context);
 
-// Releases the primary context.
-// Decrements device-level reference count.
-// Destroys context when count reaches 0.
+// Releases one primary-context reference and decrements its device-level usage
+// count. Destroys the device-owned context when the count reaches zero.
 // Synchronization: context (waits for idle when destroying).
 iree_status_t iree_hal_streaming_device_release_primary_context(
     iree_hal_streaming_device_t* device);
@@ -1464,58 +1471,6 @@ iree_status_t iree_hal_streaming_device_release_primary_context(
 iree_status_t iree_hal_streaming_device_set_primary_context_flags(
     iree_hal_streaming_device_ordinal_t device_ordinal,
     const iree_hal_streaming_context_flags_t* flags);
-
-// Synchronization: none (queries kernel occupancy).
-iree_status_t iree_hal_streaming_calculate_max_active_blocks_per_multiprocessor(
-    iree_hal_streaming_device_t* device, iree_hal_streaming_symbol_t* symbol,
-    uint32_t block_size, uint32_t dynamic_shared_mem_size,
-    uint32_t* out_max_blocks);
-
-// Callback type for dynamic shared memory size calculation.
-// This callback is invoked during occupancy calculation to determine how much
-// dynamic shared memory a kernel needs for a specific block size.
-//
-// Parameters:
-//   block_size: The number of threads per block being tested.
-//   user_data: Optional user-provided context passed through from the caller.
-//
-// Returns:
-//   The number of bytes of dynamic shared memory required for the given block
-//   size.
-//
-// Example implementation for a matrix multiplication kernel that uses shared
-// memory based on tile size derived from block dimensions:
-// ```c
-// uint32_t matmul_dynamic_smem_callback(uint32_t block_size, void* user_data) {
-//   // Assume square blocks (e.g., 16x16 = 256 threads)
-//   uint32_t tile_size = (uint32_t)sqrt(block_size);
-//   // Need shared memory for two tiles (A and B matrices)
-//   return 2 * tile_size * tile_size * sizeof(float);
-// }
-// ```
-typedef uint32_t (*iree_hal_streaming_block_to_dynamic_smem_fn_t)(
-    uint32_t block_size);
-
-// Calculates optimal block size for a kernel with optional dynamic shared
-// memory callback. If smem_callback is NULL, dynamic_shared_mem_size is used as
-// a fixed value. If smem_callback is provided, it will be called for each block
-// size tested to determine the dynamic shared memory requirement.
-// Synchronization: none (queries kernel occupancy).
-iree_status_t iree_hal_streaming_calculate_optimal_block_size(
-    iree_hal_streaming_device_t* device, iree_hal_streaming_symbol_t* symbol,
-    uint32_t dynamic_shared_mem_size,
-    iree_hal_streaming_block_to_dynamic_smem_fn_t dynamic_shared_mem_callback,
-    uint32_t block_size_limit, uint32_t* out_block_size,
-    uint32_t* out_min_grid_size);
-
-// Returns the maximum number of blocks that can be launched for a cooperative
-// kernel on the device. If the device does not support cooperative launch,
-// returns OK with out_max_blocks set to 0.
-// Synchronization: none (queries kernel occupancy).
-iree_status_t iree_hal_streaming_calculate_max_cooperative_blocks(
-    iree_hal_streaming_device_t* device, iree_hal_streaming_symbol_t* symbol,
-    uint32_t block_size, uint32_t dynamic_shared_mem_size,
-    uint32_t* out_max_blocks);
 
 //===----------------------------------------------------------------------===//
 // Context management
@@ -1610,10 +1565,27 @@ iree_status_t iree_hal_streaming_context_disable_peer_access(
 // zeroes the count under the list mutex and then walks the emptied extent and
 // frees the array without holding it. A registration landing in that window
 // writes into the array that walk is reading and about to free, and the
-// reference it takes for the list outlives both.
+// reference it takes for the list outlives both. Any outstanding context-wide
+// event waits are appended to |stream| before the call succeeds. A failure
+// leaves the stream unregistered.
 // Synchronization: thread-safe internal locking.
 iree_status_t iree_hal_streaming_context_register_stream(
     iree_hal_streaming_context_t* context, iree_hal_streaming_stream_t* stream);
+
+// Takes a retained snapshot of all streams currently registered with
+// |context|. The caller must release the snapshot with
+// iree_hal_streaming_context_release_stream_snapshot. Both outputs are
+// unchanged on failure.
+// Synchronization: thread-safe internal locking.
+iree_status_t iree_hal_streaming_context_snapshot_streams(
+    iree_hal_streaming_context_t* context,
+    iree_hal_streaming_stream_t*** out_streams,
+    iree_host_size_t* out_stream_count);
+
+// Releases every retained stream in |streams| and frees the snapshot storage.
+void iree_hal_streaming_context_release_stream_snapshot(
+    iree_hal_streaming_context_t* context,
+    iree_hal_streaming_stream_t** streams, iree_host_size_t stream_count);
 
 // Removes a registered stream and releases the stream-list reference. The
 // stream's context pointer remains valid until its final release because every
@@ -1623,6 +1595,30 @@ iree_status_t iree_hal_streaming_context_register_stream(
 // Synchronization: thread-safe internal locking.
 void iree_hal_streaming_context_unregister_stream(
     iree_hal_streaming_context_t* context, iree_hal_streaming_stream_t* stream);
+
+// Extends immutable |previous_frontier| with the semaphore point
+// (|semaphore|, |value|), pruning points that have already completed.
+// |out_frontier| is unchanged on failure.
+iree_status_t iree_hal_streaming_wait_frontier_extend(
+    iree_hal_fence_t* previous_frontier, iree_hal_semaphore_t* semaphore,
+    uint64_t value, iree_allocator_t host_allocator,
+    iree_hal_fence_t** out_frontier);
+
+// Records |event| after the captured tails of all streams currently registered
+// with |context|. Each stream is flushed before its tail is captured and the
+// fan-in record is submitted directly to the context's primary queue. The
+// event must have been created by |context|.
+iree_status_t iree_hal_streaming_context_record_event(
+    iree_hal_streaming_context_t* context, iree_hal_streaming_event_t* event);
+
+// Orders all current and future streams registered with |context| after the
+// point currently recorded on |event|. Current streams receive device-side
+// barriers and later registrations inherit an immutable pending frontier; the
+// call does not wait for host-visible completion. Events from other contexts
+// and devices are accepted when the destination queues support their
+// semaphores.
+iree_status_t iree_hal_streaming_context_wait_event(
+    iree_hal_streaming_context_t* context, iree_hal_streaming_event_t* event);
 
 iree_status_t iree_hal_streaming_context_allocate_capture_id(
     iree_hal_streaming_context_t* context, unsigned long long* out_capture_id);
@@ -1646,8 +1642,15 @@ iree_status_t iree_hal_streaming_context_flush(
 iree_status_t iree_hal_streaming_context_flush_all(void);
 
 // Synchronization: all streams (blocks until all streams idle).
-// This flushes and waits for all streams on the device.
+// This flushes and waits for all streams and context-wide event records on the
+// device.
 iree_status_t iree_hal_streaming_context_synchronize(
+    iree_hal_streaming_context_t* context);
+
+// Waits for every context-wide event record accepted before this call's
+// internal timeline snapshot. Used by binding scheduling domains whose stream
+// membership differs from the common context while sharing its primary scope.
+iree_status_t iree_hal_streaming_context_synchronize_event_records(
     iree_hal_streaming_context_t* context);
 
 // Synchronizes streams that participate in legacy default stream ordering.
@@ -1735,9 +1738,11 @@ iree_status_t iree_hal_streaming_module_global(
 // Stream management
 //===----------------------------------------------------------------------===//
 
+// Creates a stream that submits through the exact hardware |queue|. The stream
+// retains the queue until it is detached from |context|.
 // Synchronization: none (creates new stream).
 iree_status_t iree_hal_streaming_stream_create(
-    iree_hal_streaming_context_t* context,
+    iree_hal_streaming_context_t* context, iree_hal_queue_t* queue,
     iree_hal_streaming_stream_flags_t flags, int priority,
     iree_allocator_t host_allocator, iree_hal_streaming_stream_t** out_stream);
 
@@ -1791,12 +1796,6 @@ bool iree_hal_streaming_stream_has_memory_reuse_dependency(
 //===----------------------------------------------------------------------===//
 // Execution control
 //===----------------------------------------------------------------------===//
-
-// Synchronization: none (enqueues kernel launch, non-blocking).
-iree_status_t iree_hal_streaming_launch_kernel(
-    iree_hal_streaming_symbol_t* symbol,
-    const iree_hal_streaming_dispatch_params_t* params,
-    iree_hal_streaming_stream_t* stream);
 
 // Launches a host function on the stream.
 // The function will be called with user_data when the stream reaches this
@@ -1905,18 +1904,30 @@ IREE_MUST_USE_RESULT iree_hal_streaming_graph_t*
 iree_hal_streaming_event_exchange_capture_graph(
     iree_hal_streaming_event_t* event, iree_hal_streaming_graph_t* graph);
 
-// Enqueues |event|'s record on |stream|'s queue at the point reached once
+// Records |event| after the current tails of every stream in |streams|. Each
+// stream must belong to the context that created |event| and none may be
+// capturing. The caller keeps the borrowed stream references live for the
+// duration of the call. The fan-in record is submitted directly on the
+// context's primary queue and retains no single recording stream.
+//
+// All records advance the context's event-record timeline. When
+// |additional_timeline| is non-NULL the same submission also waits on and
+// advances it, and the caller must serialize access to it for the duration of
+// the call. Accepted submissions update both timelines before returning OK.
+// The caller must flush the context queue after a successful call.
+iree_status_t iree_hal_streaming_event_record_after_streams(
+    iree_hal_streaming_event_t* event,
+    iree_hal_streaming_stream_t* const* streams, iree_host_size_t stream_count,
+    iree_hal_streaming_operation_timeline_t* additional_timeline);
+
+// Enqueues |event|'s record on |queue| at the point reached once
 // |wait_semaphores| is satisfied, signaling |signal_semaphores| there.
 //
-// |stream| must belong to |event|'s context; a record on a stream of any other
-// context is refused with IREE_STATUS_INCOMPATIBLE. The record's tick slot
-// comes from the stream's context pool and outlives the record on the point
-// the event holds, and nothing the point names keeps that pool alive: only the
-// reference the event holds on its own context does. This is the streaming
-// layer's own enforcement of the rule, covering any caller that has not
-// already decided it; every path that reaches here from a HIP entry point has
-// the question settled before the call, so that a refusal costs a graph launch
-// no partial submission.
+// |context| must be the context that created |event|. The record's tick slot
+// comes from that context's pool and outlives the record on the point the event
+// holds, and nothing the point names keeps that pool alive: only the reference
+// the event holds on its own context does. This is the streaming layer's own
+// enforcement of the rule, covering callers that have not already decided it.
 //
 // |point| arrives describing the timeline point that record signals and owning
 // nothing. On success it additionally names the slot the device writes this
@@ -1929,22 +1940,17 @@ iree_hal_streaming_event_exchange_capture_graph(
 // captures a tick: a slot that cannot be obtained fails the record rather than
 // leaving it silently untimed. Every other record enqueues a plain barrier.
 //
-// Both record paths enqueue through here, so whatever their callers decided,
-// neither can forget the substitution, seat a cross-context record, leak a
-// slot on a rejected enqueue, or produce a point owning only part of what it
-// names.
+// All submitted record paths enqueue through here, so none can forget the
+// timestamp substitution, seat a cross-context record, leak a slot on a
+// rejected enqueue, or produce a point owning only part of what it names.
 //
 // Synchronization: pool (the context's timestamp pool mutex is held while a
 // tick slot is acquired, and covers the device allocation a pool growth
-// performs). Runs under whichever lock the calling record path holds - the
-// stream mutex, which is a precondition because the body reads
-// stream->context and stream->queue from under it, and on the launch
-// path the mutex of the executable the launch was issued on, which is the one
-// held for a record inside a child graph too - with the pool mutex nested
-// inside both.
+// performs). Stream and graph callers hold their submission mutexes across the
+// call; a context-wide record has no single stream mutex to hold.
 IREE_MUST_USE_RESULT iree_status_t iree_hal_streaming_event_enqueue_record(
-    iree_hal_streaming_event_t* event, iree_hal_streaming_stream_t* stream,
-    iree_hal_semaphore_list_t wait_semaphores,
+    iree_hal_streaming_event_t* event, iree_hal_streaming_context_t* context,
+    iree_hal_queue_t* queue, iree_hal_semaphore_list_t wait_semaphores,
     iree_hal_semaphore_list_t signal_semaphores,
     iree_hal_streaming_recorded_point_t* point);
 

@@ -901,7 +901,8 @@ static iree_status_t iree_hal_vulkan_logical_device_assign_topology_info(
   for (iree_host_size_t i = 0;
        i < device->queues.queue_count && iree_status_is_ok(status); ++i) {
     iree_async_axis_t queue_axis = iree_async_axis_make_queue(
-        session_epoch, machine_index, device_index, (uint8_t)i);
+        session_epoch, machine_index, device_index, (uint8_t)i,
+        /*queue_incarnation=*/0);
     status = iree_hal_vulkan_queue_assign_frontier(
         &device->queues.objects[i], frontier_tracker, queue_axis);
     if (iree_status_is_ok(status)) assigned_queue_count = i + 1;
@@ -1282,8 +1283,6 @@ static iree_status_t iree_hal_vulkan_logical_device_create(
     const iree_hal_vulkan_queue_family_plan_t* family_plan =
         &queue_inventory->families[i];
     iree_hal_vulkan_queue_family_t* family = &device->queues.families[i];
-    iree_hal_queue_family_initialize((iree_hal_queue_family_ordinal_t)i,
-                                     &family->base);
     family->native_family_index = family_plan->native_family_index;
     family->flags = family_plan->flags;
     family->timestamp_valid_bits = family_plan->timestamp_valid_bits;
@@ -1325,13 +1324,25 @@ static iree_status_t iree_hal_vulkan_logical_device_initialize_proactor(
 }
 
 static iree_status_t iree_hal_vulkan_logical_device_initialize_allocator(
-    iree_hal_vulkan_logical_device_t* device) {
+    iree_hal_vulkan_logical_device_t* device,
+    const iree_hal_vulkan_device_plan_t* device_plan) {
   IREE_ASSERT_ARGUMENT(device);
+  IREE_ASSERT_ARGUMENT(device_plan);
   iree_hal_vulkan_allocator_queue_family_t
       queue_families[IREE_HAL_MAX_QUEUE_FAMILIES];
   for (iree_host_size_t i = 0; i < device->queues.family_count; ++i) {
     queue_families[i].native_family_index =
         device->queues.families[i].native_family_index;
+  }
+  if (iree_hal_vulkan_queue_assignment_has_sparse_binding(
+          &device_plan->queue_assignment)) {
+    const iree_hal_vulkan_queue_selection_t* selection =
+        &device_plan->queue_assignment.sparse_binding;
+    const iree_hal_vulkan_queue_family_t* family =
+        &device->queues.families[selection->family_ordinal];
+    device->queues.sparse_binding =
+        &device->queues
+             .objects[family->queue_offset + selection->queue_ordinal];
   }
   return iree_hal_vulkan_allocator_create(
       (iree_hal_device_t*)device, &device->syms, device->logical_device,
@@ -1339,6 +1350,18 @@ static iree_status_t iree_hal_vulkan_logical_device_initialize_allocator(
       device->enabled_extensions, device->queues.family_count, queue_families,
       device->queues.sparse_binding, device->proactor, device->host_allocator,
       &device->device_allocator);
+}
+
+static void iree_hal_vulkan_logical_device_initialize_queue_families(
+    iree_hal_vulkan_logical_device_t* device) {
+  IREE_ASSERT_ARGUMENT(device);
+  const iree_hal_device_queue_spec_t* queue_spec =
+      iree_hal_device_spec_queues(device->device_spec);
+  for (iree_host_size_t i = 0; i < device->queues.family_count; ++i) {
+    iree_hal_queue_family_initialize((iree_hal_queue_family_ordinal_t)i,
+                                     &queue_spec->families[i],
+                                     &device->queues.families[i].base);
+  }
 }
 
 static iree_status_t iree_hal_vulkan_logical_device_initialize_device_spec(
@@ -1570,6 +1593,17 @@ static iree_status_t iree_hal_vulkan_logical_device_initialize_from_plan(
         device->enabled_features, &device->builtins);
   }
   if (iree_status_is_ok(status)) {
+    status = iree_hal_vulkan_logical_device_initialize_allocator(device,
+                                                                 device_plan);
+  }
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_vulkan_logical_device_initialize_device_spec(device,
+                                                                   device_plan);
+  }
+  if (iree_status_is_ok(status)) {
+    iree_hal_vulkan_logical_device_initialize_queue_families(device);
+  }
+  if (iree_status_is_ok(status)) {
     status =
         iree_hal_vulkan_logical_device_initialize_queues(device, device_plan);
   }
@@ -1577,14 +1611,7 @@ static iree_status_t iree_hal_vulkan_logical_device_initialize_from_plan(
     status = iree_hal_vulkan_logical_device_set_debug_names(device);
   }
   if (iree_status_is_ok(status)) {
-    status = iree_hal_vulkan_logical_device_initialize_allocator(device);
-  }
-  if (iree_status_is_ok(status)) {
     iree_hal_vulkan_logical_device_bind_queue_allocators(device);
-  }
-  if (iree_status_is_ok(status)) {
-    status = iree_hal_vulkan_logical_device_initialize_device_spec(device,
-                                                                   device_plan);
   }
   return status;
 }

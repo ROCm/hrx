@@ -23,7 +23,7 @@ extern "C" {
 #define IREE_HAL_REPLAY_FILE_VERSION_MAJOR 7u
 
 // Minor version of the IREE HAL replay file format.
-#define IREE_HAL_REPLAY_FILE_VERSION_MINOR 1u
+#define IREE_HAL_REPLAY_FILE_VERSION_MINOR 2u
 
 // Session-local object identifier used by replay records.
 typedef uint64_t iree_hal_replay_object_id_t;
@@ -89,6 +89,7 @@ enum iree_hal_replay_operation_code_e {
   IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_IMPORT_FILE = 10u,
   IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_CREATE_SEMAPHORE = 11u,
   IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_QUERY_QUEUE_POOL_BACKEND = 12u,
+  IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_ACQUIRE_QUEUE = 13u,
   IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_PROFILING_BEGIN = 24u,
   IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_PROFILING_FLUSH = 25u,
   IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_PROFILING_END = 26u,
@@ -194,6 +195,7 @@ enum iree_hal_replay_payload_type_e {
   IREE_HAL_REPLAY_PAYLOAD_TYPE_ALLOCATOR_VIRTUAL_MEMORY_UNMAP = 51u,
   IREE_HAL_REPLAY_PAYLOAD_TYPE_ALLOCATOR_VIRTUAL_MEMORY_PROTECT = 52u,
   IREE_HAL_REPLAY_PAYLOAD_TYPE_ALLOCATOR_VIRTUAL_MEMORY_ADVISE = 53u,
+  IREE_HAL_REPLAY_PAYLOAD_TYPE_DYNAMIC_QUEUE_OBJECT = 54u,
 };
 
 // Type of one operation in a captured exact-queue transfer transaction.
@@ -559,6 +561,21 @@ typedef struct iree_hal_replay_provisioned_queue_object_payload_t {
 } iree_hal_replay_provisioned_queue_object_payload_t;
 static_assert(sizeof(iree_hal_replay_provisioned_queue_object_payload_t) == 16,
               "provisioned queue replay payload must be 16 bytes");
+
+// Payload describing a dynamically acquired hardware queue followed by
+// family-local execution-resource ordinals.
+typedef struct iree_hal_replay_dynamic_queue_object_payload_t {
+  // Canonical queue family ordinal within the parent device.
+  uint32_t family_ordinal;
+  // Exact signed queue priority.
+  int32_t priority;
+  // Exact immutable queue feature bits.
+  uint64_t features;
+  // Number of uint32_t execution-resource ordinals following this header.
+  uint64_t execution_resource_count;
+} iree_hal_replay_dynamic_queue_object_payload_t;
+static_assert(sizeof(iree_hal_replay_dynamic_queue_object_payload_t) == 24,
+              "dynamic queue replay payload must be 24 bytes");
 
 // Payload describing a captured file object followed by file reference bytes.
 typedef struct iree_hal_replay_file_object_payload_t {

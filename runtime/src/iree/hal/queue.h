@@ -28,6 +28,7 @@ typedef struct iree_hal_pool_t iree_hal_pool_t;
 typedef struct iree_hal_pool_reservation_request_t
     iree_hal_pool_reservation_request_t;
 typedef struct iree_hal_semaphore_t iree_hal_semaphore_t;
+typedef struct iree_hal_queue_family_spec_t iree_hal_queue_family_spec_t;
 
 //===----------------------------------------------------------------------===//
 // Types and Enums
@@ -43,6 +44,58 @@ typedef uint32_t iree_hal_queue_family_ordinal_t;
 // table for the lifetime of a device. They are not intrinsic queue identities:
 // dynamically acquired queues do not have provisioned queue ordinals.
 typedef uint32_t iree_hal_queue_ordinal_t;
+
+// Canonical ordinal of one independently selectable execution resource within
+// a queue family.
+typedef uint32_t iree_hal_queue_execution_resource_ordinal_t;
+
+// Signed scheduling priority ordered from lower to higher priority.
+typedef int32_t iree_hal_queue_priority_t;
+
+// Canonical normal scheduling priority.
+#define IREE_HAL_QUEUE_PRIORITY_NORMAL ((iree_hal_queue_priority_t)0)
+
+// Immutable execution features of an exact queue.
+typedef uint64_t iree_hal_queue_feature_flags_t;
+enum iree_hal_queue_feature_flag_bits_e {
+  // No specialized queue features are enabled.
+  IREE_HAL_QUEUE_FEATURE_FLAG_NONE = 0,
+
+  // The queue accepts dispatches requiring cooperative grid synchronization.
+  IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH = 1ull << 0,
+};
+
+// Exact family-local execution-resource set.
+//
+// Ordinals are sorted and unique. An empty list selects every execution
+// resource advertised by the queue family. An explicitly enumerated complete
+// set has the same meaning and is canonicalized to the empty form during queue
+// acquisition. List storage is borrowed by queue acquisition calls and owned
+// by the queue implementation for an achieved queue realization.
+typedef struct iree_hal_queue_execution_resource_list_t {
+  // Number of canonical resource ordinals in |ordinals|.
+  iree_host_size_t count;
+
+  // Sorted unique family-local resource ordinals.
+  const iree_hal_queue_execution_resource_ordinal_t* ordinals;
+} iree_hal_queue_execution_resource_list_t;
+
+// Exact immutable properties requested or achieved by a hardware queue.
+typedef struct iree_hal_queue_params_t {
+  // Exact scheduling priority.
+  iree_hal_queue_priority_t priority;
+
+  // Exact queue feature bits.
+  iree_hal_queue_feature_flags_t features;
+
+  // Exact canonical execution-resource set.
+  iree_hal_queue_execution_resource_list_t execution_resources;
+} iree_hal_queue_params_t;
+
+// Initializes |out_params| to normal priority, no specialized features, and
+// the complete execution-resource set advertised by a queue family.
+IREE_API_EXPORT void iree_hal_queue_params_initialize(
+    iree_hal_queue_params_t* out_params);
 
 // A bitmap selecting queue families by their canonical ordinals.
 //
@@ -176,6 +229,40 @@ enum iree_hal_queue_execute_flag_bits_t {
   IREE_HAL_QUEUE_EXECUTE_FLAG_BORROW_BINDING_TABLE_LIFETIME = 1ull << 0,
 };
 
+// Bitfield controlling an exact-queue dispatch concurrency query.
+typedef uint64_t iree_hal_queue_dispatch_concurrency_flags_t;
+enum iree_hal_queue_dispatch_concurrency_flag_bits_t {
+  // Default dispatch concurrency behavior.
+  IREE_HAL_QUEUE_DISPATCH_CONCURRENCY_FLAG_NONE = 0,
+};
+
+// Exact dispatch configuration used to query queue concurrency.
+typedef struct iree_hal_queue_dispatch_concurrency_params_t {
+  // Exact non-zero workgroup dimensions being queried.
+  uint32_t workgroup_size[3];
+
+  // Additional workgroup-local memory required per workgroup, in bytes.
+  uint32_t dynamic_workgroup_local_memory;
+} iree_hal_queue_dispatch_concurrency_params_t;
+
+// Concurrent residency available to one dispatch on an exact queue.
+typedef struct iree_hal_queue_dispatch_concurrency_t {
+  // Number of homogeneous scheduling domains available to the dispatch.
+  uint32_t scheduling_domain_count;
+
+  // Maximum concurrently resident workgroups in each scheduling domain.
+  // May be zero when the configuration is valid but cannot become resident.
+  uint32_t maximum_concurrent_workgroup_count_per_domain;
+} iree_hal_queue_dispatch_concurrency_t;
+
+// Returns the total concurrent workgroup count across all scheduling domains.
+static inline uint64_t
+iree_hal_queue_dispatch_concurrency_total_workgroup_count(
+    iree_hal_queue_dispatch_concurrency_t concurrency) {
+  return (uint64_t)concurrency.scheduling_domain_count *
+         concurrency.maximum_concurrent_workgroup_count_per_domain;
+}
+
 // Bitfield specifying flags controlling a dispatch operation.
 typedef uint64_t iree_hal_dispatch_flags_t;
 enum iree_hal_dispatch_flag_bits_t {
@@ -258,6 +345,13 @@ enum iree_hal_dispatch_flag_bits_t {
   // is expressed by command buffer modes such as
   // IREE_HAL_COMMAND_BUFFER_MODE_UNRETAINED.
   IREE_HAL_DISPATCH_FLAG_BORROW_RESOURCE_LIFETIMES = 1ull << 6,
+
+  // Requires cooperative grid synchronization for this dispatch. The exact
+  // queue executing the operation must advertise
+  // IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH. Each execution receives
+  // independent synchronization state and may overlap other executions of the
+  // same command buffer.
+  IREE_HAL_DISPATCH_FLAG_COOPERATIVE = 1ull << 7,
 };
 
 // Returns true if the given dispatch uses indirect workgroup parameters.
@@ -531,6 +625,11 @@ typedef struct iree_hal_transfer_operation_t {
 IREE_API_EXPORT iree_hal_queue_family_ordinal_t
 iree_hal_queue_family_ordinal(const iree_hal_queue_family_t* queue_family);
 
+// Returns the immutable specification row describing |queue_family|.
+// The returned pointer is borrowed from the parent device specification.
+IREE_API_EXPORT const iree_hal_queue_family_spec_t* iree_hal_queue_family_spec(
+    const iree_hal_queue_family_t* queue_family);
+
 //===----------------------------------------------------------------------===//
 // iree_hal_queue_t
 //===----------------------------------------------------------------------===//
@@ -546,6 +645,19 @@ IREE_API_EXPORT void iree_hal_queue_release(iree_hal_queue_t* queue);
 // The returned pointer is borrowed from the parent device.
 IREE_API_EXPORT const iree_hal_queue_family_t* iree_hal_queue_family(
     const iree_hal_queue_t* queue);
+
+// Returns the immutable scheduling priority of |queue|.
+IREE_API_EXPORT iree_hal_queue_priority_t
+iree_hal_queue_priority(const iree_hal_queue_t* queue);
+
+// Returns the immutable execution features of |queue|.
+IREE_API_EXPORT iree_hal_queue_feature_flags_t
+iree_hal_queue_features(const iree_hal_queue_t* queue);
+
+// Returns the exact immutable execution-resource set of |queue|.
+// An empty list denotes every resource advertised by the queue family.
+IREE_API_EXPORT iree_hal_queue_execution_resource_list_t
+iree_hal_queue_execution_resources(const iree_hal_queue_t* queue);
 
 // Enqueues a semaphore barrier on the exact hardware |queue|.
 //
@@ -600,6 +712,33 @@ iree_hal_queue_host_call(iree_hal_queue_t* queue,
                          const iree_hal_semaphore_list_t signal_semaphore_list,
                          iree_hal_host_call_t call, const uint64_t args[4],
                          iree_hal_host_call_flags_t flags);
+
+// Queries the concurrent residency of one dispatch on the exact |queue|.
+//
+// The query is synchronous and read-only: it enqueues no work, establishes no
+// ordering, reserves no execution resources, and does not account for other
+// work executing concurrently. It reports the architectural concurrency of
+// the exact loaded |function| and |params| across the immutable execution
+// resources available to |queue|.
+// Dynamically backed resources such as private/scratch memory are excluded.
+//
+// Scheduling domains are homogeneous partitions chosen by the implementation
+// for this executable configuration. They have no stable identity, cannot be
+// selected by callers, and may differ between functions on the same queue.
+//
+// Every workgroup dimension in |params| must be non-zero. A configuration that
+// is otherwise valid but cannot make one workgroup resident returns success
+// with maximum_concurrent_workgroup_count_per_domain set to zero. An
+// implementation that cannot calculate an exact result returns
+// IREE_STATUS_UNIMPLEMENTED.
+//
+// |out_concurrency| is unchanged on failure.
+IREE_API_EXPORT iree_status_t iree_hal_queue_query_dispatch_concurrency(
+    iree_hal_queue_t* queue, iree_hal_executable_t* executable,
+    iree_hal_executable_function_t function,
+    iree_hal_queue_dispatch_concurrency_params_t params,
+    iree_hal_queue_dispatch_concurrency_flags_t flags,
+    iree_hal_queue_dispatch_concurrency_t* out_concurrency);
 
 // Enqueues a direct executable dispatch on the exact hardware |queue|.
 //
@@ -869,11 +1008,16 @@ IREE_API_EXPORT iree_status_t iree_hal_queue_write(
 struct iree_hal_queue_family_t {
   // Canonical ordinal of the queue family within its device.
   iree_hal_queue_family_ordinal_t ordinal;
+
+  // Exact immutable specification row. Borrowed from the parent device.
+  const iree_hal_queue_family_spec_t* spec;
 };
 
-// Initializes |out_queue_family| with its canonical |ordinal|.
+// Initializes |out_queue_family| with its canonical |ordinal| and exact
+// immutable device-specification row.
 IREE_API_EXPORT void iree_hal_queue_family_initialize(
     iree_hal_queue_family_ordinal_t ordinal,
+    const iree_hal_queue_family_spec_t* spec,
     iree_hal_queue_family_t* out_queue_family);
 
 //===----------------------------------------------------------------------===//
@@ -909,6 +1053,14 @@ typedef struct iree_hal_queue_vtable_t {
       const iree_hal_semaphore_list_t signal_semaphore_list,
       iree_hal_host_call_t call, const uint64_t args[4],
       iree_hal_host_call_flags_t flags);
+
+  // Queries the concurrent residency of one direct executable dispatch.
+  iree_status_t(IREE_API_PTR* query_dispatch_concurrency)(
+      iree_hal_queue_t* queue, iree_hal_executable_t* executable,
+      iree_hal_executable_function_t function,
+      iree_hal_queue_dispatch_concurrency_params_t params,
+      iree_hal_queue_dispatch_concurrency_flags_t flags,
+      iree_hal_queue_dispatch_concurrency_t* out_concurrency);
 
   // Enqueues a direct executable dispatch.
   iree_status_t(IREE_API_PTR* dispatch)(
@@ -1007,11 +1159,24 @@ struct iree_hal_queue_t {
 
   // Queue family containing this queue. Borrowed from the parent device.
   const iree_hal_queue_family_t* queue_family;
+
+  // Exact immutable scheduling priority.
+  iree_hal_queue_priority_t priority;
+
+  // Exact immutable execution features.
+  iree_hal_queue_feature_flags_t features;
+
+  // Exact immutable execution-resource set. Storage is owned by the queue
+  // implementation and must remain live until queue destruction.
+  iree_hal_queue_execution_resource_list_t execution_resources;
 };
 
-// Initializes |out_queue| with one owning reference.
+// Initializes |out_queue| with one owning reference and the exact immutable
+// properties in |params|. Any execution-resource list storage must remain live
+// until queue destruction.
 IREE_API_EXPORT void iree_hal_queue_initialize(
     const iree_hal_queue_family_t* queue_family,
+    const iree_hal_queue_params_t* params,
     const iree_hal_queue_vtable_t* vtable, iree_hal_queue_t* out_queue);
 
 // Destroys |queue| after its final reference is released.

@@ -93,7 +93,32 @@ iree_amdgpu_hal_cts_testdata(
     "testdata/command_buffer_dispatch_multi_workgroup_test.c"
     "testdata/command_buffer_dispatch_test.c"
     "testdata/executable_test.c"
+    "testdata/execution_queue_mask_test.c"
     "testdata/hostcall_buffer_test.c"
+  TESTONLY
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_amdgpu_hal_cts_testdata(
+  NAME
+    cooperative_testdata_amdgpu
+  TARGET
+    amdgcn-amd-amdhsa
+  TARGETS
+    ${IREE_HAL_AMDGPU_TARGETS}
+  TARGET_NAME
+    amdgpu_cooperative
+  IDENTIFIER
+    "iree_cts_cooperative_testdata_amdgpu"
+  BACKEND_NAME
+    "amdgpu"
+  TARGET_FAMILY
+    "amdgpu"
+  SRCS
+    "testdata/cooperative_dispatch_test.c"
+  SOURCE_FORMAT
+    hip
   TESTONLY
 )
 endif()
@@ -267,6 +292,69 @@ iree_cc_library(
   TESTONLY
   ALWAYSLINK
   PUBLIC
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_library(
+  NAME
+    queue_execution_resource_test
+  SRCS
+    "queue_execution_resource_test.cc"
+  DEPS
+    iree::hal
+    iree::hal::cts::util::test_base
+    iree::hal::drivers::amdgpu::target::identity
+    iree::testing::gtest
+  TESTONLY
+  ALWAYSLINK
+  PUBLIC
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_test(
+  NAME
+    queue_cooperative_dispatch_tests
+  SRCS
+    "${PROJECT_SOURCE_DIR}/runtime/src/iree/hal/cts/util/test_main.cc"
+  DEPS
+    ::backends
+    ::cooperative_testdata_amdgpu
+    iree::base::tooling::flags
+    iree::hal::cts::queue::queue_cooperative_dispatch_test
+    iree::hal::cts::util::registry
+    iree::hal::cts::util::test_base
+    iree::testing::gtest
+  LABELS
+    "iree-build-requirement=runtime.hal.amdgpu"
+    "iree-run-requirement=runtime.resource.amd_gpu"
+    "runtime-resource=amd-gpu"
+  RESOURCE_GROUP
+    iree-hal-drivers-amdgpu-tests
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_test(
+  NAME
+    queue_execution_resource_tests
+  SRCS
+    "${PROJECT_SOURCE_DIR}/runtime/src/iree/hal/cts/util/test_main.cc"
+  DEPS
+    ::backends
+    ::queue_execution_resource_test
+    ::testdata_amdgpu
+    iree::base::tooling::flags
+    iree::hal::cts::util::registry
+    iree::hal::cts::util::test_base
+    iree::testing::gtest
+  LABELS
+    "iree-build-requirement=runtime.hal.amdgpu"
+    "iree-run-requirement=runtime.resource.amd_gpu"
+    "runtime-resource=amd-gpu"
+  RESOURCE_GROUP
+    iree-hal-drivers-amdgpu-tests
 )
 endif()
 

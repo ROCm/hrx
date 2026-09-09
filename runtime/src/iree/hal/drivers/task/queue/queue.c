@@ -864,7 +864,7 @@ static iree_status_t iree_hal_task_queue_op_allocate(
   memset(operation, 0, sizeof(*operation));
   operation->type = type;
   memcpy(&operation->arena, &arena, sizeof(arena));
-  operation->scope = &queue->scope;
+  operation->scope = &queue->operation_scope;
   operation->frontier_tracker = queue->frontier_tracker;
   operation->axis = queue->axis;
   operation->epoch_counter = &queue->epoch;
@@ -2709,16 +2709,12 @@ static void iree_hal_task_queue_compute_item_release(
   iree_hal_task_queue_compute_item_slist_push(&queue->compute_free_pool, item);
 
   // Complete or fail the operation AFTER returning the item to the free pool.
-  // op_complete/op_fail signal semaphores and run scope_end on the shared
-  // queue->scope, which can wake a thread blocked on scope_wait_idle in
-  // iree_hal_task_queue_deinitialize. That thread is still gated on the
-  // queue's other scope references — in particular, the compute process
-  // scope_begin at queue initialization is only released by the compute
-  // process release callback after the last slot drainer exits — so the
-  // queue will not actually be freed until this worker unwinds back out of
-  // the compute slot. We still want the item back in the free pool first so
-  // that if the waiter does wake and immediately resubmit on the same queue
-  // (rather than tearing it down), the freshly-recycled item is available.
+  // op_complete/op_fail signal semaphores and run scope_end on
+  // queue->operation_scope, which may wake a thread waiting to begin process
+  // shutdown. The separate process_scope keeps the queue storage live until
+  // this worker unwinds from the compute slot. We still want the item back in
+  // the free pool first so that a waiter that resubmits instead of releasing
+  // the queue can use the freshly recycled item.
   if (iree_status_is_ok(processor_status)) {
     iree_hal_task_queue_op_complete(operation);
   } else {
@@ -3013,15 +3009,15 @@ static void iree_hal_task_queue_compute_item_cleanup(
 // At that point no worker can be inside processor_drain() or
 // compute_item_leave() for this queue, so this is the one safe place to
 // finalize any in-flight items and to release the compute process's
-// scope_begin claim on queue->scope.
+// scope_begin claim on queue->process_scope.
 //
 // scope_end is deferred to here (rather than to a completion_fn) because
 // completion_fn can fire on the first worker to observe termination while
 // other workers are still inside drain. Releasing the scope there would let
 // a thread blocked in iree_hal_task_queue_deinitialize / scope_wait_idle
 // wake up and free the queue out from under those still-draining workers.
-// The scope_end call at the bottom of this function is therefore required
-// to be the last access to |queue|.
+// After scope_end, only the separate release-callback count may be touched;
+// the destroying thread waits for that count before freeing queue storage.
 static void iree_hal_task_queue_compute_process_release(
     iree_task_process_t* process) {
   iree_hal_task_queue_t* queue = (iree_hal_task_queue_t*)process->user_data;
@@ -3073,7 +3069,7 @@ static void iree_hal_task_queue_compute_process_release(
   // End the scope for the compute process (paired with scope_begin at init).
   // After this call, scope_wait_idle may unblock; the process-release count
   // below is the final queue lifetime barrier for the callback itself.
-  iree_task_scope_end(&queue->scope);
+  iree_task_scope_end(&queue->process_scope);
   iree_atomic_fetch_sub(&queue->pending_process_release_count, 1,
                         iree_memory_order_release);
 }
@@ -3398,7 +3394,7 @@ static void iree_hal_task_queue_process_release(iree_task_process_t* process) {
                     iree_memory_order_release);
   iree_task_executor_schedule_process(queue->executor, &queue->compute_process);
 
-  iree_task_scope_end(&queue->scope);
+  iree_task_scope_end(&queue->process_scope);
   iree_atomic_fetch_sub(&queue->pending_process_release_count, 1,
                         iree_memory_order_release);
 }
@@ -3545,7 +3541,7 @@ static iree_status_t iree_hal_task_queue_submit_op_begin(
     iree_hal_task_queue_op_t** out_operation) {
   IREE_RETURN_IF_ERROR(iree_hal_task_queue_op_allocate(
       queue, type, signal_semaphores, out_operation));
-  iree_task_scope_begin(&queue->scope);
+  iree_task_scope_begin(&queue->operation_scope);
   return iree_ok_status();
 }
 
@@ -3598,36 +3594,34 @@ static iree_status_t iree_hal_task_queue_submit_op(
 static const iree_hal_queue_vtable_t iree_hal_task_queue_vtable;
 
 iree_status_t iree_hal_task_queue_initialize(
-    iree_string_view_t identifier, iree_hal_device_t* device,
-    const iree_hal_queue_family_t* queue_family,
-    iree_task_scope_flags_t scope_flags, iree_task_executor_t* executor,
-    iree_async_proactor_t* proactor,
-    iree_device_size_t inline_transfer_threshold,
-    iree_arena_block_pool_t* small_block_pool,
-    iree_arena_block_pool_t* large_block_pool,
-    iree_hal_allocator_t* device_allocator, iree_hal_task_queue_t* out_queue) {
+    const iree_hal_task_queue_create_params_t* params,
+    iree_hal_task_queue_t* out_queue) {
   IREE_TRACE_ZONE_BEGIN(z0);
-  IREE_TRACE_ZONE_APPEND_TEXT(z0, identifier.data, identifier.size);
+  IREE_TRACE_ZONE_APPEND_TEXT(z0, params->identifier.data,
+                              params->identifier.size);
 
   memset(out_queue, 0, sizeof(*out_queue));
 
-  iree_hal_queue_initialize(queue_family, &iree_hal_task_queue_vtable,
-                            &out_queue->base);
-  out_queue->device = device;
-  out_queue->executor = executor;
+  iree_hal_queue_initialize(params->queue_family, &params->queue_params,
+                            &iree_hal_task_queue_vtable, &out_queue->base);
+  out_queue->device = params->device;
+  out_queue->executor = params->executor;
   iree_task_executor_retain(out_queue->executor);
-  out_queue->proactor = proactor;
+  out_queue->proactor = params->proactor;
   iree_atomic_store(&out_queue->epoch, 0, iree_memory_order_relaxed);
   iree_atomic_store(&out_queue->shutdown_phase,
                     IREE_HAL_TASK_QUEUE_SHUTDOWN_PHASE_RUNNING,
                     iree_memory_order_relaxed);
-  out_queue->inline_transfer_threshold = inline_transfer_threshold;
-  out_queue->small_block_pool = small_block_pool;
-  out_queue->large_block_pool = large_block_pool;
-  out_queue->device_allocator = device_allocator;
+  out_queue->inline_transfer_threshold = params->inline_transfer_threshold;
+  out_queue->small_block_pool = params->small_block_pool;
+  out_queue->large_block_pool = params->large_block_pool;
+  out_queue->device_allocator = params->device_allocator;
   iree_hal_allocator_retain(out_queue->device_allocator);
 
-  iree_task_scope_initialize(identifier, scope_flags, &out_queue->scope);
+  iree_task_scope_initialize(params->identifier, params->scope_flags,
+                             &out_queue->operation_scope);
+  iree_task_scope_initialize(params->identifier, params->scope_flags,
+                             &out_queue->process_scope);
   iree_atomic_store(&out_queue->pending_process_release_count, 2,
                     iree_memory_order_relaxed);
 
@@ -3646,11 +3640,10 @@ iree_status_t iree_hal_task_queue_initialize(
   // release_fn so it fires after the owning worker has exited the drain stack.
   out_queue->process.release_fn = iree_hal_task_queue_process_release;
 
-  // The queue process participates in the scope so that scope_wait_idle
-  // blocks until the process has fully completed (no worker touching
-  // queue/device memory). The matching scope_end fires in the release callback
-  // after the owning worker has exited the drain stack.
-  iree_task_scope_begin(&out_queue->scope);
+  // The queue process participates in the process scope so shutdown blocks
+  // until the process has fully completed and its worker has exited the drain
+  // stack. The matching scope_end fires in the release callback.
+  iree_task_scope_begin(&out_queue->process_scope);
 
   // Initialize the compute process. It uses wake_budget > 1 with N equal to
   // the worker count. Not scheduled until the first recording is pushed to
@@ -3665,7 +3658,8 @@ iree_status_t iree_hal_task_queue_initialize(
   iree_task_process_initialize(
       iree_hal_task_queue_compute_process_drain,
       /*suspend_count=*/0,
-      /*wake_budget=*/(int32_t)iree_task_executor_worker_count(executor),
+      /*wake_budget=*/
+      (int32_t)iree_task_executor_worker_count(params->executor),
       &out_queue->compute_process);
   iree_task_process_set_flags(&out_queue->compute_process,
                               IREE_TASK_PROCESS_FLAG_COMPUTE_SLOT);
@@ -3677,7 +3671,7 @@ iree_status_t iree_hal_task_queue_initialize(
   // release_fn, which fires only after the last slot drainer exits.
   out_queue->compute_process.release_fn =
       iree_hal_task_queue_compute_process_release;
-  iree_task_scope_begin(&out_queue->scope);
+  iree_task_scope_begin(&out_queue->process_scope);
 
   // Initialize the compute pending and free pool lists.
   iree_hal_task_queue_compute_item_slist_initialize(
@@ -3688,12 +3682,14 @@ iree_status_t iree_hal_task_queue_initialize(
   // compute_current is NULL (no active recording) — memset handles this.
 
   // Cache worker count for item FAM sizing.
-  uint32_t worker_count = (uint32_t)iree_task_executor_worker_count(executor);
+  uint32_t worker_count =
+      (uint32_t)iree_task_executor_worker_count(params->executor);
   if (worker_count == 0) worker_count = 1;
   out_queue->compute_worker_count = worker_count;
 
   // Initialize the arena for item allocation from the large block pool.
-  iree_arena_initialize(large_block_pool, &out_queue->compute_item_arena);
+  iree_arena_initialize(params->large_block_pool,
+                        &out_queue->compute_item_arena);
 
   // Pre-allocate initial pool items.
   iree_status_t status = iree_ok_status();
@@ -3713,6 +3709,46 @@ iree_status_t iree_hal_task_queue_initialize(
   }
 
   IREE_TRACE_ZONE_END(z0);
+  return status;
+}
+
+iree_status_t iree_hal_task_queue_create(
+    const iree_hal_task_queue_create_params_t* params,
+    iree_hal_task_queue_release_slot_callback_t release_slot,
+    iree_allocator_t host_allocator, iree_hal_task_queue_t** out_queue) {
+  iree_host_size_t total_size = 0;
+  iree_host_size_t resource_ordinals_offset = 0;
+  IREE_RETURN_IF_ERROR(IREE_STRUCT_LAYOUT(
+      sizeof(iree_hal_task_queue_t), &total_size,
+      IREE_STRUCT_FIELD_ALIGNED(params->queue_params.execution_resources.count,
+                                iree_hal_queue_execution_resource_ordinal_t, 1,
+                                &resource_ordinals_offset)));
+
+  iree_hal_task_queue_t* queue = NULL;
+  IREE_RETURN_IF_ERROR(iree_allocator_malloc_aligned(
+      host_allocator, total_size, iree_alignof(iree_hal_task_queue_t),
+      /*offset=*/0, (void**)&queue));
+
+  iree_hal_task_queue_create_params_t owned_params = *params;
+  const iree_host_size_t resource_count =
+      params->queue_params.execution_resources.count;
+  if (resource_count) {
+    iree_hal_queue_execution_resource_ordinal_t* resource_ordinals =
+        (iree_hal_queue_execution_resource_ordinal_t*)((uint8_t*)queue +
+                                                       resource_ordinals_offset);
+    memcpy(resource_ordinals, params->queue_params.execution_resources.ordinals,
+           resource_count * sizeof(*resource_ordinals));
+    owned_params.queue_params.execution_resources.ordinals = resource_ordinals;
+  }
+
+  iree_status_t status = iree_hal_task_queue_initialize(&owned_params, queue);
+  if (iree_status_is_ok(status)) {
+    queue->storage.allocator = host_allocator;
+    queue->storage.release_slot = release_slot;
+    *out_queue = queue;
+  } else {
+    iree_allocator_free_aligned(host_allocator, queue);
+  }
   return status;
 }
 
@@ -3739,10 +3775,22 @@ void iree_hal_task_queue_retire_frontier(iree_hal_task_queue_t* queue) {
 static void iree_hal_task_queue_deinitialize(iree_hal_task_queue_t* queue) {
   IREE_TRACE_ZONE_BEGIN(z0);
 
-  // Reject new work and request control-process termination. If the process is
-  // already being drained, schedule_process sets needs_drain and the worker
-  // observes the phase on its next iteration. If IDLE, schedule_process pushes
-  // it to the immediate run list.
+  // Complete every operation captured before the caller released the final
+  // queue reference. This includes operations waiting on external semaphore
+  // dependencies and preserves their signal edges for consumers on other
+  // queues. The ownership contract excludes new submissions once destruction
+  // begins.
+  iree_status_t idle_status = iree_task_scope_wait_idle(
+      &queue->operation_scope, IREE_TIME_INFINITE_FUTURE);
+  IREE_ASSERT(iree_status_is_ok(idle_status),
+              "operation scope idle wait must not fail with an infinite "
+              "deadline");
+  iree_status_free(idle_status);
+
+  // Request control-process termination. If the process is already being
+  // drained, schedule_process sets needs_drain and the worker observes the
+  // phase on its next iteration. If IDLE, schedule_process pushes it to the
+  // immediate run list.
   //
   // The control release callback advances to COMPUTE and schedules the compute
   // process only after the control worker has left drain. This producer-first
@@ -3753,18 +3801,18 @@ static void iree_hal_task_queue_deinitialize(iree_hal_task_queue_t* queue) {
                     iree_memory_order_release);
   iree_task_executor_schedule_process(queue->executor, &queue->process);
 
-  // Wait for all outstanding operations and both processes to complete.
-  // The wake_budget == 1 process's scope_end fires in its release callback.
+  // Wait for both processes to complete. The wake_budget == 1 process's
+  // scope_end fires in its release callback.
   // The compute process's scope_end fires in its release callback (after
-  // the last drainer exits), which also cleans up any in-flight items.
-  // Each submitted operation has its own scope_begin/end pair. scope_wait_idle
-  // returns only when all of these have resolved — meaning every worker has
-  // finished touching queue/device resources.
-  iree_status_t idle_status =
-      iree_task_scope_wait_idle(&queue->scope, IREE_TIME_INFINITE_FUTURE);
-  IREE_ASSERT(iree_status_is_ok(idle_status),
-              "scope idle wait must not fail with an infinite deadline");
-  iree_status_free(idle_status);
+  // the last drainer exits), which also cleans up any in-flight items. The
+  // operation scope reached idle before shutdown, so these callbacks are the
+  // final users of queue-owned process state.
+  iree_status_t process_idle_status = iree_task_scope_wait_idle(
+      &queue->process_scope, IREE_TIME_INFINITE_FUTURE);
+  IREE_ASSERT(iree_status_is_ok(process_idle_status),
+              "process scope idle wait must not fail with an infinite "
+              "deadline");
+  iree_status_free(process_idle_status);
 
   while (iree_atomic_load(&queue->pending_process_release_count,
                           iree_memory_order_acquire) != 0) {
@@ -3790,7 +3838,8 @@ static void iree_hal_task_queue_deinitialize(iree_hal_task_queue_t* queue) {
       &queue->compute_free_pool);
   iree_arena_deinitialize(&queue->compute_item_arena);
 
-  iree_task_scope_deinitialize(&queue->scope);
+  iree_task_scope_deinitialize(&queue->process_scope);
+  iree_task_scope_deinitialize(&queue->operation_scope);
   iree_hal_task_queue_retire_frontier(queue);
   iree_hal_allocator_release(queue->device_allocator);
   iree_task_executor_release(queue->executor);
@@ -3800,7 +3849,16 @@ static void iree_hal_task_queue_deinitialize(iree_hal_task_queue_t* queue) {
 
 static void iree_hal_task_queue_destroy(iree_hal_queue_t* base_queue) {
   IREE_HAL_ASSERT_TYPE(base_queue, &iree_hal_task_queue_vtable);
-  iree_hal_task_queue_deinitialize((iree_hal_task_queue_t*)base_queue);
+  iree_hal_task_queue_t* queue = (iree_hal_task_queue_t*)base_queue;
+  const iree_hal_task_queue_storage_t storage = queue->storage;
+  iree_hal_task_queue_deinitialize(queue);
+  if (storage.release_slot.fn) {
+    storage.release_slot.fn(storage.release_slot.user_data,
+                            storage.release_slot.queue_index);
+  }
+  if (!iree_allocator_is_null(storage.allocator)) {
+    iree_allocator_free_aligned(storage.allocator, queue);
+  }
 }
 
 void iree_hal_task_queue_trim(iree_hal_task_queue_t* queue) {
@@ -3862,7 +3920,7 @@ iree_status_t iree_hal_task_queue_submit_commands(
                                         &batch->signal_semaphores, &operation);
     if (!iree_status_is_ok(status)) break;
 
-    iree_task_scope_begin(&queue->scope);
+    iree_task_scope_begin(&queue->operation_scope);
 
     // Retain the command buffer.
     status = iree_hal_resource_set_insert(
@@ -3929,7 +3987,7 @@ iree_status_t iree_hal_task_queue_submit_host_call(
     return status;
   }
 
-  iree_task_scope_begin(&queue->scope);
+  iree_task_scope_begin(&queue->operation_scope);
 
   // Store host call parameters.
   operation->host_call.queue = &queue->base;
@@ -3964,7 +4022,7 @@ iree_status_t iree_hal_task_queue_submit_alloca(
     return status;
   }
 
-  iree_task_scope_begin(&queue->scope);
+  iree_task_scope_begin(&queue->operation_scope);
 
   operation->alloca.pool = pool;
   operation->alloca.request_count = request_count;
@@ -4066,7 +4124,7 @@ iree_status_t iree_hal_task_queue_submit_dealloca(
     return status;
   }
 
-  iree_task_scope_begin(&queue->scope);
+  iree_task_scope_begin(&queue->operation_scope);
 
   operation->dealloca.buffer_count = buffer_count;
   operation->dealloca.marks_owned = false;
@@ -4158,7 +4216,7 @@ iree_status_t iree_hal_task_queue_submit_read(
     return status;
   }
 
-  iree_task_scope_begin(&queue->scope);
+  iree_task_scope_begin(&queue->operation_scope);
 
   operation->read.hal_file = source_file;
   operation->read.async_file = iree_hal_file_async_handle(source_file);
@@ -4203,7 +4261,7 @@ iree_status_t iree_hal_task_queue_submit_write(
     return status;
   }
 
-  iree_task_scope_begin(&queue->scope);
+  iree_task_scope_begin(&queue->operation_scope);
 
   operation->write.hal_file = target_file;
   operation->write.async_file = iree_hal_file_async_handle(target_file);
@@ -4965,6 +5023,46 @@ static iree_status_t iree_hal_task_queue_host_call(
       signal_semaphore_list, call, args, flags);
 }
 
+static iree_status_t iree_hal_task_queue_query_dispatch_concurrency(
+    iree_hal_queue_t* base_queue, iree_hal_executable_t* executable,
+    iree_hal_executable_function_t function,
+    iree_hal_queue_dispatch_concurrency_params_t params,
+    iree_hal_queue_dispatch_concurrency_flags_t flags,
+    iree_hal_queue_dispatch_concurrency_t* out_concurrency) {
+  IREE_HAL_ASSERT_TYPE(base_queue, &iree_hal_task_queue_vtable);
+  (void)flags;
+  iree_hal_task_queue_t* queue = (iree_hal_task_queue_t*)base_queue;
+
+  iree_hal_executable_function_info_t function_info;
+  IREE_RETURN_IF_ERROR(
+      iree_hal_executable_function_info(executable, function, &function_info));
+  if (!iree_all_bits_set(
+          function_info.resource_usage.provided_flags,
+          IREE_HAL_EXECUTABLE_FUNCTION_RESOURCE_FLAG_WORKGROUP_LOCAL_MEMORY)) {
+    return iree_make_status(
+        IREE_STATUS_UNIMPLEMENTED,
+        "task executable does not report workgroup-local memory use");
+  }
+  const uint32_t worker_count =
+      (uint32_t)iree_task_executor_worker_count(queue->executor);
+  if (IREE_UNLIKELY(worker_count == 0)) {
+    return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
+                            "task queue executor has no workers");
+  }
+  const uint64_t required_local_memory_size =
+      (uint64_t)function_info.resource_usage.fixed_workgroup_local_memory_size +
+      params.dynamic_workgroup_local_memory;
+  const iree_host_size_t available_local_memory_size =
+      iree_task_executor_minimum_worker_local_memory_size(queue->executor);
+
+  *out_concurrency = (iree_hal_queue_dispatch_concurrency_t){
+      .scheduling_domain_count = worker_count,
+      .maximum_concurrent_workgroup_count_per_domain =
+          required_local_memory_size <= available_local_memory_size ? 1u : 0u,
+  };
+  return iree_ok_status();
+}
+
 static iree_status_t iree_hal_task_queue_dispatch(
     iree_hal_queue_t* base_queue,
     const iree_hal_semaphore_list_t wait_semaphore_list,
@@ -5100,6 +5198,8 @@ static const iree_hal_queue_vtable_t iree_hal_task_queue_vtable = {
     .barrier = iree_hal_task_queue_barrier,
     .execute = iree_hal_task_queue_execute,
     .host_call = iree_hal_task_queue_host_call,
+    .query_dispatch_concurrency =
+        iree_hal_task_queue_query_dispatch_concurrency,
     .dispatch = iree_hal_task_queue_dispatch,
     .atomic_wait = iree_hal_task_queue_atomic_wait,
     .atomic_store = iree_hal_task_queue_atomic_store,

@@ -163,6 +163,10 @@ static iree_status_t hrx_iree_exact_pool_acquire_reservations(
       out_reservations[i] = reservation;
       memset(&out_infos[i], 0, sizeof(out_infos[i]));
       out_infos[i].result = IREE_HAL_POOL_ACQUIRE_OK_FRESH;
+      // Queue allocation returns transient HAL buffers whose reservations may
+      // outlive the HRX wrappers that submitted them. Keep the exact pool live
+      // until each reservation is transferred or explicitly released.
+      iree_hal_pool_retain(base_pool);
     }
     *out_result = IREE_HAL_POOL_ACQUIRE_OK_FRESH;
   } else {
@@ -188,6 +192,9 @@ static void hrx_iree_exact_pool_release_reservations(
     iree_hal_buffer_release(buffer);
   }
   iree_async_notification_signal(pool->notification, /*wake_count=*/INT32_MAX);
+  for (iree_host_size_t i = 0; i < reservation_count; ++i) {
+    iree_hal_pool_release(base_pool);
+  }
 }
 
 static iree_status_t hrx_iree_exact_pool_materialize_reservations(
@@ -220,6 +227,13 @@ static iree_status_t hrx_iree_exact_pool_materialize_reservations(
         (iree_hal_buffer_t*)(uintptr_t)reservations[i].block_handle;
     if (!transfer_ownership) iree_hal_buffer_retain(buffer);
     out_buffers[i] = buffer;
+  }
+  if (transfer_ownership) {
+    // The backing buffers own their allocations directly and will not call
+    // through this pool when destroyed.
+    for (iree_host_size_t i = 0; i < reservation_count; ++i) {
+      iree_hal_pool_release(base_pool);
+    }
   }
   return iree_ok_status();
 }

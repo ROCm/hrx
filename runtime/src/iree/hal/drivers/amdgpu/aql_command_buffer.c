@@ -156,6 +156,10 @@ typedef struct iree_hal_amdgpu_aql_command_buffer_t {
   uint32_t device_ordinal;
   // Number of physical queues on |device_ordinal|.
   uint32_t queue_count_per_physical_device;
+  // Device strategy used to record cooperative dispatch resource layouts.
+  iree_hal_amdgpu_grid_sync_strategy_t grid_sync_strategy;
+  // Queue features required by operations recorded in this command buffer.
+  iree_hal_queue_feature_flags_t required_queue_features;
   // Stable opaque hostcall device address written into implicit templates.
   void* hostcall_buffer;
   // One-shot lifecycle state enforced even when generic HAL validation is off.
@@ -802,6 +806,7 @@ iree_status_t iree_hal_amdgpu_aql_command_buffer_create(
     iree_hal_command_category_t command_categories,
     iree_host_size_t binding_capacity, iree_host_size_t device_ordinal,
     iree_host_size_t queue_count_per_physical_device,
+    iree_hal_amdgpu_grid_sync_strategy_t grid_sync_strategy,
     uint32_t tsan_shadow_slot_count,
     iree_hal_amdgpu_aql_prepublished_kernarg_storage_t
         prepublished_kernarg_storage,
@@ -845,6 +850,16 @@ iree_status_t iree_hal_amdgpu_aql_command_buffer_create(
         " is outside uint32_t storage",
         queue_count_per_physical_device);
   }
+  switch (grid_sync_strategy) {
+    case IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_NONE:
+    case IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_MEMORY:
+    case IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_GWS:
+      break;
+    default:
+      return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                              "unrecognized grid sync strategy %d",
+                              grid_sync_strategy);
+  }
   switch (prepublished_kernarg_storage.mode) {
     case IREE_HAL_AMDGPU_AQL_PREPUBLISHED_KERNARG_STORAGE_MODE_DISABLED:
     case IREE_HAL_AMDGPU_AQL_PREPUBLISHED_KERNARG_STORAGE_MODE_DEVICE_FINE_HOST_COHERENT:
@@ -884,6 +899,7 @@ iree_status_t iree_hal_amdgpu_aql_command_buffer_create(
   command_buffer->device_ordinal = (uint32_t)device_ordinal;
   command_buffer->queue_count_per_physical_device =
       (uint32_t)queue_count_per_physical_device;
+  command_buffer->grid_sync_strategy = grid_sync_strategy;
   command_buffer->hostcall_buffer = hostcall_buffer;
   command_buffer->tsan_shadow_spans.shadow_slot_count = tsan_shadow_slot_count;
   command_buffer->prepublished_kernargs.storage = prepublished_kernarg_storage;
@@ -949,6 +965,14 @@ uint32_t iree_hal_amdgpu_aql_command_buffer_queue_count_per_physical_device(
   iree_hal_amdgpu_aql_command_buffer_t* command_buffer =
       iree_hal_amdgpu_aql_command_buffer_cast(base_command_buffer);
   return command_buffer->queue_count_per_physical_device;
+}
+
+iree_hal_queue_feature_flags_t
+iree_hal_amdgpu_aql_command_buffer_required_queue_features(
+    iree_hal_command_buffer_t* base_command_buffer) {
+  iree_hal_amdgpu_aql_command_buffer_t* command_buffer =
+      iree_hal_amdgpu_aql_command_buffer_cast(base_command_buffer);
+  return command_buffer->required_queue_features;
 }
 
 uint64_t iree_hal_amdgpu_aql_command_buffer_profile_id(
@@ -1355,7 +1379,8 @@ static iree_status_t iree_hal_amdgpu_aql_command_buffer_check_dispatch_flags(
       IREE_HAL_DISPATCH_FLAG_STATIC_INDIRECT_PARAMETERS |
       IREE_HAL_DISPATCH_FLAG_CUSTOM_DIRECT_ARGUMENTS |
       IREE_HAL_DISPATCH_FLAG_ALLOW_INLINE_EXECUTION |
-      IREE_HAL_DISPATCH_FLAG_BORROW_RESOURCE_LIFETIMES;
+      IREE_HAL_DISPATCH_FLAG_BORROW_RESOURCE_LIFETIMES |
+      IREE_HAL_DISPATCH_FLAG_COOPERATIVE;
   if (IREE_UNLIKELY(iree_any_bit_set(flags, ~supported_flags))) {
     return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                             "unsupported dispatch flags: 0x%" PRIx64, flags);
@@ -2095,6 +2120,10 @@ typedef struct iree_hal_amdgpu_aql_dispatch_layout_t {
     uint32_t queue_block_length;
   } kernarg;
 
+  // Per-execution cooperative grid state template. A zero |grid_count| means
+  // that replay requires no grid synchronization state.
+  iree_amdgpu_grid_sync_info_t grid_sync_info;
+
   // Layout flags from iree_hal_amdgpu_aql_dispatch_layout_flag_bits_t.
   iree_hal_amdgpu_aql_dispatch_layout_flags_t flags;
 } iree_hal_amdgpu_aql_dispatch_layout_t;
@@ -2104,6 +2133,19 @@ static bool iree_hal_amdgpu_aql_dispatch_layout_prepublishes_kernargs(
   return iree_any_bit_set(
       layout->flags,
       IREE_HAL_AMDGPU_AQL_DISPATCH_LAYOUT_FLAG_PREPUBLISH_KERNARGS);
+}
+
+static bool iree_hal_amdgpu_aql_dispatch_layout_uses_grid_sync_info(
+    const iree_hal_amdgpu_aql_dispatch_layout_t* layout) {
+  return layout->grid_sync_info.grid_count != 0;
+}
+
+static bool iree_hal_amdgpu_aql_dispatch_layout_uses_gws_initialize(
+    const iree_hal_amdgpu_aql_command_buffer_t* command_buffer,
+    const iree_hal_amdgpu_aql_dispatch_layout_t* layout) {
+  return iree_hal_amdgpu_aql_dispatch_layout_uses_grid_sync_info(layout) &&
+         command_buffer->grid_sync_strategy ==
+             IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_GWS;
 }
 
 static iree_status_t iree_hal_amdgpu_aql_command_buffer_prepare_dispatch_plan(
@@ -2305,6 +2347,20 @@ iree_hal_amdgpu_aql_command_buffer_calculate_dispatch_layout(
                  ? (uint16_t)(plan->kernarg_layout->implicit_args_byte_offset /
                               8)
                  : UINT16_MAX);
+  const bool uses_indirect_parameters =
+      iree_hal_amdgpu_aql_dispatch_plan_uses_indirect_parameters(plan);
+  if (iree_any_bit_set(inputs->flags, IREE_HAL_DISPATCH_FLAG_COOPERATIVE) &&
+      out_layout->kernarg.implicit_args_offset_qwords != UINT16_MAX) {
+    if (IREE_UNLIKELY(uses_indirect_parameters)) {
+      return iree_make_status(
+          IREE_STATUS_UNIMPLEMENTED,
+          "cooperative AMDGPU dispatch does not support indirect workgroup "
+          "counts");
+    }
+    IREE_RETURN_IF_ERROR(iree_hal_amdgpu_grid_sync_info_initialize(
+        command_buffer->grid_sync_strategy, inputs->config.workgroup_count,
+        plan->kernel_args->workgroup_size, &out_layout->grid_sync_info));
+  }
   if (IREE_UNLIKELY(plan->kernarg_block_count >
                     UINT32_MAX / sizeof(iree_hal_amdgpu_kernarg_block_t))) {
     return iree_make_status(
@@ -2315,19 +2371,37 @@ iree_hal_amdgpu_aql_command_buffer_calculate_dispatch_layout(
 
   const uint32_t dispatch_kernarg_block_length =
       plan->kernarg_block_count * sizeof(iree_hal_amdgpu_kernarg_block_t);
-  const bool uses_indirect_parameters =
-      iree_hal_amdgpu_aql_dispatch_plan_uses_indirect_parameters(plan);
   const uint32_t patch_kernarg_block_length =
       uses_indirect_parameters ? sizeof(iree_hal_amdgpu_kernarg_block_t) : 0;
-  const uint32_t kernarg_block_length =
-      patch_kernarg_block_length + dispatch_kernarg_block_length;
+  const uint32_t cooperative_kernarg_block_count =
+      (iree_hal_amdgpu_aql_dispatch_layout_uses_grid_sync_info(out_layout)
+           ? 1u
+           : 0u) +
+      (iree_hal_amdgpu_aql_dispatch_layout_uses_gws_initialize(command_buffer,
+                                                               out_layout)
+           ? 1u
+           : 0u);
+  const uint32_t cooperative_kernarg_block_length =
+      cooperative_kernarg_block_count * sizeof(iree_hal_amdgpu_kernarg_block_t);
+  if (IREE_UNLIKELY(dispatch_kernarg_block_length >
+                        UINT32_MAX - patch_kernarg_block_length ||
+                    dispatch_kernarg_block_length + patch_kernarg_block_length >
+                        UINT32_MAX - cooperative_kernarg_block_length)) {
+    return iree_make_status(
+        IREE_STATUS_OUT_OF_RANGE,
+        "dispatch queue-time kernarg reservation exceeds uint32_t storage");
+  }
+  const uint32_t kernarg_block_length = dispatch_kernarg_block_length +
+                                        patch_kernarg_block_length +
+                                        cooperative_kernarg_block_length;
   // Prepublication is a reusable-command-buffer storage mode for immutable
   // kernargs. It materializes static kernargs once at end() so replay avoids
   // queue-time kernarg reservation, binding patching, and block growth.
   if (iree_hal_amdgpu_aql_command_buffer_prepublish_enabled(command_buffer) &&
       !iree_all_bits_set(command_buffer->base.mode,
                          IREE_HAL_COMMAND_BUFFER_MODE_ONE_SHOT) &&
-      !uses_indirect_parameters && plan->bindings.patch_count == 0) {
+      !uses_indirect_parameters && plan->bindings.patch_count == 0 &&
+      !iree_hal_amdgpu_aql_dispatch_layout_uses_grid_sync_info(out_layout)) {
     out_layout->flags |=
         IREE_HAL_AMDGPU_AQL_DISPATCH_LAYOUT_FLAG_PREPUBLISH_KERNARGS;
   }
@@ -2347,6 +2421,10 @@ iree_hal_amdgpu_aql_command_buffer_calculate_dispatch_layout(
                             : (uint16_t)(plan->bindings.patch_count +
                                          (uses_indirect_parameters ? 1 : 0));
   out_layout->command.aql_packet_count = uses_indirect_parameters ? 2 : 1;
+  if (iree_hal_amdgpu_aql_dispatch_layout_uses_gws_initialize(command_buffer,
+                                                              out_layout)) {
+    ++out_layout->command.aql_packet_count;
+  }
   return iree_ok_status();
 }
 
@@ -2404,6 +2482,10 @@ static void iree_hal_amdgpu_aql_command_buffer_initialize_dispatch_command(
   if (uses_workgroup_clusters) {
     dispatch_command->dispatch_flags |=
         IREE_HAL_AMDGPU_COMMAND_BUFFER_DISPATCH_FLAG_WORKGROUP_CLUSTER;
+  }
+  if (iree_any_bit_set(inputs->flags, IREE_HAL_DISPATCH_FLAG_COOPERATIVE)) {
+    dispatch_command->dispatch_flags |=
+        IREE_HAL_AMDGPU_COMMAND_BUFFER_DISPATCH_FLAG_COOPERATIVE;
   }
   memcpy(dispatch_command->workgroup_cluster_size,
          plan->kernel_args->workgroup_cluster_size,
@@ -2483,11 +2565,11 @@ static iree_status_t iree_hal_amdgpu_aql_command_buffer_record_dispatch_summary(
       command_buffer->builder.current_block.aql_packet_count -
       layout->command.aql_packet_count;
   summary->packets.first_ordinal = first_packet_ordinal;
+  summary->packets.dispatch_ordinal =
+      first_packet_ordinal + layout->command.aql_packet_count - 1u;
   const bool uses_indirect_parameters = iree_any_bit_set(
       dispatch_command->dispatch_flags,
       IREE_HAL_AMDGPU_COMMAND_BUFFER_DISPATCH_FLAG_INDIRECT_PARAMETERS);
-  summary->packets.dispatch_ordinal =
-      first_packet_ordinal + (uses_indirect_parameters ? 1u : 0u);
   summary->metadata.executable_id = dispatch_command->executable_id;
   summary->metadata.command_index = dispatch_command->header.command_index;
   summary->metadata.function_ordinal = dispatch_command->export_ordinal;
@@ -2562,7 +2644,9 @@ static iree_status_t iree_hal_amdgpu_aql_command_buffer_append_dispatch_command(
   const bool uses_indirect_parameters =
       iree_hal_amdgpu_aql_dispatch_plan_uses_indirect_parameters(plan);
   uint8_t command_flags =
-      uses_indirect_parameters
+      uses_indirect_parameters ||
+              iree_hal_amdgpu_aql_dispatch_layout_uses_gws_initialize(
+                  command_buffer, layout)
           ? IREE_HAL_AMDGPU_COMMAND_BUFFER_COMMAND_FLAG_HAS_BARRIER
           : IREE_HAL_AMDGPU_COMMAND_BUFFER_COMMAND_FLAG_NONE;
   if (iree_hal_amdgpu_aql_command_buffer_tsan_should_force_barrier(
@@ -2878,6 +2962,10 @@ static iree_status_t iree_hal_amdgpu_aql_command_buffer_dispatch(
       iree_hal_amdgpu_aql_command_buffer_append_dispatch_command(
           command_buffer, &inputs, &plan, &layout, &dispatch_command,
           &binding_sources));
+  if (iree_any_bit_set(flags, IREE_HAL_DISPATCH_FLAG_COOPERATIVE)) {
+    command_buffer->required_queue_features |=
+        IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH;
+  }
   IREE_RETURN_IF_ERROR(
       iree_hal_amdgpu_aql_command_buffer_write_dispatch_payload(
           command_buffer, &inputs, &plan, &layout, dispatch_command,
@@ -2885,8 +2973,10 @@ static iree_status_t iree_hal_amdgpu_aql_command_buffer_dispatch(
   IREE_RETURN_IF_ERROR(
       iree_hal_amdgpu_aql_command_buffer_record_dispatch_summary(
           command_buffer, dispatch_command, &layout));
-  return iree_hal_amdgpu_aql_command_buffer_record_tsan_shadow_span(
-      command_buffer, &plan, dispatch_command);
+  IREE_RETURN_IF_ERROR(
+      iree_hal_amdgpu_aql_command_buffer_record_tsan_shadow_span(
+          command_buffer, &plan, dispatch_command));
+  return iree_ok_status();
 }
 
 //===----------------------------------------------------------------------===//

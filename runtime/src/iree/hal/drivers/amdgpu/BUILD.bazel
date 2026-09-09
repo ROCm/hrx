@@ -22,10 +22,35 @@ iree_amdgpu_target_selectors_flag(
 )
 
 iree_runtime_cc_library(
+    name = "queue_execution_resources",
+    srcs = ["queue_execution_resources.c"],
+    hdrs = ["queue_execution_resources.h"],
+    deps = [
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/drivers/amdgpu/target:identity",
+    ],
+)
+
+iree_runtime_cc_library(
+    name = "dispatch_concurrency",
+    srcs = ["dispatch_concurrency.c"],
+    hdrs = ["dispatch_concurrency.h"],
+    deps = [
+        ":queue_execution_resources",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/drivers/amdgpu/abi",
+        "//runtime/src/iree/hal/drivers/amdgpu/target:identity",
+    ],
+)
+
+iree_runtime_cc_library(
     name = "device_spec_builder",
     srcs = ["device_spec_builder.c"],
     hdrs = ["device_spec_builder.h"],
     deps = [
+        ":queue_execution_resources",
         "//runtime/src/iree/base",
         "//runtime/src/iree/hal",
         "//runtime/src/iree/hal/drivers/amdgpu/target:identity",
@@ -228,6 +253,8 @@ iree_runtime_cc_library(
         "host_queue_waits.h",
         "hostcall_provider.c",
         "hostcall_provider.h",
+        "hsa_queue.c",
+        "hsa_queue.h",
         "logical_device.c",
         "logical_device.h",
         "physical_device.c",
@@ -284,11 +311,13 @@ iree_runtime_cc_library(
         ":atomic_memory",
         ":buffer",
         ":device_spec_builder",
+        ":dispatch_concurrency",
         ":executable_global_resolver",
         ":executable_metadata",
         ":executable_metadata_hsaco",
         ":kernarg_layout",
         ":profile_events",
+        ":queue_execution_resources",
         ":source_context",
         "//build_tools/bazel:dl",
         "//runtime/src/iree/async",
@@ -306,6 +335,7 @@ iree_runtime_cc_library(
         "//runtime/src/iree/hal/drivers/amdgpu/device:blit",
         "//runtime/src/iree/hal/drivers/amdgpu/device:blit_pm4",
         "//runtime/src/iree/hal/drivers/amdgpu/device:dispatch",
+        "//runtime/src/iree/hal/drivers/amdgpu/device:grid_sync",
         "//runtime/src/iree/hal/drivers/amdgpu/device:headers",
         "//runtime/src/iree/hal/drivers/amdgpu/device:timestamp",
         "//runtime/src/iree/hal/drivers/amdgpu/device:tsan",
@@ -404,6 +434,7 @@ iree_runtime_cc_library(
         "virtual_memory.h",
     ],
     deps = [
+        ":dispatch_concurrency",
         ":profile_events",
         "//runtime/src/iree/base",
         "//runtime/src/iree/base/internal",
@@ -469,6 +500,30 @@ iree_runtime_cc_test(
         "//runtime/src/iree/hal",
         "//runtime/src/iree/hal/drivers/amdgpu/target:identity",
         "//runtime/src/iree/hal/utils:device_spec_builder",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "queue_execution_resources_test",
+    srcs = ["queue_execution_resources_test.cc"],
+    deps = [
+        ":queue_execution_resources",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+iree_runtime_cc_test(
+    name = "dispatch_concurrency_test",
+    srcs = ["dispatch_concurrency_test.cc"],
+    deps = [
+        ":dispatch_concurrency",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
         "//runtime/src/iree/testing:gtest",
         "//runtime/src/iree/testing:gtest_main",
     ],

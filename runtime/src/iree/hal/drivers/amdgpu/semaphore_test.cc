@@ -35,7 +35,8 @@ static iree_async_proactor_t* test_proactor() {
 
 static iree_async_axis_t test_queue_axis(uint8_t queue_index) {
   return iree_async_axis_make_queue(/*session_epoch=*/1, /*machine_index=*/0,
-                                    /*device_index=*/0, queue_index);
+                                    /*device_index=*/0, queue_index,
+                                    /*queue_incarnation=*/0);
 }
 
 class FrontierBuilder {

@@ -532,8 +532,8 @@ TEST(SemaphoreTest, SignalWithFrontier) {
       test_proactor(), 0, IREE_ASYNC_SEMAPHORE_DEFAULT_FRONTIER_CAPACITY,
       iree_allocator_system(), &sem));
 
-  iree_async_axis_t axis_a = iree_async_axis_make_queue(1, 0, 0, 0);
-  iree_async_axis_t axis_b = iree_async_axis_make_queue(1, 0, 1, 0);
+  iree_async_axis_t axis_a = iree_async_axis_make_queue(1, 0, 0, 0, 0);
+  iree_async_axis_t axis_b = iree_async_axis_make_queue(1, 0, 1, 0, 0);
 
   FrontierBuilder fb;
   IREE_ASSERT_OK(
@@ -571,7 +571,7 @@ TEST(SemaphoreTest, FrontierMergeMaxEpoch) {
       test_proactor(), 0, IREE_ASYNC_SEMAPHORE_DEFAULT_FRONTIER_CAPACITY,
       iree_allocator_system(), &sem));
 
-  iree_async_axis_t axis = iree_async_axis_make_queue(1, 0, 0, 0);
+  iree_async_axis_t axis = iree_async_axis_make_queue(1, 0, 0, 0, 0);
 
   FrontierBuilder fb1;
   IREE_ASSERT_OK(

@@ -6467,8 +6467,10 @@ iree_status_t iree_hal_vulkan_queue_initialize(
   IREE_ASSERT_ARGUMENT(out_queue);
   memset(out_queue, 0, sizeof(*out_queue));
 
-  iree_hal_queue_initialize(params->queue_family, &iree_hal_vulkan_queue_vtable,
-                            &out_queue->base);
+  iree_hal_queue_params_t queue_params;
+  iree_hal_queue_params_initialize(&queue_params);
+  iree_hal_queue_initialize(params->queue_family, &queue_params,
+                            &iree_hal_vulkan_queue_vtable, &out_queue->base);
   out_queue->device = params->device;
   out_queue->syms = *params->syms;
   out_queue->debug_utils = *params->debug_utils;
@@ -10345,6 +10347,23 @@ static iree_status_t iree_hal_vulkan_queue_host_call(
       signal_semaphore_list, call, args, flags);
 }
 
+static iree_status_t iree_hal_vulkan_queue_query_dispatch_concurrency(
+    iree_hal_queue_t* base_queue, iree_hal_executable_t* executable,
+    iree_hal_executable_function_t function,
+    iree_hal_queue_dispatch_concurrency_params_t params,
+    iree_hal_queue_dispatch_concurrency_flags_t flags,
+    iree_hal_queue_dispatch_concurrency_t* out_concurrency) {
+  IREE_HAL_ASSERT_TYPE(base_queue, &iree_hal_vulkan_queue_vtable);
+  (void)executable;
+  (void)function;
+  (void)params;
+  (void)flags;
+  (void)out_concurrency;
+  return iree_make_status(
+      IREE_STATUS_UNIMPLEMENTED,
+      "Vulkan queue dispatch concurrency queries are not implemented");
+}
+
 static iree_status_t iree_hal_vulkan_queue_dispatch(
     iree_hal_queue_t* base_queue,
     const iree_hal_semaphore_list_t wait_semaphore_list,
@@ -10464,6 +10483,8 @@ static const iree_hal_queue_vtable_t iree_hal_vulkan_queue_vtable = {
     .barrier = iree_hal_vulkan_queue_barrier,
     .execute = iree_hal_vulkan_queue_execute,
     .host_call = iree_hal_vulkan_queue_host_call,
+    .query_dispatch_concurrency =
+        iree_hal_vulkan_queue_query_dispatch_concurrency,
     .dispatch = iree_hal_vulkan_queue_dispatch,
     .atomic_wait = iree_hal_vulkan_queue_atomic_wait,
     .atomic_store = iree_hal_vulkan_queue_atomic_store,

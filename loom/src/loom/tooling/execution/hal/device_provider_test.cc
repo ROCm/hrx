@@ -113,14 +113,26 @@ class DeviceProviderTest : public ::testing::Test {
         /*.target_count=*/1,
         /*.targets=*/&executable_target,
     };
+    const iree_hal_queue_priority_t normal_priority =
+        IREE_HAL_QUEUE_PRIORITY_NORMAL;
     const iree_hal_queue_family_spec_t queue_family = {
         /*.name=*/IREE_SV("dispatch"),
         /*.provisioned_queue_count=*/1,
         /*.priority_count=*/1,
+        /*.priorities=*/&normal_priority,
+        /*.execution_unit_count=*/0,
+        /*.execution_resource_group_count=*/0,
+        /*.execution_resource_groups=*/nullptr,
+        /*.execution_resource_count=*/0,
+        /*.execution_resources=*/nullptr,
+        /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
         /*.timestamp_valid_bits=*/0,
         /*.timestamp_frequency_hz=*/0,
         /*.physical_device_affinity=*/queue_affinity,
         /*.role_flags=*/IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH,
+        /*.atomic_capabilities=*/{},
+        /*.zero_compute_atomic_capabilities=*/{},
+        /*.flags=*/IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_NONE,
     };
     const iree_hal_device_queue_spec_t queues = {
         /*.family_count=*/1,
@@ -145,7 +157,10 @@ class DeviceProviderTest : public ::testing::Test {
 
     device_.device_spec = device_spec_.get();
     iree_hal_resource_initialize(&kFakeHalDeviceVtable, &device_.resource);
-    iree_hal_queue_family_initialize(/*ordinal=*/0, &dispatch_queue_family_);
+    const iree_hal_queue_family_spec_t* queue_family_spec =
+        &iree_hal_device_spec_queues(device_spec_.get())->families[0];
+    iree_hal_queue_family_initialize(/*ordinal=*/0, queue_family_spec,
+                                     &dispatch_queue_family_);
     dispatch_queue_.queue_family = &dispatch_queue_family_;
     runtime_.device = reinterpret_cast<iree_hal_device_t*>(&device_);
     runtime_.dispatch_queue = &dispatch_queue_;

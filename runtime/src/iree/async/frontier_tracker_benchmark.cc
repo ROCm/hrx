@@ -40,7 +40,7 @@ namespace {
 
 // Creates a queue axis for benchmarking.
 static iree_async_axis_t Axis(uint8_t device) {
-  return iree_async_axis_make_queue(1, 0, device, 0);
+  return iree_async_axis_make_queue(1, 0, device, 0, 0);
 }
 
 // Maximum axis table capacity for benchmarks.

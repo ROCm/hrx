@@ -6,7 +6,10 @@
 
 #include "binding/cuda/driver.h"
 
+#include <limits.h>
+
 #include "common/internal.h"
+#include "common/occupancy.h"
 
 //===----------------------------------------------------------------------===//
 // Flag translation functions
@@ -2397,6 +2400,17 @@ CUDAAPI CUresult cuFuncSetSharedMemConfig(CUfunction hfunc,
 // Occupancy calculation
 //===----------------------------------------------------------------------===//
 
+static uint32_t iree_cuda_occupancy_maximum_dynamic_memory(
+    iree_hal_streaming_symbol_t* symbol) {
+  if (!iree_all_bits_set(
+          symbol->function_attributes.provided_flags,
+          IREE_HAL_STREAMING_FUNCTION_ATTRIBUTE_FLAG_DYNAMIC_SHARED_MEMORY)) {
+    return UINT32_MAX;
+  }
+  return iree_hal_streaming_function_attributes_dynamic_shared_memory_size(
+      &symbol->function_attributes);
+}
+
 CUDAAPI CUresult cuOccupancyMaxActiveBlocksPerMultiprocessor(
     int* numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize) {
   IREE_TRACE_ZONE_BEGIN(z0);
@@ -2429,18 +2443,34 @@ CUDAAPI CUresult cuOccupancyMaxActiveBlocksPerMultiprocessor(
     return CUDA_ERROR_INVALID_HANDLE;
   }
 
-  // Use shared occupancy calculation.
-  uint32_t max_blocks = 0;
-  iree_status_t status =
-      iree_hal_streaming_calculate_max_active_blocks_per_multiprocessor(
-          device, symbol, (uint32_t)blockSize,
-          (iree_host_size_t)dynamicSMemSize, &max_blocks);
-
-  if (iree_status_is_ok(status)) {
-    *numBlocks = (int)max_blocks;
+  const uint32_t maximum_block_size =
+      symbol->function_attributes.maximum_threads_per_block != 0
+          ? symbol->function_attributes.maximum_threads_per_block
+          : device->max_threads_per_block;
+  const uint32_t maximum_dynamic_memory =
+      iree_cuda_occupancy_maximum_dynamic_memory(symbol);
+  if ((maximum_block_size != 0 && (uint32_t)blockSize > maximum_block_size) ||
+      dynamicSMemSize > maximum_dynamic_memory ||
+      dynamicSMemSize > UINT32_MAX) {
+    *numBlocks = 0;
+    IREE_TRACE_ZONE_END(z0);
+    return CUDA_SUCCESS;
   }
 
+  iree_hal_queue_dispatch_concurrency_t concurrency;
+  iree_status_t status = iree_hal_streaming_query_dispatch_occupancy(
+      context->queue, symbol->executable,
+      iree_hal_executable_function_from_index(symbol->export_ordinal),
+      (uint32_t)blockSize, (uint32_t)dynamicSMemSize, &concurrency);
   CUresult result = iree_status_to_cu_result(status);
+  if (result == CUDA_SUCCESS) {
+    if (concurrency.maximum_concurrent_workgroup_count_per_domain > INT_MAX) {
+      result = CUDA_ERROR_INVALID_VALUE;
+    } else {
+      *numBlocks =
+          (int)concurrency.maximum_concurrent_workgroup_count_per_domain;
+    }
+  }
   IREE_TRACE_ZONE_END(z0);
   return result;
 }
@@ -2488,20 +2518,28 @@ CUDAAPI CUresult cuOccupancyMaxPotentialBlockSize(
     return CUDA_ERROR_INVALID_HANDLE;
   }
 
-  // Call IREE function with adapted types.
   uint32_t out_block_size = 0;
-  uint32_t out_min_grid_size = 0;
-  iree_status_t status = iree_hal_streaming_calculate_optimal_block_size(
-      device, symbol, (uint32_t)dynamicSMemSize,
-      (iree_hal_streaming_block_to_dynamic_smem_fn_t)blockSizeToDynamicSMemSize,
-      (uint32_t)blockSizeLimit, &out_block_size, &out_min_grid_size);
-
-  if (iree_status_is_ok(status)) {
-    *blockSize = (int)out_block_size;
-    *minGridSize = (int)out_min_grid_size;
-  }
-
+  uint64_t out_min_grid_size = 0;
+  const uint32_t maximum_block_size =
+      symbol->function_attributes.maximum_threads_per_block != 0
+          ? symbol->function_attributes.maximum_threads_per_block
+          : device->max_threads_per_block;
+  iree_status_t status = iree_hal_streaming_select_optimal_dispatch_occupancy(
+      context->queue, symbol->executable,
+      iree_hal_executable_function_from_index(symbol->export_ordinal),
+      maximum_block_size, iree_cuda_occupancy_maximum_dynamic_memory(symbol),
+      dynamicSMemSize, blockSizeToDynamicSMemSize,
+      blockSizeLimit > 0 ? (uint32_t)blockSizeLimit : 0, &out_block_size,
+      &out_min_grid_size);
   CUresult result = iree_status_to_cu_result(status);
+  if (result == CUDA_SUCCESS) {
+    if (out_block_size > INT_MAX || out_min_grid_size > INT_MAX) {
+      result = CUDA_ERROR_INVALID_VALUE;
+    } else {
+      *blockSize = (int)out_block_size;
+      *minGridSize = (int)out_min_grid_size;
+    }
+  }
   IREE_TRACE_ZONE_END(z0);
   return result;
 }
@@ -2584,31 +2622,54 @@ CUDAAPI CUresult cuLaunchCooperativeKernel(
     hStream = (CUstream)context->default_stream;
   }
 
-  // Get the current device.
-  iree_hal_streaming_context_t* context =
-      ((iree_hal_streaming_stream_t*)hStream)->context;
-  iree_hal_streaming_device_t* device = context->device_entry;
-
   // Untag the function pointer if it was tagged by cuModuleGetFunction.
   iree_hal_streaming_symbol_t* symbol = iree_hal_streaming_symbol_untag(f);
 
-  // Calculate maximum blocks for cooperative launch.
-  // This will return 0 if the device doesn't support cooperative launch.
-  int block_size = blockDimX * blockDimY * blockDimZ;
-  uint32_t max_blocks = 0;
-  iree_status_t status = iree_hal_streaming_calculate_max_cooperative_blocks(
-      device, symbol, block_size, sharedMemBytes, &max_blocks);
-  if (!iree_status_is_ok(status)) {
-    iree_status_ignore(status);
+  uint64_t block_size = 0;
+  uint64_t block_size_xy = 0;
+  if (!iree_checked_mul_u64(blockDimX, blockDimY, &block_size_xy) ||
+      !iree_checked_mul_u64(block_size_xy, blockDimZ, &block_size) ||
+      block_size == 0 || block_size > UINT32_MAX) {
     IREE_TRACE_ZONE_END(z0);
     return CUDA_ERROR_INVALID_VALUE;
   }
 
-  // Verify grid size doesn't exceed max active blocks.
-  // If max_blocks is 0 (device doesn't support cooperative launch) or
-  // grid is too large, return error.
-  int total_blocks = gridDimX * gridDimY * gridDimZ;
-  if (max_blocks == 0 || total_blocks > max_blocks) {
+  iree_hal_streaming_stream_t* stream = (iree_hal_streaming_stream_t*)hStream;
+  iree_hal_queue_t* cooperative_queue = NULL;
+  iree_slim_mutex_lock(&stream->mutex);
+  iree_status_t status =
+      iree_hal_streaming_stream_select_cooperative_queue_locked(
+          stream, &cooperative_queue);
+  if (iree_status_is_ok(status)) {
+    iree_hal_queue_retain(cooperative_queue);
+  }
+  iree_slim_mutex_unlock(&stream->mutex);
+
+  uint64_t maximum_block_count = 0;
+  if (iree_status_is_ok(status)) {
+    iree_hal_queue_dispatch_concurrency_t concurrency;
+    status = iree_hal_streaming_query_dispatch_occupancy(
+        cooperative_queue, symbol->executable,
+        iree_hal_executable_function_from_index(symbol->export_ordinal),
+        (uint32_t)block_size, sharedMemBytes, &concurrency);
+    if (iree_status_is_ok(status)) {
+      maximum_block_count =
+          iree_hal_queue_dispatch_concurrency_total_workgroup_count(
+              concurrency);
+    }
+  }
+  iree_hal_queue_release(cooperative_queue);
+  CUresult result = iree_status_to_cu_result(status);
+  if (result != CUDA_SUCCESS) {
+    IREE_TRACE_ZONE_END(z0);
+    return result;
+  }
+
+  uint64_t total_block_count = 0;
+  uint64_t grid_size_xy = 0;
+  if (!iree_checked_mul_u64(gridDimX, gridDimY, &grid_size_xy) ||
+      !iree_checked_mul_u64(grid_size_xy, gridDimZ, &total_block_count) ||
+      total_block_count > maximum_block_count) {
     IREE_TRACE_ZONE_END(z0);
     return CUDA_ERROR_COOPERATIVE_LAUNCH_TOO_LARGE;
   }
@@ -2623,11 +2684,9 @@ CUDAAPI CUresult cuLaunchCooperativeKernel(
       .flags = IREE_HAL_STREAMING_DISPATCH_FLAG_COOPERATIVE,
   };
 
-  status =
-      iree_hal_streaming_launch_kernel((iree_hal_streaming_symbol_t*)f, &params,
-                                       (iree_hal_streaming_stream_t*)hStream);
+  status = iree_hal_streaming_launch_kernel(symbol, &params, stream);
 
-  CUresult result = iree_status_to_cu_result(status);
+  result = iree_status_to_cu_result(status);
   IREE_TRACE_ZONE_END(z0);
   return result;
 }
@@ -2680,7 +2739,7 @@ CUDAAPI CUresult cuStreamCreateWithFlags(CUstream* phStream,
 
   iree_hal_streaming_stream_t* stream = NULL;
   iree_status_t status = iree_hal_streaming_stream_create(
-      context, iree_cuda_stream_flags_to_internal(flags), 0,
+      context, context->queue, iree_cuda_stream_flags_to_internal(flags), 0,
       iree_allocator_system(), &stream);
 
   if (iree_status_is_ok(status)) {
@@ -2710,7 +2769,7 @@ CUDAAPI CUresult cuStreamCreate(CUstream* phStream, unsigned int Flags) {
 
   iree_hal_streaming_stream_t* stream = NULL;
   iree_status_t status = iree_hal_streaming_stream_create(
-      context, iree_cuda_stream_flags_to_internal(Flags), 0,
+      context, context->queue, iree_cuda_stream_flags_to_internal(Flags), 0,
       context->host_allocator, &stream);
 
   if (iree_status_is_ok(status)) {
@@ -2738,8 +2797,8 @@ CUDAAPI CUresult cuStreamCreateWithPriority(CUstream* phStream,
 
   iree_hal_streaming_stream_t* stream = NULL;
   iree_status_t status = iree_hal_streaming_stream_create(
-      context, iree_cuda_stream_flags_to_internal(flags), priority,
-      context->host_allocator, &stream);
+      context, context->queue, iree_cuda_stream_flags_to_internal(flags),
+      priority, context->host_allocator, &stream);
 
   if (iree_status_is_ok(status)) {
     *phStream = (CUstream)stream;

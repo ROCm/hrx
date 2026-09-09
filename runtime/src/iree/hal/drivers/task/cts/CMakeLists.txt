@@ -23,6 +23,35 @@ iree_cc_library(
   PUBLIC
 )
 
+iree_cc_library(
+  NAME
+    executable_testdata
+  SRCS
+    "executable_testdata.cc"
+  DEPS
+    iree::base
+    iree::hal::cts::util::registry
+    iree::hal::drivers::task::executable::elf::testdata::compat_data
+  TESTONLY
+  ALWAYSLINK
+  PUBLIC
+)
+
+iree_cc_test(
+  NAME
+    queue_dispatch_concurrency_tests
+  SRCS
+    "${PROJECT_SOURCE_DIR}/runtime/src/iree/hal/cts/util/test_main.cc"
+  DEPS
+    ::backends
+    ::executable_testdata
+    iree::base::tooling::flags
+    iree::hal::cts::queue::queue_dispatch_concurrency_test
+    iree::hal::cts::util::registry
+    iree::hal::cts::util::test_base
+    iree::testing::gtest
+)
+
 iree_runtime_hal_cts_test_suite(
   BACKENDS
     ::backends

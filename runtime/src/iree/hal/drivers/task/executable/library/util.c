@@ -147,9 +147,6 @@ iree_status_t iree_hal_executable_library_export_info(
         IREE_HAL_EXECUTABLE_WORKGROUP_LOCAL_MEMORY_PAGE_SIZE;
   }
 
-  // Occupancy info is not yet implemented.
-  memset(&out_info->occupancy_info, 0, sizeof(out_info->occupancy_info));
-
   return iree_ok_status();
 }
 

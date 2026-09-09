@@ -19,6 +19,15 @@
 namespace iree::hal::vulkan {
 namespace {
 
+static constexpr iree_hal_queue_priority_t kQueuePriority =
+    IREE_HAL_QUEUE_PRIORITY_NORMAL;
+static const iree_hal_queue_family_spec_t kQueueFamilySpec = {
+    /*.name=*/IREE_SV("test"),
+    /*.provisioned_queue_count=*/1,
+    /*.priority_count=*/1,
+    /*.priorities=*/&kQueuePriority,
+};
+
 #if !IREE_HAL_VULKAN_LIBVULKAN_STATIC
 
 struct NativeReplayCapture {
@@ -189,7 +198,8 @@ using CommandBufferPtr =
 class VulkanCommandBufferTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    iree_hal_queue_family_initialize(/*ordinal=*/0, &queue_family_);
+    iree_hal_queue_family_initialize(/*ordinal=*/0, &kQueueFamilySpec,
+                                     &queue_family_);
     IREE_ASSERT_OK(iree_hal_allocator_create_heap(
         iree_make_cstring_view("vulkan_command_buffer_test"),
         iree_allocator_system(), iree_allocator_system(), &device_allocator_));

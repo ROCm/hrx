@@ -15,6 +15,7 @@
 #include "iree/async/notification.h"
 #include "iree/async/util/proactor_pool.h"
 #include "iree/base/internal/arena.h"
+#include "iree/base/threading/mutex.h"
 #include "iree/hal/drivers/task/atomic.h"
 #include "iree/hal/drivers/task/command/block_command_buffer.h"
 #include "iree/hal/drivers/task/device_spec_builder.h"
@@ -26,6 +27,26 @@
 #include "iree/hal/memory/passthrough_pool.h"
 #include "iree/hal/memory/tlsf_pool.h"
 #include "iree/hal/utils/file_registry.h"
+
+// Queue indices are encoded in eight bits of an async frontier axis.
+#define IREE_HAL_TASK_DEVICE_QUEUE_SLOT_COUNT (UINT8_MAX + 1u)
+
+// Number of allocation bitmap words covering every queue identity slot.
+#define IREE_HAL_TASK_DEVICE_QUEUE_SLOT_WORD_COUNT \
+  (IREE_HAL_TASK_DEVICE_QUEUE_SLOT_COUNT / 64u)
+
+// Device-local allocator for dynamically acquired queue identity slots.
+typedef struct iree_hal_task_device_queue_slots_t {
+  // Serializes slot allocation, release, and incarnation advancement.
+  iree_slim_mutex_t mutex;
+
+  // Bitmap of slots currently owned by live dynamically acquired queues.
+  uint64_t live_bits[IREE_HAL_TASK_DEVICE_QUEUE_SLOT_WORD_COUNT];
+
+  // Last incarnation assigned to each slot. Zero is reserved for provisioned
+  // queues and a slot is permanently retired after reaching the maximum.
+  uint32_t incarnations[IREE_HAL_TASK_DEVICE_QUEUE_SLOT_COUNT];
+} iree_hal_task_device_queue_slots_t;
 
 typedef struct iree_hal_task_device_t {
   iree_hal_resource_t resource;
@@ -43,6 +64,12 @@ typedef struct iree_hal_task_device_t {
 
   iree_allocator_t host_allocator;
   iree_hal_allocator_t* device_allocator;
+
+  // Scope flags inherited by provisioned and dynamically acquired queues.
+  iree_task_scope_flags_t queue_scope_flags;
+
+  // Transfer strategy threshold inherited by all queues.
+  iree_device_size_t inline_transfer_threshold;
 
   // Routes default queue allocations to the best device-owned pool.
   iree_hal_pool_set_t default_pool_set;
@@ -94,6 +121,9 @@ typedef struct iree_hal_task_device_t {
   // Pointer-unique identity of the task queue family.
   iree_hal_queue_family_t queue_family;
 
+  // Identity slots and incarnations for dynamically acquired queues.
+  iree_hal_task_device_queue_slots_t dynamic_queue_slots;
+
   // Number of successfully initialized entries in |queues|.
   iree_host_size_t queue_count;
 
@@ -125,6 +155,64 @@ static iree_hal_task_device_t* iree_hal_task_device_cast(
     iree_hal_device_t* base_value) {
   IREE_HAL_ASSERT_TYPE(base_value, &iree_hal_task_device_vtable);
   return (iree_hal_task_device_t*)base_value;
+}
+
+static bool iree_hal_task_device_has_live_dynamic_queues(
+    iree_hal_task_device_t* device) {
+  bool has_live_queues = false;
+  iree_slim_mutex_lock(&device->dynamic_queue_slots.mutex);
+  for (iree_host_size_t i = 0; i < IREE_HAL_TASK_DEVICE_QUEUE_SLOT_WORD_COUNT;
+       ++i) {
+    has_live_queues |= device->dynamic_queue_slots.live_bits[i] != 0;
+  }
+  iree_slim_mutex_unlock(&device->dynamic_queue_slots.mutex);
+  return has_live_queues;
+}
+
+static iree_status_t iree_hal_task_device_acquire_dynamic_queue_slot(
+    iree_hal_task_device_t* device, uint8_t* out_queue_index,
+    uint32_t* out_incarnation) {
+  iree_slim_mutex_lock(&device->dynamic_queue_slots.mutex);
+  bool found = false;
+  uint8_t queue_index = 0;
+  uint32_t incarnation = 0;
+  for (iree_host_size_t i = device->queue_count;
+       i < IREE_HAL_TASK_DEVICE_QUEUE_SLOT_COUNT; ++i) {
+    const iree_host_size_t word_index = i / 64u;
+    const uint64_t bit = UINT64_C(1) << (i % 64u);
+    if (device->dynamic_queue_slots.live_bits[word_index] & bit) continue;
+    if (device->dynamic_queue_slots.incarnations[i] >=
+        IREE_ASYNC_QUEUE_INCARNATION_MAX) {
+      continue;
+    }
+    incarnation = ++device->dynamic_queue_slots.incarnations[i];
+    device->dynamic_queue_slots.live_bits[word_index] |= bit;
+    queue_index = (uint8_t)i;
+    found = true;
+    break;
+  }
+  iree_slim_mutex_unlock(&device->dynamic_queue_slots.mutex);
+
+  if (!found) {
+    return iree_make_status(
+        IREE_STATUS_RESOURCE_EXHAUSTED,
+        "all task queue identity slots are live or permanently retired");
+  }
+  *out_queue_index = queue_index;
+  *out_incarnation = incarnation;
+  return iree_ok_status();
+}
+
+static void iree_hal_task_device_release_dynamic_queue_slot(
+    void* user_data, uint8_t queue_index) {
+  iree_hal_task_device_t* device = (iree_hal_task_device_t*)user_data;
+  const iree_host_size_t word_index = queue_index / 64u;
+  const uint64_t bit = UINT64_C(1) << (queue_index % 64u);
+  iree_slim_mutex_lock(&device->dynamic_queue_slots.mutex);
+  IREE_ASSERT(device->dynamic_queue_slots.live_bits[word_index] & bit,
+              "dynamic queue slot must be live until queue destruction");
+  device->dynamic_queue_slots.live_bits[word_index] &= ~bit;
+  iree_slim_mutex_unlock(&device->dynamic_queue_slots.mutex);
 }
 
 static bool iree_hal_task_device_query_pool_epoch(void* user_data,
@@ -241,6 +329,11 @@ static iree_status_t iree_hal_task_device_check_params(
     return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                             "must have at least one queue");
   }
+  if (queue_count > UINT8_MAX) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "task devices support at most %u provisioned queues", UINT8_MAX);
+  }
   return iree_ok_status();
 }
 
@@ -285,10 +378,13 @@ iree_status_t iree_hal_task_device_create(
                                         /*offset=*/0, (void**)&device));
   memset(device, 0, total_size);
   iree_hal_resource_initialize(&iree_hal_task_device_vtable, &device->resource);
+  iree_slim_mutex_initialize(&device->dynamic_queue_slots.mutex);
   iree_string_view_append_to_buffer(identifier, &device->identifier,
                                     (char*)device + identifier_offset);
   device->host_allocator = host_allocator;
   device->device_allocator = device_allocator;
+  device->queue_scope_flags = params->queue_scope_flags;
+  device->inline_transfer_threshold = params->inline_transfer_threshold;
   iree_hal_allocator_retain(device_allocator);
   iree_atomic_store(&device->next_profile_submission_id, 0,
                     iree_memory_order_relaxed);
@@ -332,7 +428,10 @@ iree_status_t iree_hal_task_device_create(
   }
 
   if (iree_status_is_ok(status)) {
-    iree_hal_queue_family_initialize(/*ordinal=*/0, &device->queue_family);
+    const iree_hal_device_queue_spec_t* queue_spec =
+        iree_hal_device_spec_queues(device->device_spec);
+    iree_hal_queue_family_initialize(/*ordinal=*/0, &queue_spec->families[0],
+                                     &device->queue_family);
 
     iree_arena_block_pool_initialize(4096, host_allocator,
                                      &device->small_block_pool);
@@ -348,6 +447,8 @@ iree_status_t iree_hal_task_device_create(
     }
 
     device->queue_count = 0;
+    iree_hal_queue_params_t queue_params;
+    iree_hal_queue_params_initialize(&queue_params);
     for (iree_host_size_t i = 0; i < queue_count; ++i) {
       // Select a NUMA-correct proactor for this queue based on its executor's
       // node assignment. Falls back to the first proactor in the pool if the
@@ -359,12 +460,21 @@ iree_status_t iree_hal_task_device_create(
                                                      node_id, &queue_proactor);
       if (!iree_status_is_ok(status)) break;
 
-      status = iree_hal_task_queue_initialize(
-          device->identifier, (iree_hal_device_t*)device, &device->queue_family,
-          params->queue_scope_flags, queue_executors[i], queue_proactor,
-          params->inline_transfer_threshold, &device->small_block_pool,
-          &device->large_block_pool, device->device_allocator,
-          &device->queues[i]);
+      const iree_hal_task_queue_create_params_t queue_create_params = {
+          .identifier = device->identifier,
+          .device = (iree_hal_device_t*)device,
+          .queue_family = &device->queue_family,
+          .queue_params = queue_params,
+          .scope_flags = device->queue_scope_flags,
+          .executor = queue_executors[i],
+          .proactor = queue_proactor,
+          .inline_transfer_threshold = device->inline_transfer_threshold,
+          .small_block_pool = &device->small_block_pool,
+          .large_block_pool = &device->large_block_pool,
+          .device_allocator = device->device_allocator,
+      };
+      status = iree_hal_task_queue_initialize(&queue_create_params,
+                                              &device->queues[i]);
       if (!iree_status_is_ok(status)) break;
       ++device->queue_count;
     }
@@ -379,14 +489,20 @@ iree_status_t iree_hal_task_device_create(
   return status;
 }
 
-static void iree_hal_task_device_clear_topology_info(
+static iree_status_t iree_hal_task_device_clear_topology_info(
     iree_hal_task_device_t* device) {
+  if (IREE_UNLIKELY(iree_hal_task_device_has_live_dynamic_queues(device))) {
+    return iree_make_status(
+        IREE_STATUS_FAILED_PRECONDITION,
+        "cannot clear task device topology while dynamic queues are live");
+  }
   for (iree_host_size_t i = 0; i < device->queue_count; ++i) {
     iree_hal_task_queue_retire_frontier(&device->queues[i]);
   }
   iree_async_frontier_tracker_release(device->frontier_tracker);
   device->frontier_tracker = NULL;
   memset(&device->topology_info, 0, sizeof(device->topology_info));
+  return iree_ok_status();
 }
 
 static void iree_hal_task_device_destroy(iree_hal_device_t* base_device) {
@@ -396,6 +512,8 @@ static void iree_hal_task_device_destroy(iree_hal_device_t* base_device) {
 
   IREE_ASSERT(!device->profile_recorder,
               "profiling sessions must be ended before device destruction");
+  IREE_ASSERT(!iree_hal_task_device_has_live_dynamic_queues(device),
+              "dynamic queues must be released before their parent device");
 
   for (iree_host_size_t i = 0; i < device->queue_count; ++i) {
     iree_hal_queue_t* queue = &device->queues[i].base;
@@ -424,6 +542,7 @@ static void iree_hal_task_device_destroy(iree_hal_device_t* base_device) {
 
   iree_arena_block_pool_deinitialize(&device->large_block_pool);
   iree_arena_block_pool_deinitialize(&device->small_block_pool);
+  iree_slim_mutex_deinitialize(&device->dynamic_queue_slots.mutex);
 
   iree_allocator_free_aligned(host_allocator, device);
 
@@ -496,6 +615,80 @@ static iree_hal_queue_t* iree_hal_task_device_queue(
   return &device->queues[queue_ordinal].base;
 }
 
+static iree_status_t iree_hal_task_device_acquire_queue(
+    iree_hal_device_t* base_device, const iree_hal_queue_family_t* queue_family,
+    const iree_hal_queue_params_t* params, iree_hal_queue_t** out_queue) {
+  iree_hal_task_device_t* device = iree_hal_task_device_cast(base_device);
+  if (IREE_UNLIKELY(queue_family != &device->queue_family)) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "queue family does not belong to this device");
+  }
+  if (IREE_UNLIKELY(!device->frontier_tracker)) {
+    return iree_make_status(
+        IREE_STATUS_FAILED_PRECONDITION,
+        "task device topology must be assigned before queue acquisition");
+  }
+  if (IREE_UNLIKELY(device->profile_recorder)) {
+    return iree_make_status(
+        IREE_STATUS_FAILED_PRECONDITION,
+        "cannot acquire a task queue during an active profile capture");
+  }
+
+  uint8_t queue_index = 0;
+  uint32_t incarnation = 0;
+  IREE_RETURN_IF_ERROR(iree_hal_task_device_acquire_dynamic_queue_slot(
+      device, &queue_index, &incarnation));
+
+  iree_task_executor_t* executor =
+      device->queues[queue_index % device->queue_count].executor;
+  iree_async_proactor_t* proactor = NULL;
+  iree_status_t status = iree_async_proactor_pool_get_for_node(
+      device->proactor_pool, iree_task_executor_node_id(executor), &proactor);
+  iree_hal_task_queue_t* queue = NULL;
+  bool queue_owns_slot = false;
+  if (iree_status_is_ok(status)) {
+    const iree_hal_task_queue_create_params_t queue_create_params = {
+        .identifier = device->identifier,
+        .device = base_device,
+        .queue_family = queue_family,
+        .queue_params = *params,
+        .scope_flags = device->queue_scope_flags,
+        .executor = executor,
+        .proactor = proactor,
+        .inline_transfer_threshold = device->inline_transfer_threshold,
+        .small_block_pool = &device->small_block_pool,
+        .large_block_pool = &device->large_block_pool,
+        .device_allocator = device->device_allocator,
+    };
+    const iree_hal_task_queue_release_slot_callback_t release_slot = {
+        .fn = iree_hal_task_device_release_dynamic_queue_slot,
+        .user_data = device,
+        .queue_index = queue_index,
+    };
+    status = iree_hal_task_queue_create(&queue_create_params, release_slot,
+                                        device->host_allocator, &queue);
+    queue_owns_slot = iree_status_is_ok(status);
+  }
+  if (iree_status_is_ok(status)) {
+    const iree_async_axis_t base_axis =
+        device->topology_info.frontier.base_axis;
+    const iree_async_axis_t queue_axis = iree_async_axis_make_queue(
+        iree_async_axis_session(base_axis), iree_async_axis_machine(base_axis),
+        iree_async_axis_device_index(base_axis), queue_index, incarnation);
+    status = iree_hal_task_queue_assign_frontier(
+        queue, device->frontier_tracker, queue_axis);
+  }
+
+  if (iree_status_is_ok(status)) {
+    *out_queue = &queue->base;
+  } else if (queue_owns_slot) {
+    iree_hal_queue_release(&queue->base);
+  } else {
+    iree_hal_task_device_release_dynamic_queue_slot(device, queue_index);
+  }
+  return status;
+}
+
 static iree_status_t iree_hal_task_device_sample_observation(
     iree_hal_device_t* base_device,
     iree_hal_device_observation_flags_t requested_flags,
@@ -527,8 +720,7 @@ static iree_status_t iree_hal_task_device_assign_topology_info(
     const iree_hal_device_topology_info_t* topology_info) {
   iree_hal_task_device_t* device = iree_hal_task_device_cast(base_device);
   if (!topology_info) {
-    iree_hal_task_device_clear_topology_info(device);
-    return iree_ok_status();
+    return iree_hal_task_device_clear_topology_info(device);
   }
   iree_async_frontier_tracker_t* frontier_tracker =
       topology_info->frontier.tracker;
@@ -542,7 +734,8 @@ static iree_status_t iree_hal_task_device_assign_topology_info(
   for (iree_host_size_t i = 0;
        i < device->queue_count && iree_status_is_ok(status); ++i) {
     iree_async_axis_t queue_axis = iree_async_axis_make_queue(
-        session_epoch, machine_index, device_index, (uint8_t)i);
+        session_epoch, machine_index, device_index, (uint8_t)i,
+        /*queue_incarnation=*/0);
     status = iree_hal_task_queue_assign_frontier(&device->queues[i],
                                                  frontier_tracker, queue_axis);
     if (iree_status_is_ok(status)) {
@@ -677,6 +870,11 @@ static iree_status_t iree_hal_task_device_profiling_begin(
     return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
                             "cannot nest task profile captures");
   }
+  if (IREE_UNLIKELY(iree_hal_task_device_has_live_dynamic_queues(device))) {
+    return iree_make_status(
+        IREE_STATUS_FAILED_PRECONDITION,
+        "cannot begin a task profile capture while dynamic queues are live");
+  }
 
   const uint32_t physical_device_ordinal =
       device->topology_info.topology ? device->topology_info.topology_index : 0;
@@ -765,6 +963,7 @@ static const iree_hal_device_vtable_t iree_hal_task_device_vtable = {
     .device_spec = iree_hal_task_device_spec,
     .queue_family = iree_hal_task_device_queue_family,
     .queue = iree_hal_task_device_queue,
+    .acquire_queue = iree_hal_task_device_acquire_queue,
     .sample_observation = iree_hal_task_device_sample_observation,
     .topology_info = iree_hal_task_device_topology_info,
     .refine_topology_edge = iree_hal_task_device_refine_topology_edge,

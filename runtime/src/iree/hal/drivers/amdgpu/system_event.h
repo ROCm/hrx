@@ -171,16 +171,27 @@ iree_hal_amdgpu_system_event_registration_lookup_agent(
     iree_hal_amdgpu_system_event_registration_t* registration,
     hsa_agent_t agent);
 
-// Publishes the first |live_queue_count| entries of |host_queues| as the
-// failure targets for |target|'s agent. No-op when |target| is NULL.
+// Publishes the first |live_queue_count| entries of |host_queues| as failure
+// targets for |target|'s agent. No-op when |target| is NULL.
 //
-// Called as the last step of physical-device frontier assignment, so a
-// partially assigned physical device never has published targets. Takes the
-// registry mutex internally; the caller must not hold it.
-void iree_hal_amdgpu_system_event_publish_queue_targets(
+// Queues are indexed by the queue slot encoded in their axes. Every slot in
+// the batch must be unique and unpublished; otherwise nothing is published.
+// The same target may receive multiple discontiguous batches over its lifetime.
+// Takes the registry mutex internally; the caller must not hold it.
+iree_status_t iree_hal_amdgpu_system_event_publish_queue_targets(
     iree_hal_amdgpu_system_event_agent_target_t* target,
     iree_hal_amdgpu_host_queue_t* host_queues,
     iree_host_size_t live_queue_count);
+
+// Retires one |host_queue| from failure delivery through |target|. Idempotent,
+// and a no-op when either argument is NULL or the queue slot now names another
+// queue incarnation. Returns once no callback can be inside |host_queue|, so
+// the caller may then destroy it.
+//
+// Takes the registry mutex internally; the caller must not hold it.
+void iree_hal_amdgpu_system_event_retire_queue_target(
+    iree_hal_amdgpu_system_event_agent_target_t* target,
+    iree_hal_amdgpu_host_queue_t* host_queue);
 
 // Retires queue failure delivery for |target|'s agent. Idempotent, and a no-op
 // when |target| is NULL. Returns once no callback can be inside |target|'s

@@ -1144,6 +1144,8 @@ iree_status_t iree_hal_streaming_graph_add_kernel_node(
   memcpy(attrs->grid_dim, params->grid_dim, sizeof(params->grid_dim));
   memcpy(attrs->block_dim, params->block_dim, sizeof(params->block_dim));
   attrs->shared_memory_bytes = params->shared_memory_bytes;
+  attrs->cooperative = iree_any_bit_set(
+      params->flags, IREE_HAL_STREAMING_DISPATCH_FLAG_COOPERATIVE);
 
   // Capture native kernarg bytes. HIP pointers can be stored anywhere in the
   // argument payload, so graph nodes keep the byte image instead of retaining a

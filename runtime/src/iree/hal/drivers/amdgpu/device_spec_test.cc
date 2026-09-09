@@ -29,7 +29,9 @@ static void CreateDeviceSpecForProcessor(
       /*.numa=*/{/*.node_id=*/1},
       /*.physical_ordinal=*/7,
       /*.queue_count=*/2,
-      /*.compute_unit_count=*/40,
+      /*.supported_queue_features=*/
+      IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH,
+      /*.queue_execution_resources=*/{},
       /*.wavefront_size=*/wavefront_size,
       /*.maximum_waves_per_compute_unit=*/64,
       /*.maximum_workgroup_local_memory_size=*/64 * 1024,
@@ -37,6 +39,9 @@ static void CreateDeviceSpecForProcessor(
       /*.flags=*/IREE_HAL_AMDGPU_DEVICE_SPEC_PHYSICAL_DEVICE_FLAG_UUID |
           IREE_HAL_AMDGPU_DEVICE_SPEC_PHYSICAL_DEVICE_FLAG_PCI_ADDRESS,
   };
+  IREE_ASSERT_OK(iree_hal_amdgpu_queue_execution_resource_topology_initialize(
+      identity.version, /*execution_unit_count=*/40,
+      /*partition_count=*/1, &physical_device.queue_execution_resources));
   iree_hal_amdgpu_device_spec_params_t params = {
       /*.logical_device_id=*/IREE_SV("amdgpu://0"),
       /*.display_name=*/IREE_SV("AMDGPU test device"),
@@ -77,9 +82,24 @@ TEST(DeviceSpecTest, CreatesSpecFromParams) {
       iree_hal_device_spec_queues(device_spec);
   ASSERT_NE(queues, nullptr);
   ASSERT_EQ(queues->family_count, 1);
-  EXPECT_EQ(queues->families[0].provisioned_queue_count, 2);
-  EXPECT_EQ(queues->families[0].timestamp_frequency_hz,
-            kAgentTimestampFrequencyHz);
+  const iree_hal_queue_family_spec_t& queue_family = queues->families[0];
+  EXPECT_EQ(queue_family.provisioned_queue_count, 2);
+  ASSERT_EQ(queue_family.priority_count, 3u);
+  EXPECT_EQ(queue_family.priorities[0], -1);
+  EXPECT_EQ(queue_family.priorities[1], IREE_HAL_QUEUE_PRIORITY_NORMAL);
+  EXPECT_EQ(queue_family.priorities[2], 1);
+  EXPECT_EQ(queue_family.supported_queue_features,
+            IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH);
+  EXPECT_EQ(queue_family.execution_unit_count, 40u);
+  ASSERT_EQ(queue_family.execution_resource_group_count, 1u);
+  EXPECT_EQ(
+      queue_family.execution_resource_groups[0].minimum_selected_resource_count,
+      1u);
+  ASSERT_EQ(queue_family.execution_resource_count, 20u);
+  EXPECT_EQ(queue_family.execution_resources[19].first_execution_unit_ordinal,
+            38u);
+  EXPECT_EQ(queue_family.execution_resources[19].execution_unit_count, 2u);
+  EXPECT_EQ(queue_family.timestamp_frequency_hz, kAgentTimestampFrequencyHz);
 
   const iree_hal_device_dispatch_spec_t* dispatch =
       iree_hal_device_spec_dispatch(device_spec);
@@ -178,7 +198,8 @@ TEST(DeviceSpecTest, AdvertisesTargetsPerPhysicalDevice) {
           /*.numa=*/{},
           /*.physical_ordinal=*/4,
           /*.queue_count=*/1,
-          /*.compute_unit_count=*/40,
+          /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
+          /*.queue_execution_resources=*/{},
           /*.wavefront_size=*/32,
           /*.maximum_waves_per_compute_unit=*/64,
           /*.maximum_workgroup_local_memory_size=*/64 * 1024,
@@ -193,7 +214,8 @@ TEST(DeviceSpecTest, AdvertisesTargetsPerPhysicalDevice) {
           /*.numa=*/{},
           /*.physical_ordinal=*/9,
           /*.queue_count=*/1,
-          /*.compute_unit_count=*/40,
+          /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
+          /*.queue_execution_resources=*/{},
           /*.wavefront_size=*/32,
           /*.maximum_waves_per_compute_unit=*/64,
           /*.maximum_workgroup_local_memory_size=*/64 * 1024,
@@ -201,6 +223,11 @@ TEST(DeviceSpecTest, AdvertisesTargetsPerPhysicalDevice) {
           /*.flags=*/IREE_HAL_AMDGPU_DEVICE_SPEC_PHYSICAL_DEVICE_FLAG_NONE,
       },
   };
+  for (iree_host_size_t i = 0; i < IREE_ARRAYSIZE(physical_devices); ++i) {
+    IREE_ASSERT_OK(iree_hal_amdgpu_queue_execution_resource_topology_initialize(
+        identities[i].version, /*execution_unit_count=*/40,
+        /*partition_count=*/1, &physical_devices[i].queue_execution_resources));
+  }
   iree_hal_amdgpu_device_spec_params_t params = {
       /*.logical_device_id=*/IREE_SV("amdgpu://group"),
       /*.display_name=*/IREE_SV("AMDGPU test group"),

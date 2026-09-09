@@ -27,6 +27,13 @@ package(
 # its loader and symbol-export mechanisms before relaxing this constraint.
 _LINUX_COMPATIBILITY = ["@platforms//os:linux"]
 
+# HIP GPU tests require a compiled AMDGPU backend before runtime device
+# discovery.
+_HIP_GPU_COMPATIBILITY = _LINUX_COMPATIBILITY + select({
+    "//runtime/config/hal:driver_amdgpu": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
 hrx_cc_library(
     name = "printf_format",
     srcs = ["printf_format.c"],
@@ -88,6 +95,26 @@ hrx_cc_library(
 )
 
 hrx_cc_library(
+    name = "execution_resource",
+    srcs = ["execution_resource.c"],
+    hdrs = [
+        "api.h",
+        "execution_resource.h",
+    ],
+    includes = [
+        "../..",
+        "../../../include",
+        "../../libhrx",
+    ],
+    deps = [
+        "//libhrx/src/binding/common",
+        "//libhrx/src/binding/common:execution_resource",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+    ],
+)
+
+hrx_cc_library(
     name = "launch_params",
     srcs = ["launch_params.c"],
     hdrs = [
@@ -114,6 +141,68 @@ hrx_cc_library(
     deps = [
         "//runtime/src/iree/base",
         "//runtime/src/iree/base/threading",
+    ],
+)
+
+hrx_cc_library(
+    name = "execution_resource_descriptor",
+    srcs = ["execution_resource_descriptor.c"],
+    hdrs = ["execution_resource_descriptor.h"],
+    includes = [
+        "../..",
+        "../../../include",
+        "../../libhrx",
+    ],
+    deps = [
+        ":execution_resource",
+        ":handle_registry",
+        "//libhrx/src/binding/common",
+        "//libhrx/src/binding/common:execution_resource",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/threading",
+        "//runtime/src/iree/hal",
+    ],
+)
+
+hrx_cc_library(
+    name = "execution_context",
+    srcs = ["execution_context.c"],
+    hdrs = ["execution_context.h"],
+    includes = [
+        "../..",
+        "../../../include",
+        "../../libhrx",
+    ],
+    deps = [
+        ":execution_resource",
+        ":execution_resource_descriptor",
+        ":stream",
+        "//libhrx/src/binding/common",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/threading",
+        "//runtime/src/iree/hal",
+    ],
+)
+
+hrx_cc_library(
+    name = "stream",
+    srcs = ["stream.c"],
+    hdrs = [
+        "api.h",
+        "stream.h",
+    ],
+    includes = [
+        "../..",
+        "../../../include",
+        "../../libhrx",
+    ],
+    deps = [
+        ":handle_registry",
+        "//libhrx/src/binding/common",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/base/internal",
+        "//runtime/src/iree/base/threading",
+        "//runtime/src/iree/hal",
     ],
 )
 
@@ -145,12 +234,45 @@ hrx_cc_shared_library(
     target_compatible_with = _LINUX_COMPATIBILITY,
     deps = [
         ":blocking_printf_provider",
+        ":execution_context",
+        ":execution_resource",
+        ":execution_resource_descriptor",
         ":handle_registry",
         ":launch_params",
+        ":stream",
         "//libhrx/src/binding/common",
         "//runtime/src/iree/base",
         "//runtime/src/iree/base/threading",
         "//runtime/src/iree/hal",
+    ],
+)
+
+hrx_cc_test(
+    name = "execution_resource_test",
+    srcs = ["execution_resource_test.cc"],
+    deps = [
+        ":execution_resource",
+        "//libhrx/src/binding/common",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/testing:mock_device",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+hrx_cc_test(
+    name = "execution_resource_descriptor_test",
+    srcs = ["execution_resource_descriptor_test.cc"],
+    deps = [
+        ":execution_resource",
+        ":execution_resource_descriptor",
+        "//libhrx/src/binding/common",
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal",
+        "//runtime/src/iree/hal/testing:mock_device",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
     ],
 )
 
@@ -192,6 +314,27 @@ hrx_cc_test(
     },
     target_compatible_with = _LINUX_COMPATIBILITY,
     deps = [
+        "//build_tools/bazel:dl",
+        "//runtime/src/iree/testing:gtest",
+        "//runtime/src/iree/testing:gtest_main",
+    ],
+)
+
+hrx_cc_test(
+    name = "hip_execution_resource_api_test",
+    srcs = ["hip_execution_resource_api_test.cc"],
+    data = [":amdhip64"],
+    env = {
+        "HRX_TEST_LIBAMDHIP64": "$(location :amdhip64)",
+    },
+    sanitizer_suppressions = hsa_suppressions,
+    tags = [
+        "iree-run-requirement=runtime.resource.amd_gpu",
+        "runtime-resource=amd-gpu",
+    ],
+    target_compatible_with = _HIP_GPU_COMPATIBILITY,
+    deps = [
+        ":execution_resource",
         "//build_tools/bazel:dl",
         "//runtime/src/iree/testing:gtest",
         "//runtime/src/iree/testing:gtest_main",

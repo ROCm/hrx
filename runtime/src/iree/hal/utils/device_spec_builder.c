@@ -67,6 +67,10 @@ static iree_status_t iree_hal_device_spec_builder_copy_array(
   IREE_ASSERT_ARGUMENT(out_target);
   *out_target = NULL;
   if (!count) return iree_ok_status();
+  if (IREE_UNLIKELY(!source)) {
+    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                            "non-empty device spec array has NULL storage");
+  }
   IREE_RETURN_IF_ERROR(iree_allocator_malloc_array(host_allocator, count,
                                                    element_size, out_target));
   memcpy(*out_target, source, count * element_size);
@@ -186,6 +190,15 @@ static void iree_hal_device_spec_builder_reset_queues(
          ++i) {
       iree_hal_device_spec_builder_free_string(
           host_allocator, builder->storage->queue_families[i].name);
+      iree_allocator_free(
+          host_allocator,
+          (void*)builder->storage->queue_families[i].priorities);
+      iree_allocator_free(
+          host_allocator,
+          (void*)builder->storage->queue_families[i].execution_resource_groups);
+      iree_allocator_free(
+          host_allocator,
+          (void*)builder->storage->queue_families[i].execution_resources);
     }
   }
   iree_allocator_free(host_allocator, builder->storage->queue_families);
@@ -441,9 +454,41 @@ iree_status_t iree_hal_device_spec_builder_set_queues(
   builder->storage->queues.families = builder->storage->queue_families;
   for (iree_host_size_t i = 0;
        i < queues->family_count && iree_status_is_ok(status); ++i) {
+    iree_hal_queue_family_spec_t* target_family =
+        &builder->storage->queue_families[i];
+    target_family->name = iree_string_view_empty();
+    target_family->priorities = NULL;
+    target_family->execution_resource_groups = NULL;
+    target_family->execution_resources = NULL;
+  }
+  for (iree_host_size_t i = 0;
+       i < queues->family_count && iree_status_is_ok(status); ++i) {
+    const iree_hal_queue_family_spec_t* source_family = &queues->families[i];
+    iree_hal_queue_family_spec_t* target_family =
+        &builder->storage->queue_families[i];
     status = iree_hal_device_spec_builder_copy_string(
-        builder->host_allocator, queues->families[i].name,
-        &builder->storage->queue_families[i].name);
+        builder->host_allocator, source_family->name, &target_family->name);
+    if (iree_status_is_ok(status)) {
+      status = iree_hal_device_spec_builder_copy_array(
+          builder->host_allocator, source_family->priority_count,
+          sizeof(*source_family->priorities), source_family->priorities,
+          (void**)&target_family->priorities);
+    }
+    if (iree_status_is_ok(status)) {
+      status = iree_hal_device_spec_builder_copy_array(
+          builder->host_allocator,
+          source_family->execution_resource_group_count,
+          sizeof(*source_family->execution_resource_groups),
+          source_family->execution_resource_groups,
+          (void**)&target_family->execution_resource_groups);
+    }
+    if (iree_status_is_ok(status)) {
+      status = iree_hal_device_spec_builder_copy_array(
+          builder->host_allocator, source_family->execution_resource_count,
+          sizeof(*source_family->execution_resources),
+          source_family->execution_resources,
+          (void**)&target_family->execution_resources);
+    }
   }
   if (iree_status_is_ok(status)) {
     status = iree_hal_device_spec_builder_copy_array(

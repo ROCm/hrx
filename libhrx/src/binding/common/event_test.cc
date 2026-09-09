@@ -9,14 +9,31 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 #include "common/internal.h"
+#include "common/stream.h"
 #include "iree/base/api.h"
 #include "iree/hal/api.h"
 #include "iree/testing/gtest.h"
 #include "iree/testing/status_matchers.h"
 
 namespace {
+
+template <typename Cleanup>
+class ScopeExit {
+ public:
+  explicit ScopeExit(Cleanup cleanup) : cleanup_(std::move(cleanup)) {}
+  ~ScopeExit() { cleanup_(); }
+  ScopeExit(const ScopeExit&) = delete;
+  ScopeExit& operator=(const ScopeExit&) = delete;
+
+ private:
+  // Called once when this object leaves scope.
+  Cleanup cleanup_;
+};
+template <typename Cleanup>
+ScopeExit(Cleanup) -> ScopeExit<Cleanup>;
 
 //===----------------------------------------------------------------------===//
 // Tick pair to duration
@@ -122,6 +139,8 @@ TEST(TimestampDomainElapsedMsTest, ReportsNoDurationForAZeroedDomain) {
 // identity facet advertises none, so any nonzero value names a valid set.
 constexpr iree_hal_physical_device_affinity_t kFirstPhysicalDevice = 1ull << 0;
 constexpr iree_hal_physical_device_affinity_t kSecondPhysicalDevice = 1ull << 1;
+constexpr iree_hal_queue_priority_t kNormalQueuePriority =
+    IREE_HAL_QUEUE_PRIORITY_NORMAL;
 
 iree_hal_queue_family_spec_t QueueFamily(
     iree_hal_physical_device_affinity_t physical_device_affinity,
@@ -130,6 +149,7 @@ iree_hal_queue_family_spec_t QueueFamily(
   family.name = iree_make_cstring_view("test");
   family.provisioned_queue_count = 1;
   family.priority_count = 1;
+  family.priorities = &kNormalQueuePriority;
   family.timestamp_valid_bits = timestamp_valid_bits;
   family.timestamp_frequency_hz = timestamp_frequency_hz;
   family.physical_device_affinity = physical_device_affinity;
@@ -276,14 +296,20 @@ TEST(QueryTimestampDomainTest, RejectsADevicePublishingNoFacts) {
 }
 
 //===----------------------------------------------------------------------===//
-// The gate over a real device
+// Streaming events on a real task device
 //===----------------------------------------------------------------------===//
 
-// Runs the gate against the host CPU device, which is the one device reachable
-// from here that a context can be built on, and the only device in this tree
-// the gate rejects.
-class CpuContextTimestampDomainTest : public ::testing::Test {
+class CpuStreamingContextTest : public ::testing::Test {
  protected:
+  struct Gate {
+    // Semaphore blocking submitted test work.
+    iree_hal_semaphore_t* semaphore;
+    // Largest value cleanup must signal to release submitted work.
+    uint64_t release_value;
+    // Largest value the test has explicitly signaled.
+    uint64_t signaled_value;
+  };
+
   void SetUp() override {
     IREE_ASSERT_OK(HRX_CALL(hrx_cpu_initialize(/*flags=*/0)));
     hrx_device_t hrx_device = nullptr;
@@ -308,29 +334,116 @@ class CpuContextTimestampDomainTest : public ::testing::Test {
   }
 
   void TearDown() override {
+    // Fatal assertions return from a test body. Release every remaining gate
+    // before context teardown so a diagnostic failure cannot turn into a hang.
+    IREE_EXPECT_OK(ReleaseAllGates());
     iree_hal_streaming_context_release(context_);
+    for (iree_host_size_t i = 0; i < gate_count_; ++i) {
+      iree_hal_semaphore_release(gates_[i].semaphore);
+    }
     iree_arena_block_pool_deinitialize(&device_entry_.block_pool);
     iree_slim_mutex_deinitialize(&device_entry_.graph_memory_mutex);
     iree_slim_mutex_deinitialize(&device_entry_.primary_context_mutex);
     IREE_EXPECT_OK(HRX_CALL(hrx_cpu_shutdown()));
   }
 
+  iree_status_t CreateGate(uint64_t release_value,
+                           iree_hal_semaphore_t** out_semaphore) {
+    IREE_ASSERT_ARGUMENT(out_semaphore);
+    *out_semaphore = nullptr;
+    if (IREE_UNLIKELY(gate_count_ >= gates_.size())) {
+      return iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
+                              "test gate capacity exhausted");
+    }
+    iree_hal_semaphore_t* semaphore = nullptr;
+    iree_status_t status = iree_hal_semaphore_create(
+        context_->device, IREE_HAL_QUEUE_FAMILY_AFFINITY_ANY,
+        /*initial_value=*/0, IREE_HAL_SEMAPHORE_FLAG_NONE, &semaphore);
+    if (iree_status_is_ok(status)) {
+      gates_[gate_count_].semaphore = semaphore;
+      gates_[gate_count_].release_value = release_value;
+      gates_[gate_count_].signaled_value = 0;
+      ++gate_count_;
+      *out_semaphore = semaphore;
+    }
+    return status;
+  }
+
+  iree_status_t SignalGate(iree_hal_semaphore_t* semaphore,
+                           uint64_t new_value) {
+    for (iree_host_size_t i = 0; i < gate_count_; ++i) {
+      if (gates_[i].semaphore == semaphore) {
+        iree_status_t status = iree_hal_semaphore_signal(semaphore, new_value,
+                                                         /*frontier=*/nullptr);
+        if (iree_status_is_ok(status)) {
+          gates_[i].signaled_value =
+              iree_max(gates_[i].signaled_value, new_value);
+        }
+        return status;
+      }
+    }
+    return iree_make_status(IREE_STATUS_NOT_FOUND,
+                            "test gate is not registered");
+  }
+
+  iree_status_t ReleaseAllGates() {
+    iree_status_t status = iree_ok_status();
+    for (iree_host_size_t i = 0; i < gate_count_; ++i) {
+      if (gates_[i].signaled_value >= gates_[i].release_value) continue;
+      iree_status_t signal_status = iree_hal_semaphore_signal(
+          gates_[i].semaphore, gates_[i].release_value, /*frontier=*/nullptr);
+      if (iree_status_is_ok(signal_status)) {
+        gates_[i].signaled_value = gates_[i].release_value;
+      }
+      status = iree_status_join(status, signal_status);
+    }
+    return status;
+  }
+
+  iree_status_t CreateNonBlockingStream(
+      iree_hal_streaming_context_t* context,
+      iree_hal_streaming_stream_t** out_stream) {
+    IREE_ASSERT_ARGUMENT(context);
+    IREE_ASSERT_ARGUMENT(out_stream);
+    *out_stream = nullptr;
+    const iree_hal_queue_family_t* queue_family =
+        iree_hal_device_queue_family(context->device, /*family_ordinal=*/0);
+    if (IREE_UNLIKELY(!queue_family)) {
+      return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
+                              "task device has no queue family");
+    }
+    iree_hal_queue_params_t queue_params;
+    iree_hal_queue_params_initialize(&queue_params);
+    iree_hal_queue_t* queue = nullptr;
+    iree_status_t status = iree_hal_device_acquire_queue(
+        context->device, queue_family, &queue_params, &queue);
+    iree_hal_streaming_stream_t* stream = nullptr;
+    if (iree_status_is_ok(status)) {
+      status = iree_hal_streaming_stream_create(
+          context, queue, IREE_HAL_STREAMING_STREAM_FLAG_NON_BLOCKING,
+          /*priority=*/0, iree_allocator_system(), &stream);
+    }
+    iree_hal_queue_release(queue);
+    if (iree_status_is_ok(status)) *out_stream = stream;
+    return status;
+  }
+
   // Registry entry backing |context_|; outlives every context created from it.
   iree_hal_streaming_device_t device_entry_ = {};
-  // Context the gate answered for when it was created.
+  // Streaming context created on |device_entry_|.
   iree_hal_streaming_context_t* context_ = nullptr;
+  // Gates that teardown must release before destroying |context_|.
+  std::array<Gate, 2> gates_ = {};
+  // Number of initialized entries in |gates_|.
+  iree_host_size_t gate_count_ = 0;
 };
 
 // The CPU device publishes no timing facet and its single queue family reports
 // no frequency and no width, so a context created on it reads a zeroed domain.
-// That is all this pins: a context whose domain was never assigned reads the
-// same zeros, because the context allocation is zeroed, so it cannot see the
-// gate run. Which condition turns which device away is pinned by the fabricated
-// specs above; that the gate is wired into context creation at all is pinned on
-// a device that does advertise a domain, by the device-timing tests in
-// libhrx/cts/tests/hip/event_test.cpp, whose records capture no tick and whose
-// elapsed time reports unsupported without it.
-TEST_F(CpuContextTimestampDomainTest, LeavesTheDomainZeroedOnTheCpuDevice) {
+// The fabricated specs above pin each rejection case; this fixture pins that
+// the result is propagated through context creation. Device-timing CTS covers
+// the positive path on devices that advertise a timestamp domain.
+TEST_F(CpuStreamingContextTest, LeavesTheDomainZeroedOnTheCpuDevice) {
   EXPECT_EQ(0ull, context_->timestamp_domain.frequency_hz);
   EXPECT_EQ(0u, context_->timestamp_domain.valid_bits);
 }
@@ -340,11 +453,11 @@ TEST_F(CpuContextTimestampDomainTest, LeavesTheDomainZeroedOnTheCpuDevice) {
 // records names no clock to be measured on. This is the only reachable path to
 // that outcome anywhere in this tree: every device libhrx builds a context on
 // advertises a domain.
-TEST_F(CpuContextTimestampDomainTest, DirectRecordsOnAnUntimedDeviceGoUntimed) {
+TEST_F(CpuStreamingContextTest, DirectRecordsOnAnUntimedDeviceGoUntimed) {
   iree_hal_streaming_stream_t* stream = nullptr;
   IREE_ASSERT_OK(iree_hal_streaming_stream_create(
-      context_, IREE_HAL_STREAMING_STREAM_FLAG_NONE, /*priority=*/0,
-      iree_allocator_system(), &stream));
+      context_, context_->queue, IREE_HAL_STREAMING_STREAM_FLAG_NONE,
+      /*priority=*/0, iree_allocator_system(), &stream));
   iree_hal_streaming_event_t* start = nullptr;
   IREE_ASSERT_OK(iree_hal_streaming_event_create(
       context_, IREE_HAL_STREAMING_EVENT_FLAG_NONE, iree_allocator_system(),
@@ -374,17 +487,188 @@ TEST_F(CpuContextTimestampDomainTest, DirectRecordsOnAnUntimedDeviceGoUntimed) {
   iree_hal_streaming_stream_release(stream);
 }
 
+TEST_F(CpuStreamingContextTest, ContextRecordWaitsForEveryCurrentStream) {
+  iree_hal_streaming_stream_t* first_stream = nullptr;
+  iree_hal_streaming_stream_t* second_stream = nullptr;
+  iree_hal_streaming_event_t* event = nullptr;
+  ScopeExit cleanup([&] {
+    IREE_EXPECT_OK(ReleaseAllGates());
+    iree_hal_streaming_event_release(event);
+    iree_hal_streaming_stream_release(second_stream);
+    iree_hal_streaming_stream_release(first_stream);
+  });
+
+  IREE_ASSERT_OK(CreateNonBlockingStream(context_, &first_stream));
+  IREE_ASSERT_OK(CreateNonBlockingStream(context_, &second_stream));
+  ASSERT_NE(first_stream->queue, second_stream->queue);
+  ASSERT_NE(first_stream->queue, context_->queue);
+  ASSERT_NE(second_stream->queue, context_->queue);
+
+  iree_hal_semaphore_t* first_gate = nullptr;
+  IREE_ASSERT_OK(CreateGate(/*release_value=*/2, &first_gate));
+  iree_hal_semaphore_t* second_gate = nullptr;
+  IREE_ASSERT_OK(CreateGate(/*release_value=*/2, &second_gate));
+  uint64_t gate_value = 1;
+  const iree_hal_semaphore_list_t first_wait = {
+      /*.count=*/1,
+      /*.semaphores=*/&first_gate,
+      /*.payload_values=*/&gate_value,
+  };
+  const iree_hal_semaphore_list_t second_wait = {
+      /*.count=*/1,
+      /*.semaphores=*/&second_gate,
+      /*.payload_values=*/&gate_value,
+  };
+  IREE_ASSERT_OK(
+      iree_hal_streaming_stream_wait_semaphores(first_stream, first_wait));
+  IREE_ASSERT_OK(
+      iree_hal_streaming_stream_wait_semaphores(second_stream, second_wait));
+
+  IREE_ASSERT_OK(iree_hal_streaming_event_create(
+      context_, IREE_HAL_STREAMING_EVENT_FLAG_DISABLE_TIMING,
+      iree_allocator_system(), &event));
+  IREE_ASSERT_OK(iree_hal_streaming_context_record_event(context_, event));
+
+  int event_status = 0;
+  IREE_ASSERT_OK(iree_hal_streaming_event_query(event, &event_status));
+  EXPECT_EQ(1, event_status);
+  IREE_ASSERT_OK(SignalGate(first_gate, gate_value));
+  IREE_ASSERT_OK(iree_hal_streaming_event_query(event, &event_status));
+  EXPECT_EQ(1, event_status);
+  IREE_ASSERT_OK(SignalGate(second_gate, gate_value));
+  IREE_ASSERT_OK(iree_hal_streaming_context_synchronize(context_));
+  IREE_ASSERT_OK(iree_hal_streaming_event_query(event, &event_status));
+  EXPECT_EQ(0, event_status);
+
+  // Repeat with the opposite release order. The two rounds prove that the
+  // fan-in waits for each stream rather than accidentally naming only one.
+  gate_value = 2;
+  IREE_ASSERT_OK(
+      iree_hal_streaming_stream_wait_semaphores(first_stream, first_wait));
+  IREE_ASSERT_OK(
+      iree_hal_streaming_stream_wait_semaphores(second_stream, second_wait));
+  IREE_ASSERT_OK(iree_hal_streaming_context_record_event(context_, event));
+  IREE_ASSERT_OK(SignalGate(second_gate, gate_value));
+  IREE_ASSERT_OK(iree_hal_streaming_event_query(event, &event_status));
+  EXPECT_EQ(1, event_status);
+  IREE_ASSERT_OK(SignalGate(first_gate, gate_value));
+  IREE_ASSERT_OK(iree_hal_streaming_event_synchronize(event));
+}
+
+TEST_F(CpuStreamingContextTest, ContextWaitOrdersCurrentAndLaterStreams) {
+  iree_hal_streaming_stream_t* source_stream = nullptr;
+  iree_hal_streaming_stream_t* current_stream = nullptr;
+  iree_hal_streaming_stream_t* later_stream = nullptr;
+  iree_hal_streaming_event_t* event = nullptr;
+  ScopeExit cleanup([&] {
+    IREE_EXPECT_OK(ReleaseAllGates());
+    iree_hal_streaming_event_release(event);
+    iree_hal_streaming_stream_release(later_stream);
+    iree_hal_streaming_stream_release(current_stream);
+    iree_hal_streaming_stream_release(source_stream);
+  });
+
+  IREE_ASSERT_OK(CreateNonBlockingStream(context_, &source_stream));
+  IREE_ASSERT_OK(CreateNonBlockingStream(context_, &current_stream));
+  ASSERT_NE(source_stream->queue, current_stream->queue);
+
+  iree_hal_semaphore_t* gate = nullptr;
+  IREE_ASSERT_OK(CreateGate(/*release_value=*/1, &gate));
+  uint64_t gate_value = 1;
+  const iree_hal_semaphore_list_t gate_wait = {
+      /*.count=*/1,
+      /*.semaphores=*/&gate,
+      /*.payload_values=*/&gate_value,
+  };
+  IREE_ASSERT_OK(
+      iree_hal_streaming_stream_wait_semaphores(source_stream, gate_wait));
+
+  IREE_ASSERT_OK(iree_hal_streaming_event_create(
+      context_, IREE_HAL_STREAMING_EVENT_FLAG_DISABLE_TIMING,
+      iree_allocator_system(), &event));
+  IREE_ASSERT_OK(iree_hal_streaming_event_record(event, source_stream));
+  IREE_ASSERT_OK(iree_hal_streaming_context_wait_event(context_, event));
+
+  IREE_ASSERT_OK(CreateNonBlockingStream(context_, &later_stream));
+  ASSERT_NE(later_stream->queue, source_stream->queue);
+  ASSERT_NE(later_stream->queue, current_stream->queue);
+
+  int current_status = 0;
+  IREE_ASSERT_OK(
+      iree_hal_streaming_stream_query(current_stream, &current_status));
+  EXPECT_EQ(1, current_status);
+  int later_status = 0;
+  IREE_ASSERT_OK(iree_hal_streaming_stream_query(later_stream, &later_status));
+  EXPECT_EQ(1, later_status);
+
+  IREE_ASSERT_OK(SignalGate(gate, gate_value));
+  IREE_ASSERT_OK(iree_hal_streaming_stream_synchronize(current_stream));
+  IREE_ASSERT_OK(iree_hal_streaming_stream_synchronize(later_stream));
+}
+
+TEST_F(CpuStreamingContextTest, CrossContextWaitOrdersCurrentAndLaterStreams) {
+  iree_hal_streaming_context_t* target_context = nullptr;
+  iree_hal_streaming_stream_t* source_stream = nullptr;
+  iree_hal_streaming_stream_t* current_stream = nullptr;
+  iree_hal_streaming_stream_t* later_stream = nullptr;
+  iree_hal_streaming_event_t* event = nullptr;
+  ScopeExit cleanup([&] {
+    IREE_EXPECT_OK(ReleaseAllGates());
+    iree_hal_streaming_event_release(event);
+    iree_hal_streaming_stream_release(later_stream);
+    iree_hal_streaming_stream_release(current_stream);
+    iree_hal_streaming_stream_release(source_stream);
+    iree_hal_streaming_context_release(target_context);
+  });
+
+  iree_hal_streaming_context_flags_t context_flags = {};
+  context_flags.scheduling_mode = IREE_HAL_STREAMING_SCHEDULING_MODE_AUTO;
+  IREE_ASSERT_OK(iree_hal_streaming_context_create(
+      &device_entry_, context_flags, iree_allocator_system(), &target_context));
+  IREE_ASSERT_OK(CreateNonBlockingStream(context_, &source_stream));
+  IREE_ASSERT_OK(CreateNonBlockingStream(target_context, &current_stream));
+
+  iree_hal_semaphore_t* gate = nullptr;
+  IREE_ASSERT_OK(CreateGate(/*release_value=*/1, &gate));
+  uint64_t gate_value = 1;
+  const iree_hal_semaphore_list_t gate_wait = {
+      /*.count=*/1,
+      /*.semaphores=*/&gate,
+      /*.payload_values=*/&gate_value,
+  };
+  IREE_ASSERT_OK(
+      iree_hal_streaming_stream_wait_semaphores(source_stream, gate_wait));
+
+  IREE_ASSERT_OK(iree_hal_streaming_event_create(
+      context_, IREE_HAL_STREAMING_EVENT_FLAG_DISABLE_TIMING,
+      iree_allocator_system(), &event));
+  IREE_ASSERT_OK(iree_hal_streaming_event_record(event, source_stream));
+  IREE_ASSERT_OK(iree_hal_streaming_context_wait_event(target_context, event));
+
+  IREE_ASSERT_OK(CreateNonBlockingStream(target_context, &later_stream));
+  int current_status = 0;
+  IREE_ASSERT_OK(
+      iree_hal_streaming_stream_query(current_stream, &current_status));
+  EXPECT_EQ(1, current_status);
+  int later_status = 0;
+  IREE_ASSERT_OK(iree_hal_streaming_stream_query(later_stream, &later_status));
+  EXPECT_EQ(1, later_status);
+
+  IREE_ASSERT_OK(SignalGate(gate, gate_value));
+  IREE_ASSERT_OK(iree_hal_streaming_stream_synchronize(current_stream));
+  IREE_ASSERT_OK(iree_hal_streaming_stream_synchronize(later_stream));
+}
+
 // The records a graph launch enqueues run through the same helper as a direct
 // record, so a launch recording eleven events on this device acquires no slot
 // either.
-TEST_F(CpuContextTimestampDomainTest,
-       AGraphLaunchOnAnUntimedDeviceGoesUntimed) {
+TEST_F(CpuStreamingContextTest, AGraphLaunchOnAnUntimedDeviceGoesUntimed) {
   static constexpr iree_host_size_t kEventCount = 11;
 
   iree_hal_streaming_stream_t* stream = nullptr;
   IREE_ASSERT_OK(iree_hal_streaming_stream_create(
-      context_, IREE_HAL_STREAMING_STREAM_FLAG_NONE, /*priority=*/0,
-      iree_allocator_system(), &stream));
+      context_, context_->queue, IREE_HAL_STREAMING_STREAM_FLAG_NONE,
+      /*priority=*/0, iree_allocator_system(), &stream));
   iree_hal_streaming_graph_t* graph = nullptr;
   IREE_ASSERT_OK(iree_hal_streaming_graph_create(
       context_, IREE_HAL_STREAMING_GRAPH_FLAG_NONE, iree_allocator_system(),

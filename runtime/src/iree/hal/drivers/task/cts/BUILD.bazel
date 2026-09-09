@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 load("//runtime/build_tools/bazel:cc.bzl", "iree_runtime_cc_library")
+load("//runtime/build_tools/bazel:cc_test.bzl", "iree_runtime_cc_test")
 load("//runtime/build_tools/bazel:hal_cts.bzl", "iree_runtime_hal_cts_test_suite")
 
 package(
@@ -23,6 +24,32 @@ iree_runtime_cc_library(
         "//runtime/src/iree/hal/drivers/task/registration",
     ],
     alwayslink = True,
+)
+
+iree_runtime_cc_library(
+    name = "executable_testdata",
+    testonly = True,
+    srcs = ["executable_testdata.cc"],
+    deps = [
+        "//runtime/src/iree/base",
+        "//runtime/src/iree/hal/cts/util:registry",
+        "//runtime/src/iree/hal/drivers/task/executable/elf/testdata:compat_data",
+    ],
+    alwayslink = True,
+)
+
+iree_runtime_cc_test(
+    name = "queue_dispatch_concurrency_tests",
+    srcs = ["//runtime/src/iree/hal/cts/util:test_main.cc"],
+    deps = [
+        ":backends",
+        ":executable_testdata",
+        "//runtime/src/iree/base/tooling:flags",
+        "//runtime/src/iree/hal/cts/queue:queue_dispatch_concurrency_test",
+        "//runtime/src/iree/hal/cts/util:registry",
+        "//runtime/src/iree/hal/cts/util:test_base",
+        "//runtime/src/iree/testing:gtest",
+    ],
 )
 
 iree_runtime_hal_cts_test_suite(

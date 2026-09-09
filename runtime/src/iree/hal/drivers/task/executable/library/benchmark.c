@@ -178,9 +178,10 @@ static iree_status_t iree_hal_executable_library_run(
 
   // Perform the load, which will fail if the executable cannot be loaded or
   // there was an issue with the layouts.
-  static const iree_hal_queue_family_t queue_family = {
-      .ordinal = 0,
-  };
+  iree_hal_queue_family_t queue_family;
+  iree_hal_queue_family_initialize(
+      /*ordinal=*/0, &iree_hal_device_spec_queues(device_spec)->families[0],
+      &queue_family);
   iree_hal_executable_t* executable = NULL;
   IREE_RETURN_IF_ERROR(iree_hal_executable_loader_select_and_load(
       /*loader_count=*/1, &executable_loader, &queue_family,

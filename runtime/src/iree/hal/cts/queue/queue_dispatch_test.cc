@@ -93,6 +93,64 @@ TEST_P(QueueDispatchTest, DispatchWithConstantsAndBindings) {
   EXPECT_THAT(output_data, ContainerEq(std::vector<uint32_t>{13, 16, 19, 22}));
 }
 
+TEST_P(QueueDispatchTest,
+       DynamicallyAcquiredQueuesDispatchAtAdvertisedPriorities) {
+  const iree_hal_queue_family_t* queue_family =
+      iree_hal_queue_family(dispatch_queue_);
+  const iree_hal_queue_family_spec_t* family_spec =
+      iree_hal_queue_family_spec(queue_family);
+  if (!iree_any_bit_set(family_spec->flags,
+                        IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION)) {
+    GTEST_SKIP()
+        << "dispatch queue family does not support dynamic acquisition";
+  }
+
+  Ref<iree_hal_buffer_t> input_buffer;
+  {
+    std::vector<uint32_t> input_data = {2, 4, 6, 8};
+    IREE_ASSERT_OK(CreateDeviceBufferWithData(
+        input_data.data(), input_data.size() * sizeof(input_data[0]),
+        input_buffer.out()));
+  }
+  Ref<iree_hal_buffer_t> output_buffer;
+  IREE_ASSERT_OK(
+      CreateZeroedDeviceBuffer(4 * sizeof(uint32_t), output_buffer.out()));
+
+  iree_hal_buffer_ref_t binding_refs[2];
+  MakeScaleAndOffsetBindings(input_buffer, output_buffer, binding_refs);
+  const iree_hal_buffer_ref_list_t bindings = {
+      /*.count=*/IREE_ARRAYSIZE(binding_refs),
+      /*.values=*/binding_refs,
+  };
+  const uint32_t constant_data[] = {5, 3};
+  const iree_const_byte_span_t constants =
+      iree_make_const_byte_span(constant_data, sizeof(constant_data));
+
+  for (iree_host_size_t i = 0; i < family_spec->priority_count; ++i) {
+    const iree_hal_queue_priority_t priority = family_spec->priorities[i];
+    SCOPED_TRACE(priority);
+    iree_hal_queue_params_t params;
+    iree_hal_queue_params_initialize(&params);
+    params.priority = priority;
+    Ref<iree_hal_queue_t> queue;
+    IREE_ASSERT_OK(iree_hal_device_acquire_queue(device_, queue_family, &params,
+                                                 queue.out()));
+
+    SemaphoreList signal(device_, {0}, {1});
+    IREE_ASSERT_OK(iree_hal_queue_dispatch(
+        queue, iree_hal_semaphore_list_empty(), signal, executable_,
+        iree_hal_executable_function_from_index(0),
+        iree_hal_make_static_dispatch_config(1, 1, 1), constants, bindings,
+        IREE_HAL_DISPATCH_FLAG_NONE));
+    IREE_ASSERT_OK(iree_hal_semaphore_list_wait(signal, iree_infinite_timeout(),
+                                                IREE_ASYNC_WAIT_FLAG_NONE));
+
+    std::vector<uint32_t> output_data = ReadBufferData<uint32_t>(output_buffer);
+    EXPECT_THAT(output_data,
+                ContainerEq(std::vector<uint32_t>{13, 23, 33, 43}));
+  }
+}
+
 // Borrowed resource lifetimes are an optimization hint for callers that keep
 // resources live until dispatch completion. The observable dispatch behavior is
 // identical to the default retained mode.

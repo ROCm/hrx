@@ -62,6 +62,23 @@ static iree_status_t iree_hal_webgpu_queue_host_call(
       signal_semaphore_list, call, args, flags);
 }
 
+static iree_status_t iree_hal_webgpu_queue_query_dispatch_concurrency(
+    iree_hal_queue_t* base_queue, iree_hal_executable_t* executable,
+    iree_hal_executable_function_t function,
+    iree_hal_queue_dispatch_concurrency_params_t params,
+    iree_hal_queue_dispatch_concurrency_flags_t flags,
+    iree_hal_queue_dispatch_concurrency_t* out_concurrency) {
+  (void)base_queue;
+  (void)executable;
+  (void)function;
+  (void)params;
+  (void)flags;
+  (void)out_concurrency;
+  return iree_make_status(
+      IREE_STATUS_UNIMPLEMENTED,
+      "WebGPU queue dispatch concurrency queries are not implemented");
+}
+
 static iree_status_t iree_hal_webgpu_queue_dispatch(
     iree_hal_queue_t* base_queue,
     const iree_hal_semaphore_list_t wait_semaphore_list,
@@ -228,6 +245,8 @@ static const iree_hal_queue_vtable_t iree_hal_webgpu_queue_vtable = {
     .barrier = iree_hal_webgpu_queue_barrier,
     .execute = iree_hal_webgpu_queue_execute,
     .host_call = iree_hal_webgpu_queue_host_call,
+    .query_dispatch_concurrency =
+        iree_hal_webgpu_queue_query_dispatch_concurrency,
     .dispatch = iree_hal_webgpu_queue_dispatch,
     .atomic_wait = iree_hal_webgpu_queue_atomic_wait,
     .atomic_store = iree_hal_webgpu_queue_atomic_store,
@@ -271,8 +290,10 @@ iree_status_t iree_hal_webgpu_queue_initialize(
   if (!iree_status_is_ok(status)) {
     iree_arena_block_pool_deinitialize(&out_queue->block_pool);
   } else {
-    iree_hal_queue_initialize(queue_family, &iree_hal_webgpu_queue_vtable,
-                              &out_queue->base);
+    iree_hal_queue_params_t queue_params;
+    iree_hal_queue_params_initialize(&queue_params);
+    iree_hal_queue_initialize(queue_family, &queue_params,
+                              &iree_hal_webgpu_queue_vtable, &out_queue->base);
   }
   return status;
 }

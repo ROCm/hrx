@@ -14,6 +14,25 @@
 namespace iree::hal {
 namespace {
 
+static constexpr iree_hal_queue_priority_t kQueuePriorities[] = {-2, 0, 1};
+static constexpr iree_hal_queue_execution_resource_group_spec_t
+    kQueueExecutionResourceGroups[] = {
+        {/*.minimum_selected_resource_count=*/1},
+        {/*.minimum_selected_resource_count=*/0},
+};
+static constexpr iree_hal_queue_execution_resource_spec_t
+    kQueueExecutionResources[] = {
+        {/*.group_ordinal=*/0,
+         /*.first_execution_unit_ordinal=*/0,
+         /*.execution_unit_count=*/2},
+        {/*.group_ordinal=*/0,
+         /*.first_execution_unit_ordinal=*/2,
+         /*.execution_unit_count=*/2},
+        {/*.group_ordinal=*/1,
+         /*.first_execution_unit_ordinal=*/6,
+         /*.execution_unit_count=*/1},
+};
+
 static void ExpectStringViewEq(iree_string_view_t actual,
                                const char* expected) {
   EXPECT_TRUE(iree_string_view_equal(actual, iree_make_cstring_view(expected)));
@@ -107,7 +126,16 @@ static iree_hal_device_spec_params_t MakeTestSpecParams(
   out_queue_families[0] = {
       /*.name=*/iree_make_cstring_view("default"),
       /*.provisioned_queue_count=*/1,
-      /*.priority_count=*/1,
+      /*.priority_count=*/IREE_ARRAYSIZE(kQueuePriorities),
+      /*.priorities=*/kQueuePriorities,
+      /*.execution_unit_count=*/8,
+      /*.execution_resource_group_count=*/
+      IREE_ARRAYSIZE(kQueueExecutionResourceGroups),
+      /*.execution_resource_groups=*/kQueueExecutionResourceGroups,
+      /*.execution_resource_count=*/IREE_ARRAYSIZE(kQueueExecutionResources),
+      /*.execution_resources=*/kQueueExecutionResources,
+      /*.supported_queue_features=*/
+      IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH,
       /*.timestamp_valid_bits=*/64,
       /*.timestamp_frequency_hz=*/1000000000ull,
       /*.physical_device_affinity=*/1,
@@ -115,7 +143,7 @@ static iree_hal_device_spec_params_t MakeTestSpecParams(
           IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_TRANSFER,
       /*.atomic_capabilities=*/{},
       /*.zero_compute_atomic_capabilities=*/{},
-      /*.flags=*/IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_NONE,
+      /*.flags=*/IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION,
   };
   out_queue_families[0].atomic_capabilities.operations.device_scope_32 =
       IREE_HAL_ATOMIC_OPERATION_FLAG_WAIT |
@@ -373,13 +401,35 @@ TEST(DeviceSpecTest, CreateSerializeParseAndSelect) {
   const iree_hal_device_queue_spec_t* parsed_queues =
       iree_hal_device_spec_queues(parsed_spec);
   ASSERT_EQ(parsed_queues->family_count, 1u);
-  EXPECT_EQ(parsed_queues->families[0].provisioned_queue_count, 1u);
-  EXPECT_EQ(parsed_queues->families[0]
-                .atomic_capabilities.wait_conditions.device_scope_32,
+  const iree_hal_queue_family_spec_t* parsed_family =
+      &parsed_queues->families[0];
+  EXPECT_EQ(parsed_family->provisioned_queue_count, 1u);
+  ASSERT_EQ(parsed_family->priority_count, IREE_ARRAYSIZE(kQueuePriorities));
+  EXPECT_EQ(parsed_family->priorities[0], -2);
+  EXPECT_EQ(parsed_family->priorities[1], 0);
+  EXPECT_EQ(parsed_family->priorities[2], 1);
+  EXPECT_EQ(parsed_family->execution_unit_count, 8u);
+  ASSERT_EQ(parsed_family->execution_resource_group_count,
+            IREE_ARRAYSIZE(kQueueExecutionResourceGroups));
+  EXPECT_EQ(parsed_family->execution_resource_groups[0]
+                .minimum_selected_resource_count,
+            1u);
+  ASSERT_EQ(parsed_family->execution_resource_count,
+            IREE_ARRAYSIZE(kQueueExecutionResources));
+  EXPECT_EQ(parsed_family->execution_resources[2].group_ordinal, 1u);
+  EXPECT_EQ(parsed_family->execution_resources[2].first_execution_unit_ordinal,
+            6u);
+  EXPECT_EQ(parsed_family->execution_resources[2].execution_unit_count, 1u);
+  EXPECT_EQ(parsed_family->supported_queue_features,
+            IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH);
+  EXPECT_TRUE(
+      iree_all_bits_set(parsed_family->flags,
+                        IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION));
+  EXPECT_EQ(parsed_family->atomic_capabilities.wait_conditions.device_scope_32,
             IREE_HAL_ATOMIC_WAIT_CONDITION_FLAG_EQUAL |
                 IREE_HAL_ATOMIC_WAIT_CONDITION_FLAG_NOT_EQUAL);
-  EXPECT_EQ(parsed_queues->families[0]
-                .zero_compute_atomic_capabilities.operations.device_scope_32,
+  EXPECT_EQ(parsed_family->zero_compute_atomic_capabilities.operations
+                .device_scope_32,
             IREE_HAL_ATOMIC_OPERATION_FLAG_STORE);
   EXPECT_EQ(iree_hal_device_spec_sanitizer(parsed_spec)
                 ->asan.pool_options.redzone_size,

@@ -757,6 +757,20 @@ static iree_status_t iree_hal_replay_recorder_queue_host_call(
   return status;
 }
 
+static iree_status_t iree_hal_replay_recorder_queue_query_dispatch_concurrency(
+    iree_hal_queue_t* base_queue, iree_hal_executable_t* executable,
+    iree_hal_executable_function_t function,
+    iree_hal_queue_dispatch_concurrency_params_t params,
+    iree_hal_queue_dispatch_concurrency_flags_t flags,
+    iree_hal_queue_dispatch_concurrency_t* out_concurrency) {
+  iree_hal_replay_recorder_queue_t* queue =
+      (iree_hal_replay_recorder_queue_t*)base_queue;
+  return iree_hal_queue_query_dispatch_concurrency(
+      queue->base_queue,
+      iree_hal_replay_recorder_executable_base_or_self(executable), function,
+      params, flags, out_concurrency);
+}
+
 static iree_status_t iree_hal_replay_recorder_queue_dispatch(
     iree_hal_queue_t* base_queue,
     const iree_hal_semaphore_list_t wait_semaphore_list,
@@ -1354,9 +1368,12 @@ static iree_status_t iree_hal_replay_recorder_queue_prepare_transfer(
 
 static void iree_hal_replay_recorder_queue_destroy(
     iree_hal_queue_t* base_queue) {
-  // The proxy is embedded in its wrapper device allocation and has no
-  // independently owned state.
-  (void)base_queue;
+  iree_hal_replay_recorder_queue_t* queue =
+      (iree_hal_replay_recorder_queue_t*)base_queue;
+  if (iree_allocator_is_null(queue->storage_allocator)) return;
+  iree_allocator_t storage_allocator = queue->storage_allocator;
+  iree_hal_queue_release(queue->base_queue);
+  iree_allocator_free(storage_allocator, queue);
 }
 
 static iree_status_t iree_hal_replay_recorder_queue_allocate_alloca_storage(
@@ -1958,6 +1975,8 @@ static const iree_hal_queue_vtable_t iree_hal_replay_recorder_queue_vtable = {
     .barrier = iree_hal_replay_recorder_queue_barrier,
     .execute = iree_hal_replay_recorder_queue_execute,
     .host_call = iree_hal_replay_recorder_queue_host_call,
+    .query_dispatch_concurrency =
+        iree_hal_replay_recorder_queue_query_dispatch_concurrency,
     .dispatch = iree_hal_replay_recorder_queue_dispatch,
     .atomic_wait = iree_hal_replay_recorder_queue_atomic_wait,
     .atomic_store = iree_hal_replay_recorder_queue_atomic_store,
@@ -1982,12 +2001,38 @@ void iree_hal_replay_recorder_queue_initialize(
   IREE_ASSERT_ARGUMENT(base_queue);
   IREE_ASSERT_ARGUMENT(placement_device);
   IREE_ASSERT_ARGUMENT(out_queue);
-  iree_hal_queue_initialize(
-      queue_family, &iree_hal_replay_recorder_queue_vtable, &out_queue->base);
+  const iree_hal_queue_params_t queue_params = {
+      .priority = iree_hal_queue_priority(base_queue),
+      .features = iree_hal_queue_features(base_queue),
+      .execution_resources = iree_hal_queue_execution_resources(base_queue),
+  };
+  iree_hal_queue_initialize(queue_family, &queue_params,
+                            &iree_hal_replay_recorder_queue_vtable,
+                            &out_queue->base);
   out_queue->host_allocator = host_allocator;
+  out_queue->storage_allocator = iree_allocator_null();
   out_queue->recorder = recorder;
   out_queue->base_queue = base_queue;
   out_queue->placement_device = placement_device;
   out_queue->device_id = device_id;
   out_queue->queue_id = queue_id;
+}
+
+iree_status_t iree_hal_replay_recorder_queue_create(
+    const iree_hal_queue_family_t* queue_family,
+    iree_hal_replay_recorder_t* recorder, iree_hal_replay_object_id_t device_id,
+    iree_hal_replay_object_id_t queue_id, iree_hal_queue_t* base_queue,
+    iree_hal_device_t* placement_device, iree_allocator_t host_allocator,
+    iree_hal_replay_recorder_queue_t** out_queue) {
+  iree_hal_replay_recorder_queue_t* queue = NULL;
+  IREE_RETURN_IF_ERROR(
+      iree_allocator_malloc(host_allocator, sizeof(*queue), (void**)&queue));
+  memset(queue, 0, sizeof(*queue));
+  iree_hal_replay_recorder_queue_initialize(
+      queue_family, recorder, device_id, queue_id, base_queue, placement_device,
+      host_allocator, queue);
+  queue->storage_allocator = host_allocator;
+  iree_hal_queue_retain(queue->base_queue);
+  *out_queue = queue;
+  return iree_ok_status();
 }

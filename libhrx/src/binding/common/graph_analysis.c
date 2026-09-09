@@ -412,6 +412,18 @@ typedef struct iree_uint32x2_t {
   uint32_t values[2];
 } iree_uint32x2_t;
 
+// Returns true if |sort_node| can execute inside a command buffer. Cooperative
+// kernels require operation-level queue selection at submission time and
+// therefore remain direct queue dispatches in executable graphs.
+static bool iree_hal_streaming_graph_node_can_record(
+    const iree_hal_streaming_graph_sort_node_t* sort_node) {
+  if (!iree_hal_streaming_graph_node_is_recordable(sort_node->type)) {
+    return false;
+  }
+  return sort_node->type != IREE_HAL_STREAMING_GRAPH_NODE_TYPE_KERNEL ||
+         !sort_node->node->attrs.kernel.cooperative;
+}
+
 // Partitions sorted nodes into executable blocks and detects independent
 // workstreams within recordable partitions.
 //
@@ -445,8 +457,8 @@ static iree_uint32x2_t iree_hal_streaming_graph_partition_with_streams(
   uint8_t active_streams = 0;
 
   for (uint32_t i = 0; i < node_count;) {
-    bool is_recordable =
-        iree_hal_streaming_graph_node_is_recordable(nodes[i].type);
+    const bool is_recordable =
+        iree_hal_streaming_graph_node_can_record(&nodes[i]);
     if (!is_recordable) {
       // Non-recordable node gets its own partition.
       iree_hal_streaming_graph_partition_type_t partition_type;
@@ -459,6 +471,9 @@ static iree_uint32x2_t iree_hal_streaming_graph_partition_with_streams(
           break;
         case IREE_HAL_STREAMING_GRAPH_NODE_TYPE_GRAPH:
           partition_type = IREE_HAL_STREAMING_GRAPH_PARTITION_TYPE_GRAPH;
+          break;
+        case IREE_HAL_STREAMING_GRAPH_NODE_TYPE_KERNEL:
+          partition_type = IREE_HAL_STREAMING_GRAPH_PARTITION_TYPE_DISPATCH;
           break;
         default:
           partition_type = IREE_HAL_STREAMING_GRAPH_PARTITION_TYPE_EMPTY;
@@ -488,7 +503,7 @@ static iree_uint32x2_t iree_hal_streaming_graph_partition_with_streams(
       uint32_t partition_size = 0;
       while (i < node_count &&
              partition_size < IREE_HAL_STREAMING_GRAPH_MAX_PARTITION_SIZE &&
-             iree_hal_streaming_graph_node_is_recordable(nodes[i].type)) {
+             iree_hal_streaming_graph_node_can_record(&nodes[i])) {
         // Check if dependencies are satisfied.
         bool deps_satisfied = true;
         for (uint32_t j = 0; j < nodes[i].node->dependency_count; ++j) {

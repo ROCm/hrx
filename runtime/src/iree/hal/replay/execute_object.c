@@ -96,6 +96,102 @@ static iree_status_t iree_hal_replay_executor_store_provisioned_queue(
                                         entry);
 }
 
+static iree_status_t iree_hal_replay_executor_parse_dynamic_queue_payload(
+    const iree_hal_replay_file_record_t* record,
+    iree_hal_replay_dynamic_queue_object_payload_t* out_payload,
+    iree_host_size_t* out_execution_resource_count,
+    const uint8_t** out_execution_resource_data) {
+  iree_hal_replay_dynamic_queue_object_payload_t payload;
+  IREE_RETURN_IF_ERROR(iree_hal_replay_executor_require_payload(
+      record, IREE_HAL_REPLAY_PAYLOAD_TYPE_DYNAMIC_QUEUE_OBJECT,
+      sizeof(payload)));
+  memcpy(&payload, record->payload.data, sizeof(payload));
+  if (IREE_UNLIKELY(payload.execution_resource_count > IREE_HOST_SIZE_MAX)) {
+    return iree_make_status(
+        IREE_STATUS_OUT_OF_RANGE,
+        "replay dynamic queue execution-resource count overflows host size");
+  }
+  const iree_host_size_t execution_resource_count =
+      (iree_host_size_t)payload.execution_resource_count;
+  iree_host_size_t execution_resource_size = 0;
+  iree_host_size_t expected_payload_size = 0;
+  if (IREE_UNLIKELY(!iree_host_size_checked_mul(
+                        execution_resource_count,
+                        sizeof(iree_hal_queue_execution_resource_ordinal_t),
+                        &execution_resource_size) ||
+                    !iree_host_size_checked_add(sizeof(payload),
+                                                execution_resource_size,
+                                                &expected_payload_size) ||
+                    record->payload.data_length != expected_payload_size)) {
+    return iree_make_status(
+        IREE_STATUS_DATA_LOSS,
+        "replay dynamic queue object payload length mismatch");
+  }
+  *out_payload = payload;
+  *out_execution_resource_count = execution_resource_count;
+  *out_execution_resource_data = record->payload.data + sizeof(payload);
+  return iree_ok_status();
+}
+
+static iree_status_t iree_hal_replay_executor_create_dynamic_queue(
+    iree_hal_replay_executor_t* executor,
+    const iree_hal_replay_file_record_t* record) {
+  iree_hal_replay_dynamic_queue_object_payload_t payload;
+  iree_host_size_t execution_resource_count = 0;
+  const uint8_t* execution_resource_data = NULL;
+  IREE_RETURN_IF_ERROR(iree_hal_replay_executor_parse_dynamic_queue_payload(
+      record, &payload, &execution_resource_count, &execution_resource_data));
+
+  iree_hal_replay_object_entry_t* device_entry = NULL;
+  IREE_RETURN_IF_ERROR(iree_hal_replay_executor_lookup(
+      executor, record->header.object_id, IREE_HAL_REPLAY_OBJECT_TYPE_DEVICE,
+      &device_entry));
+  const iree_hal_queue_family_t* queue_family = iree_hal_device_queue_family(
+      device_entry->value.device,
+      (iree_hal_queue_family_ordinal_t)payload.family_ordinal);
+  if (IREE_UNLIKELY(!queue_family)) {
+    return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
+                            "replay dynamic queue family %u is unavailable",
+                            payload.family_ordinal);
+  }
+
+  iree_hal_queue_execution_resource_ordinal_t* execution_resources = NULL;
+  iree_status_t status = iree_ok_status();
+  if (execution_resource_count) {
+    status = iree_allocator_malloc_array(
+        executor->host_allocator, execution_resource_count,
+        sizeof(*execution_resources), (void**)&execution_resources);
+  }
+  if (iree_status_is_ok(status) && execution_resource_count) {
+    memcpy(execution_resources, execution_resource_data,
+           execution_resource_count * sizeof(*execution_resources));
+  }
+
+  iree_hal_queue_t* queue = NULL;
+  if (iree_status_is_ok(status)) {
+    const iree_hal_queue_params_t params = {
+        .priority = (iree_hal_queue_priority_t)payload.priority,
+        .features = (iree_hal_queue_feature_flags_t)payload.features,
+        .execution_resources =
+            {
+                .count = execution_resource_count,
+                .ordinals = execution_resources,
+            },
+    };
+    status = iree_hal_device_acquire_queue(device_entry->value.device,
+                                           queue_family, &params, &queue);
+  }
+  iree_allocator_free(executor->host_allocator, execution_resources);
+
+  if (iree_status_is_ok(status)) {
+    iree_hal_replay_object_entry_t entry = {.value.queue = queue};
+    status = iree_hal_replay_executor_store(
+        executor, record->header.related_object_id,
+        IREE_HAL_REPLAY_OBJECT_TYPE_QUEUE, entry);
+  }
+  return status;
+}
+
 iree_status_t iree_hal_replay_executor_replay_object(
     iree_hal_replay_executor_t* executor,
     const iree_hal_replay_file_record_t* record) {
@@ -105,6 +201,20 @@ iree_status_t iree_hal_replay_executor_replay_object(
     case IREE_HAL_REPLAY_OBJECT_TYPE_ALLOCATOR:
       return iree_hal_replay_executor_store_allocator(executor, record);
     case IREE_HAL_REPLAY_OBJECT_TYPE_QUEUE:
+      if (record->header.payload_type ==
+          IREE_HAL_REPLAY_PAYLOAD_TYPE_DYNAMIC_QUEUE_OBJECT) {
+        iree_hal_replay_dynamic_queue_object_payload_t payload;
+        iree_host_size_t execution_resource_count = 0;
+        const uint8_t* execution_resource_data = NULL;
+        IREE_RETURN_IF_ERROR(
+            iree_hal_replay_executor_parse_dynamic_queue_payload(
+                record, &payload, &execution_resource_count,
+                &execution_resource_data));
+        iree_hal_replay_object_entry_t* queue_entry = NULL;
+        return iree_hal_replay_executor_lookup(
+            executor, record->header.object_id,
+            IREE_HAL_REPLAY_OBJECT_TYPE_QUEUE, &queue_entry);
+      }
       return iree_hal_replay_executor_store_provisioned_queue(executor, record);
     default:
       return iree_ok_status();
@@ -1196,6 +1306,8 @@ iree_status_t iree_hal_replay_executor_replay_object_operation(
       return iree_hal_replay_executor_import_file(executor, record);
     case IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_CREATE_SEMAPHORE:
       return iree_hal_replay_executor_create_semaphore(executor, record);
+    case IREE_HAL_REPLAY_OPERATION_CODE_DEVICE_ACQUIRE_QUEUE:
+      return iree_hal_replay_executor_create_dynamic_queue(executor, record);
     case IREE_HAL_REPLAY_OPERATION_CODE_ALLOCATOR_ALLOCATE_BUFFER:
       return iree_hal_replay_executor_allocate_buffer(executor, record);
     case IREE_HAL_REPLAY_OPERATION_CODE_ALLOCATOR_IMPORT_BUFFER:

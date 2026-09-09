@@ -111,10 +111,14 @@ static iree_status_t iree_hal_webgpu_device_spec_create(
       .physical_devices = &physical_device,
       .flags = IREE_HAL_DEVICE_IDENTITY_FLAG_NONE,
   };
+  const iree_hal_queue_priority_t queue_priorities[] = {
+      IREE_HAL_QUEUE_PRIORITY_NORMAL,
+  };
   iree_hal_queue_family_spec_t queue_family = {
       .name = IREE_SV("default"),
       .provisioned_queue_count = 1,
-      .priority_count = 1,
+      .priority_count = IREE_ARRAYSIZE(queue_priorities),
+      .priorities = queue_priorities,
       .physical_device_affinity = 1ull,
       .role_flags = IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH |
                     IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_TRANSFER |
@@ -161,7 +165,6 @@ iree_status_t iree_hal_webgpu_device_create(
   memset(device, 0, total_size);
   iree_hal_resource_initialize(&iree_hal_webgpu_device_vtable,
                                &device->resource);
-  iree_hal_queue_family_initialize(/*ordinal=*/0, &device->queue_family);
   iree_string_view_append_to_buffer(
       identifier, &device->identifier,
       (char*)device + total_size - identifier.size);
@@ -183,6 +186,12 @@ iree_status_t iree_hal_webgpu_device_create(
   if (iree_status_is_ok(status)) {
     status = iree_hal_webgpu_device_spec_create(identifier, host_allocator,
                                                 &device->device_spec);
+  }
+  if (iree_status_is_ok(status)) {
+    const iree_hal_device_queue_spec_t* queue_spec =
+        iree_hal_device_spec_queues(device->device_spec);
+    iree_hal_queue_family_initialize(/*ordinal=*/0, &queue_spec->families[0],
+                                     &device->queue_family);
   }
 
   // Create the builtin compute pipelines for fill/copy operations.

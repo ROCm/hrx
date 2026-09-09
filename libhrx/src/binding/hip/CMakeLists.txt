@@ -107,6 +107,30 @@ endif()
 
 iree_cc_library(
   NAME
+    execution_resource
+  HDRS
+    "api.h"
+    "execution_resource.h"
+  SRCS
+    "execution_resource.c"
+  DEPS
+    iree::base
+    iree::hal
+    libhrx::src::binding::common
+    libhrx::src::binding::common::execution_resource
+    libhrx_defs
+  INCLUDES
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../libhrx>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../libhrx>"
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
     launch_params
   HDRS
     "api.h"
@@ -145,6 +169,84 @@ iree_cc_library(
   PUBLIC
 )
 
+iree_cc_library(
+  NAME
+    execution_resource_descriptor
+  HDRS
+    "execution_resource_descriptor.h"
+  SRCS
+    "execution_resource_descriptor.c"
+  DEPS
+    ::execution_resource
+    ::handle_registry
+    iree::base
+    iree::base::threading
+    iree::hal
+    libhrx::src::binding::common
+    libhrx::src::binding::common::execution_resource
+    libhrx_defs
+  INCLUDES
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../libhrx>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../libhrx>"
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    execution_context
+  HDRS
+    "execution_context.h"
+  SRCS
+    "execution_context.c"
+  DEPS
+    ::execution_resource
+    ::execution_resource_descriptor
+    ::stream
+    iree::base
+    iree::base::threading
+    iree::hal
+    libhrx::src::binding::common
+    libhrx_defs
+  INCLUDES
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../libhrx>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../libhrx>"
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    stream
+  HDRS
+    "api.h"
+    "stream.h"
+  SRCS
+    "stream.c"
+  DEPS
+    ::handle_registry
+    iree::base
+    iree::base::internal
+    iree::base::threading
+    iree::hal
+    libhrx::src::binding::common
+    libhrx_defs
+  INCLUDES
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../../include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../libhrx>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../libhrx>"
+  PUBLIC
+)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 iree_cc_library(
   NAME
@@ -161,8 +263,12 @@ iree_cc_library(
     "api_metadata.c"
   DEPS
     ::blocking_printf_provider
+    ::execution_context
+    ::execution_resource
+    ::execution_resource_descriptor
     ::handle_registry
     ::launch_params
+    ::stream
     iree::base
     iree::base::threading
     iree::hal
@@ -182,6 +288,39 @@ iree_cc_library(
   PUBLIC
 )
 endif()
+
+iree_cc_test(
+  NAME
+    execution_resource_test
+  SRCS
+    "execution_resource_test.cc"
+  DEPS
+    ::execution_resource
+    iree::base
+    iree::hal
+    iree::hal::testing::mock_device
+    iree::testing::gtest
+    iree::testing::gtest_main
+    libhrx::src::binding::common
+    libhrx_defs
+)
+
+iree_cc_test(
+  NAME
+    execution_resource_descriptor_test
+  SRCS
+    "execution_resource_descriptor_test.cc"
+  DEPS
+    ::execution_resource
+    ::execution_resource_descriptor
+    iree::base
+    iree::hal
+    iree::hal::testing::mock_device
+    iree::testing::gtest
+    iree::testing::gtest_main
+    libhrx::src::binding::common
+    libhrx_defs
+)
 
 iree_cc_test(
   NAME
@@ -220,6 +359,31 @@ iree_cc_test(
     libhrx_defs
   ENV
     "HRX_TEST_LIBAMDHIP64=$<TARGET_FILE:libhrx::src::binding::hip::amdhip64>"
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND IREE_HAL_DRIVER_AMDGPU)
+iree_cc_test(
+  NAME
+    hip_execution_resource_api_test
+  SRCS
+    "hip_execution_resource_api_test.cc"
+  DATA
+    ::amdhip64
+  DEPS
+    ${CMAKE_DL_LIBS}
+    ::execution_resource
+    iree::testing::gtest
+    iree::testing::gtest_main
+    libhrx_defs
+  ENV
+    "HRX_TEST_LIBAMDHIP64=$<TARGET_FILE:libhrx::src::binding::hip::amdhip64>"
+  LABELS
+    "iree-run-requirement=runtime.resource.amd_gpu"
+    "runtime-resource=amd-gpu"
+  SANITIZER_SUPPRESSIONS
+    lsan
+    hsa
 )
 endif()
 

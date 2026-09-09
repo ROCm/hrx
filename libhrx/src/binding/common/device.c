@@ -25,6 +25,43 @@ iree_status_t iree_hal_streaming_device_count(iree_host_size_t* out_count) {
   return iree_ok_status();
 }
 
+iree_status_t iree_hal_streaming_device_select_primary_queue(
+    iree_hal_streaming_device_t* device, iree_hal_queue_t** out_queue) {
+  IREE_ASSERT_ARGUMENT(device);
+  IREE_ASSERT_ARGUMENT(out_queue);
+
+  const iree_hal_queue_family_role_flags_t required_roles =
+      IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_TRANSFER |
+      IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH;
+  const iree_hal_device_queue_spec_t* queue_spec =
+      iree_hal_device_spec_queues(iree_hal_device_spec(device->hal_device));
+  for (iree_host_size_t family_ordinal = 0;
+       queue_spec && family_ordinal < queue_spec->family_count;
+       ++family_ordinal) {
+    const iree_hal_queue_family_spec_t* family_spec =
+        &queue_spec->families[family_ordinal];
+    if (family_spec->provisioned_queue_count == 0 ||
+        !iree_all_bits_set(family_spec->role_flags, required_roles)) {
+      continue;
+    }
+    iree_hal_queue_t* queue = iree_hal_device_queue(
+        device->hal_device, (iree_hal_queue_family_ordinal_t)family_ordinal,
+        /*queue_ordinal=*/0);
+    if (IREE_UNLIKELY(!queue)) {
+      return iree_make_status(
+          IREE_STATUS_FAILED_PRECONDITION,
+          "device advertises provisioned queue family %" PRIhsz
+          " but the queue is unavailable",
+          family_ordinal);
+    }
+    *out_queue = queue;
+    return iree_ok_status();
+  }
+  return iree_make_status(
+      IREE_STATUS_FAILED_PRECONDITION,
+      "device has no provisioned transfer-and-dispatch queue");
+}
+
 static iree_status_t iree_hal_streaming_device_by_ordinal(
     iree_hal_streaming_device_ordinal_t ordinal,
     iree_hal_streaming_device_t** out_device) {
@@ -372,10 +409,10 @@ iree_status_t iree_hal_streaming_device_retain_primary_context(
   IREE_ASSERT_ARGUMENT(device);
   IREE_ASSERT_ARGUMENT(out_context);
   IREE_TRACE_ZONE_BEGIN(z0);
-  *out_context = NULL;
 
   iree_slim_mutex_lock(&device->primary_context_mutex);
 
+  iree_hal_streaming_context_t* retained_context = NULL;
   iree_status_t status = iree_ok_status();
   if (device->primary_context_ref_count == INT32_MAX) {
     status = iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
@@ -384,14 +421,17 @@ iree_status_t iree_hal_streaming_device_retain_primary_context(
     ++device->primary_context_ref_count;
     status = iree_hal_streaming_device_create_primary_context_locked(device);
     if (iree_status_is_ok(status)) {
-      iree_hal_streaming_context_retain(device->primary_context);
-      *out_context = device->primary_context;
+      retained_context = device->primary_context;
+      iree_hal_streaming_context_retain(retained_context);
     } else {
       --device->primary_context_ref_count;
     }
   }
 
   iree_slim_mutex_unlock(&device->primary_context_mutex);
+  if (iree_status_is_ok(status)) {
+    *out_context = retained_context;
+  }
   IREE_TRACE_ZONE_END(z0);
   return status;
 }
@@ -403,232 +443,37 @@ iree_status_t iree_hal_streaming_device_release_primary_context(
 
   iree_slim_mutex_lock(&device->primary_context_mutex);
 
-  // Check if context is retained.
+  iree_status_t status = iree_ok_status();
   if (device->primary_context_ref_count == 0) {
-    iree_slim_mutex_unlock(&device->primary_context_mutex);
-    IREE_RETURN_AND_END_ZONE_IF_ERROR(
-        z0, iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-                             "primary context not retained"));
-  }
+    status = iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                              "primary context not retained");
+  } else {
+    iree_hal_streaming_context_t* retained_context = device->primary_context;
+    --device->primary_context_ref_count;
 
-  // Decrement reference count.
-  device->primary_context_ref_count--;
+    if (device->primary_context_ref_count == 0) {
+      status = iree_hal_streaming_context_wait_idle(retained_context,
+                                                    iree_infinite_timeout());
 
-  // If count reached 0, destroy the context.
-  if (device->primary_context_ref_count == 0 && device->primary_context) {
-    iree_hal_streaming_context_t* released_context = device->primary_context;
+      if (iree_hal_streaming_context_current() == retained_context) {
+        iree_hal_streaming_context_set_current(NULL);
+      }
 
-    // Wait for all operations to complete.
-    iree_status_t status = iree_hal_streaming_context_wait_idle(
-        released_context, iree_infinite_timeout());
-    if (!iree_status_is_ok(status)) {
-      iree_status_free(status);
+      // Release the device's primary-context ownership.
+      iree_hal_streaming_context_release(retained_context);
+      device->primary_context = NULL;
+
+      hrx_mem_pool_release(device->current_mem_pool);
+      device->current_mem_pool = NULL;
+      hrx_mem_pool_release(device->default_mem_pool);
+      device->default_mem_pool = NULL;
     }
 
-    // Clear current context if it was the primary context.
-    iree_hal_streaming_context_t* current_context =
-        iree_hal_streaming_context_current();
-    if (current_context == released_context) {
-      iree_hal_streaming_context_set_current(NULL);
-    }
-
-    // Release the context.
-    iree_hal_streaming_context_release(released_context);
-    device->primary_context = NULL;
-
-    // Also clear memory pools.
-    hrx_mem_pool_release(device->current_mem_pool);
-    device->current_mem_pool = NULL;
-    hrx_mem_pool_release(device->default_mem_pool);
-    device->default_mem_pool = NULL;
+    // Release the owning reference returned by the matching retain call.
+    iree_hal_streaming_context_release(retained_context);
   }
 
   iree_slim_mutex_unlock(&device->primary_context_mutex);
   IREE_TRACE_ZONE_END(z0);
-  return iree_ok_status();
-}
-
-//===----------------------------------------------------------------------===//
-// Occupancy calculation helpers
-//===----------------------------------------------------------------------===//
-
-iree_status_t iree_hal_streaming_calculate_max_active_blocks_per_multiprocessor(
-    iree_hal_streaming_device_t* device, iree_hal_streaming_symbol_t* symbol,
-    uint32_t block_size, uint32_t dynamic_shared_mem_size,
-    uint32_t* out_max_blocks) {
-  IREE_ASSERT_ARGUMENT(device);
-  IREE_ASSERT_ARGUMENT(symbol);
-  IREE_ASSERT_ARGUMENT(out_max_blocks);
-
-  // Verify the symbol is a function.
-  if (symbol->type != IREE_HAL_STREAMING_SYMBOL_TYPE_FUNCTION) {
-    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-                            "symbol is not a function (type=%d)", symbol->type);
-  }
-
-  if (block_size == 0) {
-    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-                            "block size must be positive");
-  }
-
-  // Calculate constraints.
-  // 1. Thread constraint: blocks limited by max threads per SM.
-  const uint32_t blocks_by_threads =
-      device->max_threads_per_multiprocessor / block_size;
-
-  // 2. Block constraint: hardware limit on blocks per SM.
-  const uint32_t blocks_by_limit = device->max_blocks_per_multiprocessor;
-
-  // 3. Register constraint: blocks limited by register usage.
-  uint32_t blocks_by_regs = UINT32_MAX;
-  const uint32_t register_count = symbol->function_attributes.register_count;
-  if (register_count > 0) {
-    // Round up register allocation to warp granularity.
-    const uint32_t warps_per_block =
-        (block_size + device->warp_size - 1) / device->warp_size;
-    const uint64_t registers_per_block =
-        (uint64_t)register_count * warps_per_block * device->warp_size;
-    if (registers_per_block > device->max_registers_per_multiprocessor) {
-      blocks_by_regs = 0;
-    } else if (registers_per_block > 0) {
-      blocks_by_regs =
-          device->max_registers_per_multiprocessor / registers_per_block;
-    }
-  }
-
-  // 4. Shared memory constraint.
-  uint32_t blocks_by_smem = UINT32_MAX;
-  const uint64_t total_shared_memory =
-      (uint64_t)symbol->function_attributes.fixed_shared_memory_size +
-      dynamic_shared_mem_size;
-  if (total_shared_memory > device->max_shared_memory_per_multiprocessor) {
-    blocks_by_smem = 0;
-  } else if (total_shared_memory > 0) {
-    blocks_by_smem =
-        device->max_shared_memory_per_multiprocessor / total_shared_memory;
-  }
-
-  // Take the minimum of all constraints.
-  uint32_t max_blocks = blocks_by_threads;
-  if (blocks_by_limit < max_blocks) max_blocks = blocks_by_limit;
-  if (blocks_by_regs < max_blocks) max_blocks = blocks_by_regs;
-  if (blocks_by_smem < max_blocks) max_blocks = blocks_by_smem;
-
-  *out_max_blocks = max_blocks;
-  return iree_ok_status();
-}
-
-iree_status_t iree_hal_streaming_calculate_optimal_block_size(
-    iree_hal_streaming_device_t* device, iree_hal_streaming_symbol_t* symbol,
-    uint32_t dynamic_shared_mem_size,
-    iree_hal_streaming_block_to_dynamic_smem_fn_t dynamic_shared_mem_callback,
-    uint32_t block_size_limit, uint32_t* out_block_size,
-    uint32_t* out_min_grid_size) {
-  IREE_ASSERT_ARGUMENT(device);
-  IREE_ASSERT_ARGUMENT(symbol);
-  IREE_ASSERT_ARGUMENT(out_block_size);
-  IREE_ASSERT_ARGUMENT(out_min_grid_size);
-
-  // Verify the symbol is a function.
-  if (symbol->type != IREE_HAL_STREAMING_SYMBOL_TYPE_FUNCTION) {
-    return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
-                            "symbol is not a function (type=%d)", symbol->type);
-  }
-
-  // Determine the maximum block size.
-  uint32_t max_block_size =
-      symbol->function_attributes.maximum_threads_per_block;
-  if (max_block_size == 0) {
-    max_block_size = device->max_threads_per_block;
-  }
-  if (block_size_limit > 0 && block_size_limit < max_block_size) {
-    max_block_size = block_size_limit;
-  }
-
-  // Try different block sizes and find the one with best occupancy.
-  uint32_t best_block_size = 32;
-  uint32_t best_occupancy = 0;
-
-  // Test common block sizes: 32, 64, 128, 256, 512, 768, 1024.
-  const uint32_t block_sizes[] = {32, 64, 128, 256, 512, 768, 1024};
-  for (iree_host_size_t i = 0; i < IREE_ARRAYSIZE(block_sizes); ++i) {
-    const uint32_t test_size = block_sizes[i];
-    if (test_size > max_block_size) break;
-
-    // Calculate dynamic shared memory size for this block size.
-    const uint32_t dynamic_smem = dynamic_shared_mem_callback
-                                      ? dynamic_shared_mem_callback(test_size)
-                                      : dynamic_shared_mem_size;
-
-    // Get max active blocks for this configuration.
-    uint32_t active_blocks = 0;
-    iree_status_t status =
-        iree_hal_streaming_calculate_max_active_blocks_per_multiprocessor(
-            device, symbol, test_size, dynamic_smem, &active_blocks);
-    if (!iree_status_is_ok(status)) {
-      iree_status_ignore(status);
-      continue;
-    }
-
-    // Calculate occupancy (active warps).
-    const uint32_t occupancy = active_blocks * test_size;
-
-    // Update best if this is better.
-    if (occupancy > best_occupancy) {
-      best_occupancy = occupancy;
-      best_block_size = test_size;
-    }
-  }
-
-  // Calculate grid size with the best block size.
-  const uint32_t mp_count =
-      device->multiprocessor_count > 0 ? device->multiprocessor_count : 1;
-
-  // Get dynamic shared memory for the best block size.
-  const uint32_t best_dynamic_smem =
-      dynamic_shared_mem_callback ? dynamic_shared_mem_callback(best_block_size)
-                                  : 0;
-
-  uint32_t blocks_per_mp = 0;
-  IREE_RETURN_IF_ERROR(
-      iree_hal_streaming_calculate_max_active_blocks_per_multiprocessor(
-          device, symbol, best_block_size, best_dynamic_smem, &blocks_per_mp));
-
-  *out_block_size = best_block_size;
-  *out_min_grid_size = blocks_per_mp * mp_count;
-
-  return iree_ok_status();
-}
-
-//===----------------------------------------------------------------------===//
-// Cooperative launch calculation helpers
-//===----------------------------------------------------------------------===//
-
-iree_status_t iree_hal_streaming_calculate_max_cooperative_blocks(
-    iree_hal_streaming_device_t* device, iree_hal_streaming_symbol_t* symbol,
-    uint32_t block_size, uint32_t dynamic_shared_mem_size,
-    uint32_t* out_max_blocks) {
-  IREE_ASSERT_ARGUMENT(device);
-  IREE_ASSERT_ARGUMENT(symbol);
-  IREE_ASSERT_ARGUMENT(out_max_blocks);
-
-  // Check if device supports cooperative launch.
-  // If not, return success with max blocks set to 0.
-  if (!device->supports_cooperative_launch) {
-    *out_max_blocks = 0;
-    return iree_ok_status();
-  }
-
-  // For cooperative kernels, all blocks must be resident on the device at once.
-  // Calculate the maximum number of active blocks per multiprocessor.
-  uint32_t max_blocks_per_sm = 0;
-  IREE_RETURN_IF_ERROR(
-      iree_hal_streaming_calculate_max_active_blocks_per_multiprocessor(
-          device, symbol, block_size, dynamic_shared_mem_size,
-          &max_blocks_per_sm));
-
-  // Total max blocks is limited by the number of SMs on the device.
-  *out_max_blocks = max_blocks_per_sm * device->multiprocessor_count;
-
-  return iree_ok_status();
+  return status;
 }

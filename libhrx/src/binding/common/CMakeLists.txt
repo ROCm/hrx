@@ -11,6 +11,24 @@ iree_add_all_subdirs()
 
 iree_cc_library(
   NAME
+    execution_resource
+  HDRS
+    "execution_resource.h"
+  SRCS
+    "execution_resource.c"
+  DEPS
+    iree::base
+    iree::base::threading
+    iree::hal
+    libhrx_defs
+  INCLUDES
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/..>"
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
     function_attributes
   HDRS
     "function_attributes.h"
@@ -44,6 +62,7 @@ iree_cc_library(
     "kpack.h"
     "memory.h"
     "module.h"
+    "occupancy.h"
     "stream.h"
     "tls.h"
   TEXTUAL_HDRS
@@ -64,11 +83,14 @@ iree_cc_library(
     "mem_pool.c"
     "memory.c"
     "module.c"
+    "occupancy.c"
     "peer.c"
     "registry.c"
     "stream.c"
+    "stream_host_call.c"
     "tls.c"
   DEPS
+    ::execution_resource
     ::function_attributes
     iree::async
     iree::async::util::proactor_pool
@@ -90,6 +112,21 @@ iree_cc_library(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../libhrx>"
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../../libhrx>"
   PUBLIC
+)
+
+iree_cc_test(
+  NAME
+    execution_resource_test
+  SRCS
+    "execution_resource_test.cc"
+  DEPS
+    ::execution_resource
+    iree::base
+    iree::hal
+    iree::hal::testing::mock_device
+    iree::testing::gtest
+    iree::testing::gtest_main
+    libhrx_defs
 )
 
 iree_cc_test(

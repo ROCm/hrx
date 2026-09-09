@@ -11,6 +11,25 @@ HRX_CTS_TEST_ATTRIBUTE_KERNEL void hrx_store_output(unsigned int* output,
   output[0] = value;
 }
 
+typedef struct hrx_launch_gate_t {
+  // Set once the gated kernel begins execution.
+  unsigned int entered;
+  // Set by the host to allow the gated kernel to finish.
+  unsigned int released;
+} hrx_launch_gate_t;
+
+// Marks entry through coherent host memory and remains active until the host
+// releases the launch. System-scope atomics make the gate observable across the
+// host and every participating device.
+HRX_CTS_TEST_ATTRIBUTE_KERNEL void hrx_gated_store_output(
+    hrx_launch_gate_t* gate, unsigned int* output, unsigned int value) {
+  __atomic_store_n(&gate->entered, 1, __ATOMIC_RELEASE);
+  while (!__atomic_load_n(&gate->released, __ATOMIC_ACQUIRE)) {
+    __builtin_amdgcn_s_sleep(1);
+  }
+  output[0] = value;
+}
+
 typedef struct hrx_nested_pointer_arguments_t {
   unsigned int* input;
   unsigned int* output;

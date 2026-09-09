@@ -75,8 +75,8 @@ class GraphExecTest : public ::testing::Test {
     IREE_ASSERT_OK(iree_hal_streaming_context_create(
         &device_entry_, context_flags, iree_allocator_system(), &context_));
     IREE_ASSERT_OK(iree_hal_streaming_stream_create(
-        context_, IREE_HAL_STREAMING_STREAM_FLAG_NONE, /*priority=*/0,
-        iree_allocator_system(), &stream_));
+        context_, context_->queue, IREE_HAL_STREAMING_STREAM_FLAG_NONE,
+        /*priority=*/0, iree_allocator_system(), &stream_));
   }
 
   void TearDown() override {
@@ -343,8 +343,8 @@ TEST_F(GraphExecTest, ChildGraphRecordRefusesALaunchOnAnotherContextsStream) {
   IREE_ASSERT_OK(iree_hal_streaming_context_create(
       &device_entry_, context_flags, iree_allocator_system(), &other_context));
   IREE_ASSERT_OK(iree_hal_streaming_stream_create(
-      other_context, IREE_HAL_STREAMING_STREAM_FLAG_NONE, /*priority=*/0,
-      iree_allocator_system(), &other_stream));
+      other_context, other_context->queue, IREE_HAL_STREAMING_STREAM_FLAG_NONE,
+      /*priority=*/0, iree_allocator_system(), &other_stream));
 
   IREE_ASSERT_OK(iree_hal_streaming_event_create(
       context_, IREE_HAL_STREAMING_EVENT_FLAG_NONE, iree_allocator_system(),

@@ -148,10 +148,6 @@ static inline bool iree_hal_executable_global_is_valid(
   return global.value != IREE_HAL_EXECUTABLE_GLOBAL_INVALID_VALUE;
 }
 
-typedef struct iree_hal_occupancy_info_t {
-  int reserved;
-} iree_hal_occupancy_info_t;
-
 // Flags defining executable function behavior.
 enum iree_hal_executable_function_flag_bits_e {
   IREE_HAL_EXECUTABLE_FUNCTION_FLAG_NONE = 0ull,
@@ -223,8 +219,6 @@ typedef struct iree_hal_executable_function_info_t {
   uint32_t workgroup_size[3];
   // Immutable resource usage for the loaded function image.
   iree_hal_executable_function_resource_usage_t resource_usage;
-  // Occupancy information hinting at how this function should be scheduled.
-  iree_hal_occupancy_info_t occupancy_info;
 } iree_hal_executable_function_info_t;
 
 // Specifies the type of a parameter.
@@ -319,6 +313,7 @@ IREE_API_EXPORT iree_host_size_t
 iree_hal_executable_function_count(iree_hal_executable_t* executable);
 
 // Returns information about the given |function|.
+// |out_info| is unchanged on failure.
 IREE_API_EXPORT iree_status_t iree_hal_executable_function_info(
     iree_hal_executable_t* executable, iree_hal_executable_function_t function,
     iree_hal_executable_function_info_t* out_info);

@@ -87,6 +87,11 @@ iree_hal_replay_file_range_t iree_hal_replay_dump_payload_subrange(
     const iree_hal_replay_file_range_t* payload_range,
     iree_host_size_t payload_offset, iree_host_size_t payload_length);
 
+iree_status_t iree_hal_replay_dump_dynamic_queue_layout(
+    const iree_hal_replay_file_record_t* record,
+    const iree_hal_replay_dynamic_queue_object_payload_t* payload,
+    iree_host_size_t* out_execution_resources_offset);
+
 iree_status_t iree_hal_replay_dump_compute_executable_load_ranges(
     const iree_hal_replay_file_record_t* record,
     const iree_hal_replay_executable_load_payload_t* payload,

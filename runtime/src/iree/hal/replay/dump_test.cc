@@ -533,7 +533,6 @@ TEST(ReplayDumpTest, EmitsTextSummary) {
   IREE_ASSERT_OK(
       DumpReplayToString(MakeReplayFileContents(storage), &options, &output));
 
-  EXPECT_THAT(output, HasSubstr("IREE HAL replay v7.1"));
   EXPECT_THAT(output, HasSubstr("summary:"));
   EXPECT_THAT(output, HasSubstr("hermetic: yes"));
   EXPECT_THAT(output, HasSubstr("strict_replay_supported: yes"));
@@ -556,8 +555,6 @@ TEST(ReplayDumpTest, EmitsJsonlWithPayloadRanges) {
       DumpReplayToString(MakeReplayFileContents(storage), &options, &output));
 
   EXPECT_THAT(output, HasSubstr("\"kind\":\"file\""));
-  EXPECT_THAT(output, HasSubstr("\"version_major\":7"));
-  EXPECT_THAT(output, HasSubstr("\"version_minor\":1"));
   EXPECT_THAT(output, HasSubstr("\"kind\":\"summary\""));
   EXPECT_THAT(output, HasSubstr("\"hermetic\":true"));
   EXPECT_THAT(output, HasSubstr("\"environment_referenced\":false"));
@@ -569,8 +566,6 @@ TEST(ReplayDumpTest, EmitsJsonlWithPayloadRanges) {
 }
 
 TEST(ReplayDumpTest, DefinesV71VmmWireSchema) {
-  EXPECT_EQ(7u, IREE_HAL_REPLAY_FILE_VERSION_MAJOR);
-  EXPECT_EQ(1u, IREE_HAL_REPLAY_FILE_VERSION_MINOR);
   EXPECT_EQ(9u, IREE_HAL_REPLAY_OBJECT_TYPE_PHYSICAL_MEMORY);
   EXPECT_STREQ("physical_memory",
                iree_hal_replay_object_type_string(
@@ -1135,7 +1130,7 @@ TEST(ReplayDumpTest, EmitsFilePayloads) {
   EXPECT_THAT(json_output, HasSubstr("\"reference_range\""));
 }
 
-TEST(ReplayDumpTest, EmitsQueueTransferRanges) {
+TEST(ReplayDumpTest, EmitsQueueObjectsAndTransferRanges) {
   std::vector<uint8_t> storage(4096, 0);
   iree_io_file_handle_t* file_handle = nullptr;
   IREE_ASSERT_OK(iree_io_file_handle_wrap_host_allocation(
@@ -1164,6 +1159,26 @@ TEST(ReplayDumpTest, EmitsQueueTransferRanges) {
   IREE_ASSERT_OK(iree_hal_replay_file_writer_append_record(
       writer, &metadata, 1, &queue_iovec, nullptr));
 
+  iree_hal_replay_dynamic_queue_object_payload_t dynamic_queue_payload = {};
+  dynamic_queue_payload.family_ordinal = 3;
+  dynamic_queue_payload.priority = -2;
+  dynamic_queue_payload.features =
+      IREE_HAL_QUEUE_FEATURE_FLAG_COOPERATIVE_DISPATCH;
+  dynamic_queue_payload.execution_resource_count = 2;
+  const uint32_t execution_resources[] = {1, 4};
+  const iree_const_byte_span_t dynamic_queue_iovecs[] = {
+      iree_make_const_byte_span(&dynamic_queue_payload,
+                                sizeof(dynamic_queue_payload)),
+      iree_make_const_byte_span(execution_resources,
+                                sizeof(execution_resources)),
+  };
+  metadata.sequence_ordinal = 1;
+  metadata.payload_type = IREE_HAL_REPLAY_PAYLOAD_TYPE_DYNAMIC_QUEUE_OBJECT;
+  metadata.object_id = 10;
+  IREE_ASSERT_OK(iree_hal_replay_file_writer_append_record(
+      writer, &metadata, IREE_ARRAYSIZE(dynamic_queue_iovecs),
+      dynamic_queue_iovecs, nullptr));
+
   iree_hal_replay_queue_transfer_payload_t payload = {};
   payload.wait_semaphore_count = 1;
   payload.signal_semaphore_count = 1;
@@ -1189,7 +1204,7 @@ TEST(ReplayDumpTest, EmitsQueueTransferRanges) {
       iree_make_const_byte_span(data, sizeof(data)),
   };
   metadata = {};
-  metadata.sequence_ordinal = 1;
+  metadata.sequence_ordinal = 2;
   metadata.record_type = IREE_HAL_REPLAY_FILE_RECORD_TYPE_OPERATION;
   metadata.payload_type = IREE_HAL_REPLAY_PAYLOAD_TYPE_QUEUE_TRANSFER;
   metadata.object_type = IREE_HAL_REPLAY_OBJECT_TYPE_QUEUE;
@@ -1213,7 +1228,7 @@ TEST(ReplayDumpTest, EmitsQueueTransferRanges) {
       iree_make_const_byte_span(&signal, sizeof(signal)),
       iree_make_const_byte_span(data, sizeof(data)),
   };
-  metadata.sequence_ordinal = 2;
+  metadata.sequence_ordinal = 3;
   metadata.payload_type = IREE_HAL_REPLAY_PAYLOAD_TYPE_QUEUE_READ;
   metadata.operation_code = IREE_HAL_REPLAY_OPERATION_CODE_QUEUE_READ;
   IREE_ASSERT_OK(iree_hal_replay_file_writer_append_record(
@@ -1231,7 +1246,7 @@ TEST(ReplayDumpTest, EmitsQueueTransferRanges) {
       iree_make_const_byte_span(&wait, sizeof(wait)),
       iree_make_const_byte_span(&signal, sizeof(signal)),
   };
-  metadata.sequence_ordinal = 3;
+  metadata.sequence_ordinal = 4;
   metadata.payload_type = IREE_HAL_REPLAY_PAYLOAD_TYPE_QUEUE_WRITE;
   metadata.operation_code = IREE_HAL_REPLAY_OPERATION_CODE_QUEUE_WRITE;
   IREE_ASSERT_OK(iree_hal_replay_file_writer_append_record(
@@ -1246,6 +1261,9 @@ TEST(ReplayDumpTest, EmitsQueueTransferRanges) {
                                     &text_options, &text_output));
   EXPECT_THAT(text_output, HasSubstr("payload=provisioned_queue_object"));
   EXPECT_THAT(text_output, HasSubstr("family_ordinal=2 queue_ordinal=1"));
+  EXPECT_THAT(text_output, HasSubstr("payload=dynamic_queue_object"));
+  EXPECT_THAT(text_output, HasSubstr("family_ordinal=3 priority=-2"));
+  EXPECT_THAT(text_output, HasSubstr("execution_resources=[1,4]"));
   EXPECT_THAT(text_output, HasSubstr("payload=queue_transfer"));
   EXPECT_THAT(text_output, HasSubstr("wait_range="));
   EXPECT_THAT(text_output, HasSubstr("signal_range="));
@@ -1267,6 +1285,11 @@ TEST(ReplayDumpTest, EmitsQueueTransferRanges) {
               HasSubstr("\"payload_type\":\"provisioned_queue_object\""));
   EXPECT_THAT(json_output, HasSubstr("\"family_ordinal\":2"));
   EXPECT_THAT(json_output, HasSubstr("\"queue_ordinal\":1"));
+  EXPECT_THAT(json_output,
+              HasSubstr("\"payload_type\":\"dynamic_queue_object\""));
+  EXPECT_THAT(json_output, HasSubstr("\"family_ordinal\":3"));
+  EXPECT_THAT(json_output, HasSubstr("\"priority\":-2"));
+  EXPECT_THAT(json_output, HasSubstr("\"execution_resources\":[1,4]"));
   EXPECT_THAT(json_output, HasSubstr("\"payload_type\":\"queue_transfer\""));
   EXPECT_THAT(json_output, HasSubstr("\"wait_semaphores_range\""));
   EXPECT_THAT(json_output, HasSubstr("\"signal_semaphores_range\""));

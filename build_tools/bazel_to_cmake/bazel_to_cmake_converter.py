@@ -2207,6 +2207,7 @@ class BuildFileFunctions(object):
         deps=None,
         internal_hdrs=None,
         internalize=True,
+        source_format=None,
         testonly=True,
         tags=None,
         target_compatible_with=None,
@@ -2233,6 +2234,9 @@ class BuildFileFunctions(object):
         srcs_block = self._convert_srcs_block(srcs)
         deps_block = self._convert_amdgpu_bitcode_deps_block(deps)
         internalize_block = self._convert_amdgpu_internalize_block(internalize)
+        source_format_block = self._convert_string_arg_block(
+            "SOURCE_FORMAT", source_format, quote=False
+        )
         testonly_block = self._convert_option_block("TESTONLY", testonly)
 
         self._emit_platform_guard_begin(target_compatible_with)
@@ -2249,6 +2253,7 @@ class BuildFileFunctions(object):
             f"{srcs_block}"
             f"{deps_block}"
             f"{internalize_block}"
+            f"{source_format_block}"
             f"{testonly_block}"
             f")\n\n"
         )

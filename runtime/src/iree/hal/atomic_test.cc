@@ -13,6 +13,15 @@
 
 namespace {
 
+static constexpr iree_hal_queue_priority_t kQueuePriority =
+    IREE_HAL_QUEUE_PRIORITY_NORMAL;
+static const iree_hal_queue_family_spec_t kQueueFamilySpec = {
+    /*.name=*/IREE_SV("test"),
+    /*.provisioned_queue_count=*/1,
+    /*.priority_count=*/1,
+    /*.priorities=*/&kQueuePriority,
+};
+
 static void NoopCommandBufferDestroy(
     iree_hal_command_buffer_t* command_buffer) {}
 
@@ -133,7 +142,8 @@ class AtomicTargetValidationTest : public ::testing::Test {
     command_buffer_vtable_.begin = NoopCommandBufferBegin;
     command_buffer_vtable_.end = NoopCommandBufferEnd;
     command_buffer_vtable_.atomic_store = NoopCommandBufferAtomicStore;
-    iree_hal_queue_family_initialize(/*ordinal=*/0, &queue_family_);
+    iree_hal_queue_family_initialize(/*ordinal=*/0, &kQueueFamilySpec,
+                                     &queue_family_);
     iree_hal_command_buffer_initialize(
         allocator_, &queue_family_, /*mode=*/0,
         IREE_HAL_COMMAND_CATEGORY_ATOMIC, /*binding_capacity=*/1,

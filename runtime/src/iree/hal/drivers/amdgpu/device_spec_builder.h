@@ -9,6 +9,7 @@
 
 #include "iree/base/api.h"
 #include "iree/hal/allocator.h"
+#include "iree/hal/drivers/amdgpu/queue_execution_resources.h"
 #include "iree/hal/drivers/amdgpu/target/identity.h"
 #include "iree/hal/drivers/amdgpu/util/pm4_capabilities.h"
 #include "iree/hal/utils/device_spec_builder.h"
@@ -45,8 +46,11 @@ typedef struct iree_hal_amdgpu_device_spec_physical_device_params_t {
   uint32_t physical_ordinal;
   // Host queue count initialized for this physical device.
   uint32_t queue_count;
-  // Compute unit count visible on this physical device.
-  uint32_t compute_unit_count;
+  // Immutable feature bits available on queues in this physical device's
+  // family.
+  iree_hal_queue_feature_flags_t supported_queue_features;
+  // Derived queue execution-resource topology for this physical device.
+  iree_hal_amdgpu_queue_execution_resource_topology_t queue_execution_resources;
   // Native wavefront size in lanes.
   uint32_t wavefront_size;
   // Maximum resident wave count per compute unit.
@@ -66,6 +70,8 @@ typedef enum iree_hal_amdgpu_device_spec_param_flag_bits_e {
   IREE_HAL_AMDGPU_DEVICE_SPEC_PARAM_FLAG_NONE = 0u,
   // DMA-BUF import/export is supported.
   IREE_HAL_AMDGPU_DEVICE_SPEC_PARAM_FLAG_DMABUF = 1u << 0,
+  // Queue families support exact dynamic hardware queue acquisition.
+  IREE_HAL_AMDGPU_DEVICE_SPEC_PARAM_FLAG_DYNAMIC_QUEUE_ACQUISITION = 1u << 1,
 } iree_hal_amdgpu_device_spec_param_flag_bits_t;
 
 // Parameters for creating an AMDGPU HAL device spec.

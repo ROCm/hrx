@@ -45,7 +45,90 @@ typedef struct hipStream_st* hipStream_t;
 typedef struct hipEvent_st* hipEvent_t;
 typedef struct hipArray_st* hipArray_t;
 typedef const struct hipArray_st* hipArray_const_t;
+typedef struct ihipExecutionCtx_t* hipExecutionCtx_t;
+typedef struct ihipDevResourceDesc_t* hipDevResourceDesc_t;
 typedef void* hipDeviceptr_t;
+
+typedef enum hipDevResourceType {
+  hipDevResourceTypeInvalid = 0,
+  hipDevResourceTypeSm = 1,
+  hipDevResourceTypeWorkqueueConfig = 1000,
+  hipDevResourceTypeWorkqueue = 10000,
+} hipDevResourceType;
+
+typedef enum hipDevSmResourceGroup_flags {
+  hipDevSmResourceGroupDefault = 0,
+  hipDevSmResourceGroupBackfill = 0x1,
+} hipDevSmResourceGroup_flags;
+
+typedef enum hipDevSmResourceSplitByCount_flags {
+  hipDevSmResourceSplitIgnoreSmCoscheduling = 0x1,
+  hipDevSmResourceSplitMaxPotentialClusterSize = 0x2,
+} hipDevSmResourceSplitByCount_flags;
+
+typedef enum hipDevWorkqueueConfigScope {
+  hipDevWorkqueueConfigScopeDeviceCtx = 0,
+  hipDevWorkqueueConfigScopeGreenCtxBalanced = 1,
+} hipDevWorkqueueConfigScope;
+
+#define HIP_RESOURCE_ABI_BYTES 40
+
+typedef struct hipDevSmResource {
+  // Number of SMs represented by this resource.
+  unsigned int smCount;
+  // Smallest valid SM partition size.
+  unsigned int minSmPartitionSize;
+  // Required SM count alignment for coscheduled work.
+  unsigned int smCoscheduledAlignment;
+  // Resource flags from hipDevSmResourceGroup_flags.
+  unsigned int flags;
+} hipDevSmResource;
+
+typedef struct hipDevWorkqueueConfigResource {
+  // Device ordinal owning the workqueue configuration.
+  int device;
+  // Maximum number of concurrent workqueues.
+  unsigned int wqConcurrencyLimit;
+  // Scope over which workqueues share this configuration.
+  hipDevWorkqueueConfigScope sharingScope;
+} hipDevWorkqueueConfigResource;
+
+typedef struct hipDevWorkqueueResource {
+  // Runtime-owned workqueue representation.
+  unsigned char reserved[HIP_RESOURCE_ABI_BYTES];
+} hipDevWorkqueueResource;
+
+typedef struct hipDevResource_st {
+  // Active member of the resource payload union.
+  hipDevResourceType type;
+  // Runtime-owned metadata preserving the public ABI layout.
+  unsigned char _internal_padding[92];
+  union {
+    // SM resource payload.
+    hipDevSmResource sm;
+    // Workqueue configuration payload.
+    hipDevWorkqueueConfigResource wqConfig;
+    // Workqueue payload.
+    hipDevWorkqueueResource wq;
+    // Storage reserving the complete resource payload ABI.
+    unsigned char _oversize[HIP_RESOURCE_ABI_BYTES];
+  };
+  // Next resource when an API returns a linked resource sequence.
+  struct hipDevResource_st* nextResource;
+} hipDevResource;
+
+typedef struct hipDevSmResourceGroupParams_st {
+  // Requested SM count, or zero for ordered discovery; updated on success.
+  unsigned int smCount;
+  // Required coscheduled SM count, or zero for the input resource default.
+  unsigned int coscheduledSmCount;
+  // Advisory preferred coscheduled SM count, or zero for the required count.
+  unsigned int preferredCoscheduledSmCount;
+  // Group behavior from hipDevSmResourceGroup_flags.
+  unsigned int flags;
+  // Reserved storage preserving the public ABI layout.
+  unsigned int reserved[12];
+} hipDevSmResourceGroupParams;
 
 typedef enum hipArray_Format {
   HIP_AD_FORMAT_UNSIGNED_INT8 = 0x01,
@@ -78,6 +161,27 @@ typedef struct HIP_ARRAY3D_DESCRIPTOR {
 typedef struct dim3 {
   unsigned int x, y, z;
 } dim3;
+
+// Per-device launch description used by multi-device launch APIs.
+typedef struct hipLaunchParams_t {
+  // Registered host function address.
+  void* func;
+  // Grid dimensions in blocks.
+  dim3 gridDim;
+  // Block dimensions in threads.
+  dim3 blockDim;
+  // Array of pointers to argument values.
+  void** args;
+  // Dynamic shared memory available to each block, in bytes.
+  size_t sharedMem;
+  // Explicit stream associated with the target device.
+  hipStream_t stream;
+} hipLaunchParams;
+
+// Omits synchronization of participating streams before the launch set.
+#define hipCooperativeLaunchMultiDeviceNoPreSync 0x01
+// Omits synchronization of participating streams after the launch set.
+#define hipCooperativeLaunchMultiDeviceNoPostSync 0x02
 
 // Pitched pointer type.
 typedef struct hipPitchedPtr {
@@ -196,6 +300,9 @@ typedef enum HRX_HIP_NODISCARD hipError_t {
   hipErrorCapturedEvent = 907,
   hipErrorStreamCaptureWrongThread = 908,
   hipErrorGraphExecUpdateFailure = 910,
+  hipErrorInvalidResourceType = 914,
+  hipErrorInvalidResourceConfiguration = 915,
+  hipErrorStreamDetached = 916,
   hipErrorUnknown = 999,
   hipErrorRuntimeMemory = 1052,
   hipErrorRuntimeOther = 1053,
@@ -1256,6 +1363,48 @@ HIPAPI hipError_t hipDeviceReset(void);
 HIPAPI hipError_t hipSetDeviceFlags(unsigned int flags);
 HIPAPI hipError_t hipGetDeviceFlags(unsigned int* flags);
 
+// Execution resource and context management.
+HIPAPI hipError_t hipDeviceGetDevResource(hipDevice_t device,
+                                          hipDevResource* resource,
+                                          hipDevResourceType type);
+HIPAPI hipError_t hipDevSmResourceSplit(
+    hipDevResource* result, unsigned int groupCount,
+    const hipDevResource* input, hipDevResource* remainder, unsigned int flags,
+    hipDevSmResourceGroupParams* groupParameters);
+HIPAPI hipError_t hipDevSmResourceSplitByCount(hipDevResource* result,
+                                               unsigned int* groupCount,
+                                               const hipDevResource* input,
+                                               hipDevResource* remainder,
+                                               unsigned int flags,
+                                               unsigned int minimumCount);
+HIPAPI hipError_t hipDevResourceGenerateDesc(hipDevResourceDesc_t* descriptor,
+                                             hipDevResource* resources,
+                                             unsigned int resourceCount);
+HIPAPI hipError_t hipGreenCtxCreate(hipExecutionCtx_t* context,
+                                    hipDevResourceDesc_t descriptor, int device,
+                                    unsigned int flags);
+HIPAPI hipError_t hipExecutionCtxDestroy(hipExecutionCtx_t context);
+HIPAPI hipError_t hipDeviceGetExecutionCtx(hipExecutionCtx_t* context,
+                                           int device);
+HIPAPI hipError_t hipExecutionCtxStreamCreate(hipStream_t* stream,
+                                              hipExecutionCtx_t context,
+                                              unsigned int flags, int priority);
+HIPAPI hipError_t hipExecutionCtxGetDevResource(hipExecutionCtx_t context,
+                                                hipDevResource* resource,
+                                                hipDevResourceType type);
+HIPAPI hipError_t hipExecutionCtxGetDevice(int* device,
+                                           hipExecutionCtx_t context);
+HIPAPI hipError_t hipExecutionCtxGetId(hipExecutionCtx_t context,
+                                       unsigned long long* contextId);
+HIPAPI hipError_t hipStreamGetDevResource(hipStream_t stream,
+                                          hipDevResource* resource,
+                                          hipDevResourceType type);
+HIPAPI hipError_t hipExecutionCtxRecordEvent(hipExecutionCtx_t context,
+                                             hipEvent_t event);
+HIPAPI hipError_t hipExecutionCtxSynchronize(hipExecutionCtx_t context);
+HIPAPI hipError_t hipExecutionCtxWaitEvent(hipExecutionCtx_t context,
+                                           hipEvent_t event);
+
 // Primary context
 HIPAPI hipError_t hipDevicePrimaryCtxRetain(hipCtx_t* pctx, hipDevice_t dev);
 HIPAPI hipError_t hipDevicePrimaryCtxRelease(hipDevice_t dev);
@@ -1547,6 +1696,16 @@ HIPAPI const char* hipKernelNameRefByPtr(const void* hostFunction,
 HIPAPI hipError_t hipLaunchKernel(const void* function_address, dim3 numBlocks,
                                   dim3 dimBlocks, void** args,
                                   size_t sharedMemBytes, hipStream_t stream);
+// Enqueues matching registered kernel launches across explicit device streams.
+// This is a non-cooperative AMD extension; |flags| only control the optional
+// pre-launch and post-launch stream synchronization.
+HIPAPI hipError_t hipExtLaunchMultiKernelMultiDevice(
+    hipLaunchParams* launchParamsList, int numDevices, unsigned int flags);
+HIPAPI hipError_t hipLaunchCooperativeKernel(const void* function_address,
+                                             dim3 grid_dim, dim3 block_dim,
+                                             void** kernel_params,
+                                             unsigned int shared_memory_bytes,
+                                             hipStream_t stream);
 HIPAPI hipError_t hipModuleLaunchKernel(
     hipFunction_t f, unsigned int gridDimX, unsigned int gridDimY,
     unsigned int gridDimZ, unsigned int blockDimX, unsigned int blockDimY,
@@ -1571,12 +1730,16 @@ HIPAPI hipError_t hipExtModuleLaunchKernel(
 HIPAPI hipError_t hipLaunchHostFunc(hipStream_t hStream, hipHostFn_t fn,
                                     void* userData);
 
-// Occupancy functions
+// Queries the maximum concurrently resident blocks per scheduling domain for
+// a loaded module function and exact launch configuration.
 HIPAPI hipError_t hipModuleOccupancyMaxActiveBlocksPerMultiprocessor(
     int* numBlocks, hipFunction_t f, int blockSize, size_t dynSharedMemPerBlk);
 HIPAPI hipError_t hipModuleOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
     int* numBlocks, hipFunction_t f, int blockSize, size_t dynSharedMemPerBlk,
     unsigned int flags);
+
+// Selects a block size maximizing resident invocations and returns the minimum
+// exact-queue grid size needed to occupy every scheduling domain.
 HIPAPI hipError_t hipModuleOccupancyMaxPotentialBlockSize(
     int* gridSize, int* blockSize, hipFunction_t f, size_t dynSharedMemPerBlk,
     int blockSizeLimit);
@@ -1584,12 +1747,18 @@ HIPAPI hipError_t hipModuleOccupancyMaxPotentialBlockSizeWithFlags(
     int* gridSize, int* blockSize, hipFunction_t f, size_t dynSharedMemPerBlk,
     int blockSizeLimit, unsigned int flags);
 
-// Runtime occupancy functions (for host function pointers)
+// Runtime occupancy equivalents resolving compiler-registered host functions.
 HIPAPI hipError_t hipOccupancyMaxActiveBlocksPerMultiprocessor(
     int* numBlocks, const void* f, int blockSize, size_t dynSharedMemPerBlk);
 HIPAPI hipError_t hipOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
     int* numBlocks, const void* f, int blockSize, size_t dynSharedMemPerBlk,
     unsigned int flags);
+
+// Finds the greatest dynamic shared-memory size preserving |numBlocks|
+// resident blocks per scheduling domain.
+HIPAPI hipError_t hipOccupancyAvailableDynamicSMemPerBlock(
+    size_t* dynamicSmemSize, const void* f, int numBlocks, int blockSize);
+
 HIPAPI hipError_t hipOccupancyMaxPotentialBlockSize(int* gridSize,
                                                     int* blockSize,
                                                     const void* f,

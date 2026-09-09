@@ -10,6 +10,7 @@
 #include "iree/async/frontier.h"
 #include "iree/base/api.h"
 #include "iree/base/internal/arena.h"
+#include "iree/base/threading/mutex.h"
 #include "iree/hal/api.h"
 #include "iree/hal/drivers/amdgpu/api.h"
 #include "iree/hal/drivers/amdgpu/asan_state.h"
@@ -76,6 +77,26 @@ typedef struct iree_hal_amdgpu_host_queue_epoch_wait_t {
 //===----------------------------------------------------------------------===//
 // iree_hal_amdgpu_logical_device_t
 //===----------------------------------------------------------------------===//
+
+// Queue indices are encoded in eight bits of an async frontier axis.
+#define IREE_HAL_AMDGPU_LOGICAL_DEVICE_QUEUE_SLOT_COUNT (UINT8_MAX + 1u)
+
+// Number of allocation bitmap words covering every queue identity slot.
+#define IREE_HAL_AMDGPU_LOGICAL_DEVICE_QUEUE_SLOT_WORD_COUNT \
+  (IREE_HAL_AMDGPU_LOGICAL_DEVICE_QUEUE_SLOT_COUNT / 64u)
+
+// Logical-device allocator for dynamically acquired queue identity slots.
+typedef struct iree_hal_amdgpu_logical_device_queue_slots_t {
+  // Serializes slot allocation, release, and incarnation advancement.
+  iree_slim_mutex_t mutex;
+
+  // Bitmap of slots currently owned by live dynamically acquired queues.
+  uint64_t live_bits[IREE_HAL_AMDGPU_LOGICAL_DEVICE_QUEUE_SLOT_WORD_COUNT];
+
+  // Last incarnation assigned to each slot. Zero is reserved for provisioned
+  // queues and a slot is permanently retired after reaching the maximum.
+  uint32_t incarnations[IREE_HAL_AMDGPU_LOGICAL_DEVICE_QUEUE_SLOT_COUNT];
+} iree_hal_amdgpu_logical_device_queue_slots_t;
 
 // A logical HAL device composed of one or more physical devices.
 // Each physical device may have one or more HAL queues that map to one or more
@@ -199,6 +220,9 @@ typedef struct iree_hal_amdgpu_logical_device_t {
 
   // Topology metadata assigned by the device group after construction.
   iree_hal_device_topology_info_t topology_info;
+
+  // Identity slots and incarnations for dynamically acquired queues.
+  iree_hal_amdgpu_logical_device_queue_slots_t dynamic_queue_slots;
 
   // Count of physical devices.
   iree_host_size_t physical_device_count;

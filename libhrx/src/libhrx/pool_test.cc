@@ -32,7 +32,7 @@ class ExactPoolTest : public ::testing::Test {
   hrx_device_t device_ = nullptr;
 };
 
-TEST_F(ExactPoolTest, BatchedReservationsMaterializeAndReleaseTogether) {
+TEST_F(ExactPoolTest, BatchedReservationsRetainPoolUntilRelease) {
   const iree_hal_buffer_params_t params = BufferParams();
   iree_hal_pool_t* pool = nullptr;
   IREE_ASSERT_OK(hrx_iree_exact_pool_create(device_->allocator.hal_allocator,
@@ -60,12 +60,15 @@ TEST_F(ExactPoolTest, BatchedReservationsMaterializeAndReleaseTogether) {
   EXPECT_EQ(iree_hal_buffer_byte_length(borrowed_buffers[0]), 4096u);
   EXPECT_EQ(iree_hal_buffer_byte_length(borrowed_buffers[1]), 8192u);
 
+  // Model HRX releasing its public buffer wrapper while queue operations still
+  // retain transient buffers backed by these reservations. Each reservation
+  // keeps the exact pool alive through the later retirement callback.
+  iree_hal_pool_release(pool);
   iree_hal_buffer_release(borrowed_buffers[0]);
   iree_hal_buffer_release(borrowed_buffers[1]);
   iree_hal_pool_release_reservations(pool, IREE_ARRAYSIZE(reservations),
                                      reservations,
                                      /*death_frontier=*/nullptr);
-  iree_hal_pool_release(pool);
 }
 
 TEST_F(ExactPoolTest, TransferredReservationOwnsBackingBuffer) {

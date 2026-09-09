@@ -12,12 +12,47 @@ iree_add_all_subdirs()
 if(IREE_HAL_DRIVER_AMDGPU)
 iree_cc_library(
   NAME
+    queue_execution_resources
+  HDRS
+    "queue_execution_resources.h"
+  SRCS
+    "queue_execution_resources.c"
+  DEPS
+    iree::base
+    iree::hal
+    iree::hal::drivers::amdgpu::target::identity
+  PUBLIC
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_library(
+  NAME
+    dispatch_concurrency
+  HDRS
+    "dispatch_concurrency.h"
+  SRCS
+    "dispatch_concurrency.c"
+  DEPS
+    ::queue_execution_resources
+    iree::base
+    iree::hal
+    iree::hal::drivers::amdgpu::abi
+    iree::hal::drivers::amdgpu::target::identity
+  PUBLIC
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_library(
+  NAME
     device_spec_builder
   HDRS
     "device_spec_builder.h"
   SRCS
     "device_spec_builder.c"
   DEPS
+    ::queue_execution_resources
     iree::base
     iree::hal
     iree::hal::drivers::amdgpu::target::identity
@@ -270,6 +305,8 @@ iree_cc_library(
     "host_queue_waits.h"
     "hostcall_provider.c"
     "hostcall_provider.h"
+    "hsa_queue.c"
+    "hsa_queue.h"
     "logical_device.c"
     "logical_device.h"
     "physical_device.c"
@@ -323,11 +360,13 @@ iree_cc_library(
     ::atomic_memory
     ::buffer
     ::device_spec_builder
+    ::dispatch_concurrency
     ::executable_global_resolver
     ::executable_metadata
     ::executable_metadata_hsaco
     ::kernarg_layout
     ::profile_events
+    ::queue_execution_resources
     ::source_context
     iree::async
     iree::async::util::proactor_pool
@@ -345,6 +384,7 @@ iree_cc_library(
     iree::hal::drivers::amdgpu::device::blit
     iree::hal::drivers::amdgpu::device::blit_pm4
     iree::hal::drivers::amdgpu::device::dispatch
+    iree::hal::drivers::amdgpu::device::grid_sync
     iree::hal::drivers::amdgpu::device::headers
     iree::hal::drivers::amdgpu::device::timestamp
     iree::hal::drivers::amdgpu::device::tsan
@@ -442,6 +482,7 @@ iree_cc_library(
     "tsan_state.h"
     "virtual_memory.h"
   DEPS
+    ::dispatch_concurrency
     ::profile_events
     iree::base
     iree::base::internal
@@ -529,6 +570,48 @@ iree_cc_test(
     iree::hal
     iree::hal::drivers::amdgpu::target::identity
     iree::hal::utils::device_spec_builder
+    iree::testing::gtest
+    iree::testing::gtest_main
+  LABELS
+    "iree-build-requirement=runtime.hal.amdgpu"
+    "iree-run-requirement=runtime.resource.amd_gpu"
+    "runtime-resource=amd-gpu"
+  RESOURCE_GROUP
+    iree-hal-drivers-amdgpu-tests
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_test(
+  NAME
+    queue_execution_resources_test
+  SRCS
+    "queue_execution_resources_test.cc"
+  DEPS
+    ::queue_execution_resources
+    iree::base
+    iree::hal
+    iree::testing::gtest
+    iree::testing::gtest_main
+  LABELS
+    "iree-build-requirement=runtime.hal.amdgpu"
+    "iree-run-requirement=runtime.resource.amd_gpu"
+    "runtime-resource=amd-gpu"
+  RESOURCE_GROUP
+    iree-hal-drivers-amdgpu-tests
+)
+endif()
+
+if(IREE_HAL_DRIVER_AMDGPU)
+iree_cc_test(
+  NAME
+    dispatch_concurrency_test
+  SRCS
+    "dispatch_concurrency_test.cc"
+  DEPS
+    ::dispatch_concurrency
+    iree::base
+    iree::hal
     iree::testing::gtest
     iree::testing::gtest_main
   LABELS

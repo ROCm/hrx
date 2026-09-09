@@ -14,6 +14,10 @@
 extern "C" {
 #endif  // __cplusplus
 
+// Indicates that a queue has no entry in a provisioned queue-scope table.
+#define IREE_HAL_AMDGPU_PHYSICAL_QUEUE_ORDINAL_NONE \
+  ((iree_hal_queue_ordinal_t)UINT32_MAX)
+
 // Immutable identity for one logical AMDGPU host queue.
 //
 // Executable-load paths use this cold-path metadata to publish queue-specific

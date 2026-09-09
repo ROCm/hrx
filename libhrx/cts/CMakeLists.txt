@@ -55,6 +55,30 @@ iree_amdgpu_binary_variants_embed_data(
   PUBLIC
 )
 
+iree_amdgpu_binary_variants_embed_data(
+  NAME
+    amdgpu_hip_cooperative_test_kernels
+  TARGET
+    amdgcn-amd-amdhsa
+  TARGETS
+    ${IREE_HAL_AMDGPU_TARGETS}
+  BINARY_NAME_PREFIX
+    hrx_cts_hip_cooperative_kernel
+  C_FILE_OUTPUT
+    "amdgpu_hip_cooperative_test_kernels.c"
+  H_FILE_OUTPUT
+    "amdgpu_hip_cooperative_test_kernels.h"
+  IDENTIFIER
+    "hrx_cts_amdgpu_hip_cooperative_test_kernels"
+  SRCS
+    "tests/hip/cooperative_kernel.hip"
+  SOURCE_FORMAT
+    hip
+  TESTONLY
+  FLATTEN
+  PUBLIC
+)
+
 iree_cc_library(
   NAME
     core
@@ -327,6 +351,7 @@ iree_cc_test(
     hip_module_execution_test
   SRCS
     "core/amdgpu_executable_test_data.hpp"
+    "core/amdgpu_hip_cooperative_test_data.hpp"
     "core/amdgpu_hip_printf_test_data.hpp"
     "core/amdgpu_test_data.hpp"
     "tests/hip/module_execution_test.cpp"
@@ -337,7 +362,38 @@ iree_cc_test(
   DEPS
     ${CMAKE_DL_LIBS}
     ::amdgpu_executable_test_kernels
+    ::amdgpu_hip_cooperative_test_kernels
     ::amdgpu_hip_printf_test_kernels
+    iree::testing::gtest
+    iree::testing::gtest_main
+    libhrx::src::binding::hip::launch_params
+    libhrx_defs
+  ENV
+    "HRX_TEST_LIBAMDHIP64=$<TARGET_FILE:libhrx::src::binding::hip::amdhip64>"
+  LABELS
+    "iree-run-requirement=runtime.resource.amd_gpu"
+    "runtime-resource=amd-gpu"
+  SANITIZER_SUPPRESSIONS
+    lsan
+    hsa
+)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND IREE_HAL_DRIVER_AMDGPU)
+iree_cc_test(
+  NAME
+    hip_occupancy_test
+  SRCS
+    "core/amdgpu_executable_test_data.hpp"
+    "core/amdgpu_test_data.hpp"
+    "tests/hip/occupancy_test.cpp"
+  COPTS
+    "-Wno-attributes"
+  DATA
+    libhrx::src::binding::hip::amdhip64
+  DEPS
+    ${CMAKE_DL_LIBS}
+    ::amdgpu_executable_test_kernels
     iree::testing::gtest
     iree::testing::gtest_main
     libhrx::src::binding::hip::launch_params

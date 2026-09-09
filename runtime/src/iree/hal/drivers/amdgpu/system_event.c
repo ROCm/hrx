@@ -27,14 +27,10 @@
 struct iree_hal_amdgpu_system_event_agent_target_t {
   // HSA agent handle copied at registration. Immutable for the registration.
   hsa_agent_t agent;
-  // Queue storage for |agent|, captured when the queues are published. Interior
-  // pointer into the physical device's inline queue array, which lives inside
-  // the logical device allocation and outlives this target.
-  iree_hal_amdgpu_host_queue_t* host_queues;
-  // Number of leading entries in |host_queues| eligible for failure delivery.
-  // Zero before publication and after retirement. Written only under the
-  // registry mutex, by frontier assignment and deassignment.
-  iree_host_size_t live_queue_count;
+  // Live queues on |agent| indexed by their logical-device queue axis slot.
+  // Entries are published and retired only under the registry mutex, which
+  // makes pointer removal a quiescence barrier against callback traversal.
+  iree_hal_amdgpu_host_queue_t* host_queues[UINT8_MAX + 1u];
 };
 
 struct iree_hal_amdgpu_system_event_registration_t {
@@ -182,9 +178,11 @@ static bool iree_hal_amdgpu_system_event_deliver(const hsa_amd_event_t* event,
     for (iree_host_size_t i = 0; i < registration->agent_count; ++i) {
       iree_hal_amdgpu_system_event_agent_target_t* target =
           &registration->agent_targets[i];
-      for (iree_host_size_t j = 0; j < target->live_queue_count; ++j) {
+      for (iree_host_size_t j = 0; j < IREE_ARRAYSIZE(target->host_queues);
+           ++j) {
+        if (!target->host_queues[j]) continue;
         iree_hal_amdgpu_host_queue_record_failure(
-            &target->host_queues[j],
+            target->host_queues[j],
             iree_hal_amdgpu_system_event_make_status(event));
         delivered = true;
       }
@@ -464,15 +462,53 @@ iree_hal_amdgpu_system_event_registration_lookup_agent(
   return NULL;
 }
 
-void iree_hal_amdgpu_system_event_publish_queue_targets(
+iree_status_t iree_hal_amdgpu_system_event_publish_queue_targets(
     iree_hal_amdgpu_system_event_agent_target_t* target,
     iree_hal_amdgpu_host_queue_t* host_queues,
     iree_host_size_t live_queue_count) {
-  if (!target) return;
+  if (!target || live_queue_count == 0) return iree_ok_status();
+  IREE_ASSERT_ARGUMENT(host_queues);
 
+  bool occupied_slots[UINT8_MAX + 1u] = {false};
+  uint8_t collision_slot = 0;
+  bool has_collision = false;
   iree_mutex_lock(&iree_hal_amdgpu_system_event_registry.mutex);
-  target->host_queues = host_queues;
-  target->live_queue_count = live_queue_count;
+  for (iree_host_size_t i = 0; i < live_queue_count; ++i) {
+    const uint8_t queue_slot = iree_async_axis_queue_index(host_queues[i].axis);
+    if (occupied_slots[queue_slot] || target->host_queues[queue_slot]) {
+      collision_slot = queue_slot;
+      has_collision = true;
+      break;
+    }
+    occupied_slots[queue_slot] = true;
+  }
+  if (!has_collision) {
+    for (iree_host_size_t i = 0; i < live_queue_count; ++i) {
+      const uint8_t queue_slot =
+          iree_async_axis_queue_index(host_queues[i].axis);
+      target->host_queues[queue_slot] = &host_queues[i];
+    }
+  }
+  iree_mutex_unlock(&iree_hal_amdgpu_system_event_registry.mutex);
+
+  return has_collision
+             ? iree_make_status(
+                   IREE_STATUS_ALREADY_EXISTS,
+                   "AMDGPU system event queue slot %u is already published",
+                   (unsigned)collision_slot)
+             : iree_ok_status();
+}
+
+void iree_hal_amdgpu_system_event_retire_queue_target(
+    iree_hal_amdgpu_system_event_agent_target_t* target,
+    iree_hal_amdgpu_host_queue_t* host_queue) {
+  if (!target || !host_queue) return;
+
+  const uint8_t queue_slot = iree_async_axis_queue_index(host_queue->axis);
+  iree_mutex_lock(&iree_hal_amdgpu_system_event_registry.mutex);
+  if (target->host_queues[queue_slot] == host_queue) {
+    target->host_queues[queue_slot] = NULL;
+  }
   iree_mutex_unlock(&iree_hal_amdgpu_system_event_registry.mutex);
 }
 
@@ -484,7 +520,6 @@ void iree_hal_amdgpu_system_event_retire_queue_targets(
   // rather than a scope: holding it across queue destruction would serialize
   // every device's teardown against every other device's fault delivery.
   iree_mutex_lock(&iree_hal_amdgpu_system_event_registry.mutex);
-  target->host_queues = NULL;
-  target->live_queue_count = 0;
+  memset(target->host_queues, 0, sizeof(target->host_queues));
   iree_mutex_unlock(&iree_hal_amdgpu_system_event_registry.mutex);
 }

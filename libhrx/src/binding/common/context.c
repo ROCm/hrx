@@ -87,39 +87,6 @@ iree_hal_streaming_timestamp_domain_t iree_hal_streaming_query_timestamp_domain(
   return domain;
 }
 
-static iree_status_t iree_hal_streaming_context_select_queue(
-    iree_hal_device_t* device, iree_hal_queue_t** out_queue) {
-  const iree_hal_queue_family_role_flags_t required_roles =
-      IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_TRANSFER |
-      IREE_HAL_QUEUE_FAMILY_ROLE_FLAG_DISPATCH;
-  const iree_hal_device_queue_spec_t* queue_spec =
-      iree_hal_device_spec_queues(iree_hal_device_spec(device));
-  for (iree_host_size_t family_ordinal = 0;
-       family_ordinal < queue_spec->family_count; ++family_ordinal) {
-    const iree_hal_queue_family_spec_t* family_spec =
-        &queue_spec->families[family_ordinal];
-    if (family_spec->provisioned_queue_count == 0 ||
-        !iree_all_bits_set(family_spec->role_flags, required_roles)) {
-      continue;
-    }
-    iree_hal_queue_t* queue = iree_hal_device_queue(
-        device, (iree_hal_queue_family_ordinal_t)family_ordinal,
-        /*queue_ordinal=*/0);
-    if (!queue) {
-      return iree_make_status(
-          IREE_STATUS_FAILED_PRECONDITION,
-          "device advertises provisioned queue family %" PRIhsz
-          " but the queue is unavailable",
-          family_ordinal);
-    }
-    *out_queue = queue;
-    return iree_ok_status();
-  }
-  return iree_make_status(
-      IREE_STATUS_FAILED_PRECONDITION,
-      "device has no provisioned transfer-and-dispatch queue");
-}
-
 iree_status_t iree_hal_streaming_context_create(
     iree_hal_streaming_device_t* device_entry,
     iree_hal_streaming_context_flags_t flags, iree_allocator_t host_allocator,
@@ -177,6 +144,9 @@ iree_status_t iree_hal_streaming_context_create(
   context->stream_capacity =
       8;  // Pre-allocate for default stream + user streams.
   context->streams = NULL;
+  context->stream_wait_frontier = NULL;
+  context->event_record_timeline = (iree_hal_streaming_operation_timeline_t){0};
+  iree_slim_mutex_initialize(&context->event_record_mutex);
 
   // Initialize default limits.
   // These are typical defaults matching CUDA/HIP behavior.
@@ -199,8 +169,18 @@ iree_status_t iree_hal_streaming_context_create(
   iree_hal_streaming_event_timestamp_pool_initialize(
       context->device_allocator, host_allocator, &context->timestamp_pool);
 
-  iree_status_t status =
-      iree_hal_streaming_context_select_queue(context->device, &context->queue);
+  iree_status_t status = iree_hal_streaming_device_select_primary_queue(
+      device_entry, &context->queue);
+
+  // Create the context-wide event record timeline. Resource-partitioned
+  // binding contexts share this timeline so primary-context synchronization
+  // includes their context-level records without relying on queue FIFO order.
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_semaphore_create(
+        context->device, IREE_HAL_QUEUE_FAMILY_AFFINITY_ANY,
+        /*initial_value=*/0, IREE_HAL_SEMAPHORE_FLAG_NONE,
+        &context->event_record_timeline.semaphore);
+  }
 
   // Initialize symbol map with global registry as the backing store.
   if (iree_status_is_ok(status)) {
@@ -225,9 +205,9 @@ iree_status_t iree_hal_streaming_context_create(
 
   // Create default stream.
   if (iree_status_is_ok(status)) {
-    status = iree_hal_streaming_stream_create(context, /*flags=*/0,
-                                              /*priority=*/0, host_allocator,
-                                              &context->default_stream);
+    status = iree_hal_streaming_stream_create(
+        context, context->queue, /*flags=*/0, /*priority=*/0, host_allocator,
+        &context->default_stream);
   }
 
   if (iree_status_is_ok(status)) {
@@ -301,6 +281,8 @@ static void iree_hal_streaming_context_destroy(
   iree_slim_mutex_lock(&context->stream_list_mutex);
   const iree_host_size_t detached_stream_count = context->stream_count;
   context->stream_count = 0;
+  iree_hal_fence_t* stream_wait_frontier = context->stream_wait_frontier;
+  context->stream_wait_frontier = NULL;
   iree_slim_mutex_unlock(&context->stream_list_mutex);
 
   // Detach under each stream's own mutex, which is the lock
@@ -313,19 +295,29 @@ static void iree_hal_streaming_context_destroy(
   // and taking these in the other order deadlocks against it. The list still
   // holds its reference to every stream, so none can be destroyed while the
   // loop runs; those references are released afterwards, outside both locks,
-  // because the last one destroys the stream.
+  // because the last one destroys the stream. Queue references are released
+  // during detachment so a dynamically acquired queue cannot outlive the HAL
+  // device retained by this context.
   for (iree_host_size_t i = 0; i < detached_stream_count; ++i) {
     iree_hal_streaming_stream_t* stream = context->streams[i];
+    iree_hal_queue_t* queue = NULL;
+    iree_hal_queue_t* cooperative_queue = NULL;
     iree_slim_mutex_lock(&stream->mutex);
     if (stream->context == context) {
+      queue = stream->queue;
+      cooperative_queue = stream->cooperative_queue;
       stream->queue = NULL;
+      stream->cooperative_queue = NULL;
       stream->context = NULL;
     }
     iree_slim_mutex_unlock(&stream->mutex);
+    iree_hal_queue_release(cooperative_queue);
+    iree_hal_queue_release(queue);
   }
   for (iree_host_size_t i = 0; i < detached_stream_count; ++i) {
     iree_hal_streaming_stream_release(context->streams[i]);
   }
+  iree_hal_fence_release(stream_wait_frontier);
 
   // Now release the context's reference to default stream.
   iree_hal_streaming_stream_release(default_stream);
@@ -335,6 +327,9 @@ static void iree_hal_streaming_context_destroy(
     iree_allocator_free(context->host_allocator, context->streams);
   }
   iree_slim_mutex_deinitialize(&context->stream_list_mutex);
+
+  iree_hal_semaphore_release(context->event_record_timeline.semaphore);
+  iree_slim_mutex_deinitialize(&context->event_record_mutex);
 
   // A record draws its slot from the pool of the recording event's own context
   // and every event retains that context, so reaching here means every event
@@ -734,6 +729,7 @@ iree_status_t iree_hal_streaming_context_register_stream(
   IREE_TRACE_ZONE_BEGIN(z0);
 
   iree_status_t status = iree_ok_status();
+  iree_hal_fence_t* wait_frontier = NULL;
 
   iree_slim_mutex_lock(&context->stream_list_mutex);
 
@@ -777,9 +773,20 @@ iree_status_t iree_hal_streaming_context_register_stream(
     // Retain the stream - the context's stream list owns a reference.
     iree_hal_streaming_stream_retain(stream);
     context->streams[context->stream_count++] = stream;
+    wait_frontier = context->stream_wait_frontier;
+    iree_hal_fence_retain(wait_frontier);
   }
 
   iree_slim_mutex_unlock(&context->stream_list_mutex);
+
+  if (iree_status_is_ok(status) && wait_frontier) {
+    status = iree_hal_streaming_stream_wait_semaphores(
+        stream, iree_hal_fence_semaphore_list(wait_frontier));
+  }
+  iree_hal_fence_release(wait_frontier);
+  if (!iree_status_is_ok(status) && stream->stream_id != 0) {
+    iree_hal_streaming_context_unregister_stream(context, stream);
+  }
 
   IREE_TRACE_ZONE_END(z0);
   return status;
@@ -853,18 +860,14 @@ bool iree_hal_streaming_context_has_peer_contexts(
   return has_peer;
 }
 
-// Takes a retained snapshot of the current stream list so callers can wait or
-// synchronize without holding the list mutex across potentially blocking work.
-static iree_status_t iree_hal_streaming_context_snapshot_streams(
+// Takes a retained snapshot while the caller holds |stream_list_mutex|.
+static iree_status_t iree_hal_streaming_context_snapshot_streams_locked(
     iree_hal_streaming_context_t* context,
     iree_hal_streaming_stream_t*** out_streams, iree_host_size_t* out_count) {
   IREE_ASSERT_ARGUMENT(context);
   IREE_ASSERT_ARGUMENT(out_streams);
   IREE_ASSERT_ARGUMENT(out_count);
-  *out_streams = NULL;
-  *out_count = 0;
 
-  iree_slim_mutex_lock(&context->stream_list_mutex);
   const iree_host_size_t count = context->stream_count;
   iree_hal_streaming_stream_t** streams = NULL;
   iree_status_t status = iree_ok_status();
@@ -887,8 +890,6 @@ static iree_status_t iree_hal_streaming_context_snapshot_streams(
       }
     }
   }
-  iree_slim_mutex_unlock(&context->stream_list_mutex);
-
   if (iree_status_is_ok(status)) {
     *out_streams = streams;
     *out_count = count;
@@ -896,7 +897,22 @@ static iree_status_t iree_hal_streaming_context_snapshot_streams(
   return status;
 }
 
-static void iree_hal_streaming_context_release_stream_snapshot(
+iree_status_t iree_hal_streaming_context_snapshot_streams(
+    iree_hal_streaming_context_t* context,
+    iree_hal_streaming_stream_t*** out_streams,
+    iree_host_size_t* out_stream_count) {
+  IREE_ASSERT_ARGUMENT(context);
+  IREE_ASSERT_ARGUMENT(out_streams);
+  IREE_ASSERT_ARGUMENT(out_stream_count);
+
+  iree_slim_mutex_lock(&context->stream_list_mutex);
+  iree_status_t status = iree_hal_streaming_context_snapshot_streams_locked(
+      context, out_streams, out_stream_count);
+  iree_slim_mutex_unlock(&context->stream_list_mutex);
+  return status;
+}
+
+void iree_hal_streaming_context_release_stream_snapshot(
     iree_hal_streaming_context_t* context,
     iree_hal_streaming_stream_t** streams, iree_host_size_t count) {
   for (iree_host_size_t i = 0; i < count; ++i) {
@@ -905,6 +921,141 @@ static void iree_hal_streaming_context_release_stream_snapshot(
   if (streams) {
     iree_allocator_free(context->host_allocator, streams);
   }
+}
+
+iree_status_t iree_hal_streaming_context_record_event(
+    iree_hal_streaming_context_t* context, iree_hal_streaming_event_t* event) {
+  IREE_ASSERT_ARGUMENT(context);
+  IREE_ASSERT_ARGUMENT(event);
+  if (IREE_UNLIKELY(event->context != context)) {
+    return iree_make_status(IREE_STATUS_INCOMPATIBLE,
+                            "event belongs to a different context");
+  }
+
+  IREE_TRACE_ZONE_BEGIN(z0);
+
+  iree_hal_streaming_stream_t** streams = NULL;
+  iree_host_size_t stream_count = 0;
+  iree_status_t status = iree_hal_streaming_context_snapshot_streams(
+      context, &streams, &stream_count);
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_streaming_event_record_after_streams(
+        event, streams, stream_count, /*additional_timeline=*/NULL);
+  }
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_queue_flush(context->queue);
+  }
+
+  iree_hal_streaming_context_release_stream_snapshot(context, streams,
+                                                     stream_count);
+
+  IREE_TRACE_ZONE_END(z0);
+  return status;
+}
+
+iree_status_t iree_hal_streaming_wait_frontier_extend(
+    iree_hal_fence_t* previous_frontier, iree_hal_semaphore_t* semaphore,
+    uint64_t value, iree_allocator_t host_allocator,
+    iree_hal_fence_t** out_frontier) {
+  IREE_ASSERT_ARGUMENT(semaphore);
+  IREE_ASSERT_ARGUMENT(out_frontier);
+  const iree_hal_semaphore_list_t previous_points =
+      iree_hal_fence_semaphore_list(previous_frontier);
+  iree_host_size_t capacity = 0;
+  if (IREE_UNLIKELY(
+          !iree_host_size_checked_add(previous_points.count, 1, &capacity))) {
+    return iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
+                            "stream wait frontier capacity overflow");
+  }
+
+  iree_hal_fence_t* frontier = NULL;
+  IREE_RETURN_IF_ERROR(
+      iree_hal_fence_create(capacity, host_allocator, &frontier));
+  iree_status_t status = iree_ok_status();
+  for (iree_host_size_t i = 0;
+       i < previous_points.count && iree_status_is_ok(status); ++i) {
+    uint64_t current_value = 0;
+    status =
+        iree_hal_semaphore_query(previous_points.semaphores[i], &current_value);
+    if (iree_status_is_ok(status) &&
+        current_value < previous_points.payload_values[i]) {
+      status = iree_hal_fence_insert(frontier, previous_points.semaphores[i],
+                                     previous_points.payload_values[i]);
+    }
+  }
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_fence_insert(frontier, semaphore, value);
+  }
+
+  if (iree_status_is_ok(status)) {
+    *out_frontier = frontier;
+  } else {
+    iree_hal_fence_release(frontier);
+  }
+  return status;
+}
+
+iree_status_t iree_hal_streaming_context_wait_event(
+    iree_hal_streaming_context_t* context, iree_hal_streaming_event_t* event) {
+  IREE_ASSERT_ARGUMENT(context);
+  IREE_ASSERT_ARGUMENT(event);
+  if (IREE_UNLIKELY(iree_hal_streaming_event_has_capture_graph(event))) {
+    return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
+                            "captured event has no submitted point");
+  }
+
+  iree_hal_streaming_recorded_point_t recorded_point;
+  iree_hal_streaming_event_acquire_recorded_point(event, &recorded_point);
+  if (!recorded_point.semaphore) {
+    iree_hal_streaming_event_release_recorded_point(&recorded_point);
+    return iree_ok_status();
+  }
+
+  uint64_t current_value = 0;
+  iree_status_t status =
+      iree_hal_semaphore_query(recorded_point.semaphore, &current_value);
+  if (!iree_status_is_ok(status) || current_value >= recorded_point.value) {
+    iree_hal_streaming_event_release_recorded_point(&recorded_point);
+    return status;
+  }
+
+  iree_hal_streaming_stream_t** streams = NULL;
+  iree_host_size_t stream_count = 0;
+  iree_hal_fence_t* new_frontier = NULL;
+  iree_hal_fence_t* old_frontier = NULL;
+  iree_slim_mutex_lock(&context->stream_list_mutex);
+  status = iree_hal_streaming_wait_frontier_extend(
+      context->stream_wait_frontier, recorded_point.semaphore,
+      recorded_point.value, context->host_allocator, &new_frontier);
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_streaming_context_snapshot_streams_locked(
+        context, &streams, &stream_count);
+  }
+  if (iree_status_is_ok(status)) {
+    old_frontier = context->stream_wait_frontier;
+    context->stream_wait_frontier = new_frontier;
+    new_frontier = NULL;
+  }
+  iree_slim_mutex_unlock(&context->stream_list_mutex);
+
+  if (iree_status_is_ok(status)) {
+    const iree_hal_semaphore_list_t wait = {
+        .count = 1,
+        .semaphores = &recorded_point.semaphore,
+        .payload_values = &recorded_point.value,
+    };
+    for (iree_host_size_t i = 0; i < stream_count; ++i) {
+      status = iree_status_join(
+          status, iree_hal_streaming_stream_wait_semaphores(streams[i], wait));
+    }
+  }
+
+  iree_hal_fence_release(new_frontier);
+  iree_hal_fence_release(old_frontier);
+  iree_hal_streaming_context_release_stream_snapshot(context, streams,
+                                                     stream_count);
+  iree_hal_streaming_event_release_recorded_point(&recorded_point);
+  return status;
 }
 
 iree_status_t iree_hal_streaming_context_wait_idle(
@@ -1057,8 +1208,36 @@ static iree_status_t iree_hal_streaming_context_synchronize_streams(
         iree_hal_streaming_stream_synchronize_flushed(context->default_stream));
   }
 
+  if (include_non_blocking_streams) {
+    IREE_RETURN_AND_END_ZONE_IF_ERROR(
+        z0, iree_hal_streaming_context_synchronize_event_records(context));
+  }
+
   IREE_TRACE_ZONE_END(z0);
   return iree_ok_status();
+}
+
+iree_status_t iree_hal_streaming_context_synchronize_event_records(
+    iree_hal_streaming_context_t* context) {
+  IREE_ASSERT_ARGUMENT(context);
+
+  iree_hal_semaphore_t* semaphore = NULL;
+  uint64_t value = 0;
+  iree_slim_mutex_lock(&context->event_record_mutex);
+  if (context->event_record_timeline.pending_value > 0) {
+    semaphore = context->event_record_timeline.semaphore;
+    value = context->event_record_timeline.pending_value;
+    iree_hal_semaphore_retain(semaphore);
+  }
+  iree_slim_mutex_unlock(&context->event_record_mutex);
+
+  iree_status_t status = iree_ok_status();
+  if (semaphore) {
+    status = iree_hal_semaphore_wait(semaphore, value, iree_infinite_timeout(),
+                                     IREE_ASYNC_WAIT_FLAG_NONE);
+  }
+  iree_hal_semaphore_release(semaphore);
+  return status;
 }
 
 iree_status_t iree_hal_streaming_context_synchronize(

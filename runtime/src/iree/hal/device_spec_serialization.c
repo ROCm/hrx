@@ -22,7 +22,7 @@
 // emitted in source order. The format contains no native structs, alignment
 // gaps, or padding bytes.
 #define IREE_HAL_DEVICE_SPEC_MAGIC UINT32_C(0x43505344)  // DSPC
-#define IREE_HAL_DEVICE_SPEC_VERSION UINT32_C(8)
+#define IREE_HAL_DEVICE_SPEC_VERSION UINT32_C(9)
 #define IREE_HAL_DEVICE_SPEC_FNV1A64_OFFSET_BASIS UINT64_C(0xcbf29ce484222325)
 #define IREE_HAL_DEVICE_SPEC_FNV1A64_PRIME UINT64_C(0x100000001b3)
 
@@ -95,6 +95,11 @@ static iree_status_t iree_hal_device_spec_writer_write_u32(
   iree_unaligned_store_le_u32(storage, value);
   return iree_hal_device_spec_writer_write_bytes(writer, storage,
                                                  sizeof(storage));
+}
+
+static iree_status_t iree_hal_device_spec_writer_write_i32(
+    iree_hal_device_spec_writer_t* writer, int32_t value) {
+  return iree_hal_device_spec_writer_write_u32(writer, (uint32_t)value);
 }
 
 static iree_status_t iree_hal_device_spec_writer_write_u64(
@@ -285,7 +290,34 @@ static iree_status_t iree_hal_device_spec_encode_queue_family(
   IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_u32(
       writer, value->provisioned_queue_count));
   IREE_RETURN_IF_ERROR(
-      iree_hal_device_spec_writer_write_u32(writer, value->priority_count));
+      iree_hal_device_spec_writer_write_size(writer, value->priority_count));
+  for (iree_host_size_t i = 0; i < value->priority_count; ++i) {
+    IREE_RETURN_IF_ERROR(
+        iree_hal_device_spec_writer_write_i32(writer, value->priorities[i]));
+  }
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_u32(
+      writer, value->execution_unit_count));
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_size(
+      writer, value->execution_resource_group_count));
+  for (iree_host_size_t i = 0; i < value->execution_resource_group_count; ++i) {
+    IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_u32(
+        writer,
+        value->execution_resource_groups[i].minimum_selected_resource_count));
+  }
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_size(
+      writer, value->execution_resource_count));
+  for (iree_host_size_t i = 0; i < value->execution_resource_count; ++i) {
+    const iree_hal_queue_execution_resource_spec_t* resource =
+        &value->execution_resources[i];
+    IREE_RETURN_IF_ERROR(
+        iree_hal_device_spec_writer_write_u32(writer, resource->group_ordinal));
+    IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_u32(
+        writer, resource->first_execution_unit_ordinal));
+    IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_u32(
+        writer, resource->execution_unit_count));
+  }
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_u64(
+      writer, value->supported_queue_features));
   IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_u32(
       writer, value->timestamp_valid_bits));
   IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_u64(
@@ -439,6 +471,16 @@ static iree_status_t iree_hal_device_spec_encode(
   const iree_hal_device_sanitizer_spec_t* sanitizer =
       iree_hal_device_spec_sanitizer(spec);
   const iree_host_size_t facet_count = iree_hal_device_spec_facet_count(spec);
+  iree_host_size_t queue_priority_count = 0;
+  iree_host_size_t queue_execution_resource_group_count = 0;
+  iree_host_size_t queue_execution_resource_count = 0;
+  for (iree_host_size_t i = 0; i < queues->family_count; ++i) {
+    queue_priority_count += queues->families[i].priority_count;
+    queue_execution_resource_group_count +=
+        queues->families[i].execution_resource_group_count;
+    queue_execution_resource_count +=
+        queues->families[i].execution_resource_count;
+  }
 
   IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_u32(
       writer, IREE_HAL_DEVICE_SPEC_MAGIC));
@@ -458,6 +500,12 @@ static iree_status_t iree_hal_device_spec_encode(
       writer, virtual_memory->class_count));
   IREE_RETURN_IF_ERROR(
       iree_hal_device_spec_writer_write_size(writer, queues->family_count));
+  IREE_RETURN_IF_ERROR(
+      iree_hal_device_spec_writer_write_size(writer, queue_priority_count));
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_size(
+      writer, queue_execution_resource_group_count));
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_size(
+      writer, queue_execution_resource_count));
   IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_size(
       writer, queues->external_timepoint_handle_count));
   IREE_RETURN_IF_ERROR(iree_hal_device_spec_writer_write_size(
@@ -632,6 +680,12 @@ typedef struct iree_hal_device_spec_counts_t {
   iree_host_size_t virtual_memory_class_count;
   // Number of queue family records.
   iree_host_size_t queue_family_count;
+  // Total number of queue priority records.
+  iree_host_size_t queue_priority_count;
+  // Total number of queue execution-resource group records.
+  iree_host_size_t queue_execution_resource_group_count;
+  // Total number of queue execution-resource records.
+  iree_host_size_t queue_execution_resource_count;
   // Number of external timepoint handle records.
   iree_host_size_t external_timepoint_handle_count;
   // Number of executable target records.
@@ -680,6 +734,14 @@ static iree_status_t iree_hal_device_spec_reader_read_u32(
   IREE_RETURN_IF_ERROR(
       iree_hal_device_spec_reader_read_bytes(reader, 4, &bytes));
   *out_value = iree_unaligned_load_le_u32(bytes.data);
+  return iree_ok_status();
+}
+
+static iree_status_t iree_hal_device_spec_reader_read_i32(
+    iree_hal_device_spec_reader_t* reader, int32_t* out_value) {
+  uint32_t bits = 0;
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_u32(reader, &bits));
+  memcpy(out_value, &bits, sizeof(bits));
   return iree_ok_status();
 }
 
@@ -777,6 +839,14 @@ static iree_status_t iree_hal_device_spec_decode_header(
       &out_counts->virtual_memory_class_count));
   IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_size(
       reader, "queue family count", &out_counts->queue_family_count));
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_size(
+      reader, "queue priority count", &out_counts->queue_priority_count));
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_size(
+      reader, "queue execution-resource group count",
+      &out_counts->queue_execution_resource_group_count));
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_size(
+      reader, "queue execution-resource count",
+      &out_counts->queue_execution_resource_count));
   IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_size(
       reader, "external timepoint handle count",
       &out_counts->external_timepoint_handle_count));
@@ -947,15 +1017,105 @@ static iree_status_t iree_hal_device_spec_decode_virtual_memory_class(
 }
 
 static iree_status_t iree_hal_device_spec_decode_queue_family(
-    iree_hal_device_spec_reader_t* reader,
+    iree_hal_device_spec_reader_t* reader, iree_host_size_t priority_capacity,
+    iree_hal_queue_priority_t* priority_storage,
+    iree_host_size_t* inout_priority_offset,
+    iree_host_size_t execution_resource_group_capacity,
+    iree_hal_queue_execution_resource_group_spec_t*
+        execution_resource_group_storage,
+    iree_host_size_t* inout_execution_resource_group_offset,
+    iree_host_size_t execution_resource_capacity,
+    iree_hal_queue_execution_resource_spec_t* execution_resource_storage,
+    iree_host_size_t* inout_execution_resource_offset,
     iree_hal_queue_family_spec_t* out_value) {
   memset(out_value, 0, sizeof(*out_value));
   IREE_RETURN_IF_ERROR(
       iree_hal_device_spec_reader_read_string(reader, &out_value->name));
   IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_u32(
       reader, &out_value->provisioned_queue_count));
-  IREE_RETURN_IF_ERROR(
-      iree_hal_device_spec_reader_read_u32(reader, &out_value->priority_count));
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_size(
+      reader, "queue family priority count", &out_value->priority_count));
+  if (IREE_UNLIKELY(*inout_priority_offset > priority_capacity ||
+                    out_value->priority_count >
+                        priority_capacity - *inout_priority_offset)) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "queue family priority records exceed the declared total");
+  }
+  iree_hal_queue_priority_t* family_priorities =
+      priority_storage && out_value->priority_count
+          ? &priority_storage[*inout_priority_offset]
+          : NULL;
+  out_value->priorities = family_priorities;
+  for (iree_host_size_t i = 0; i < out_value->priority_count; ++i) {
+    iree_hal_queue_priority_t temporary = 0;
+    iree_hal_queue_priority_t* value =
+        family_priorities ? &family_priorities[i] : &temporary;
+    IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_i32(reader, value));
+  }
+  *inout_priority_offset += out_value->priority_count;
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_u32(
+      reader, &out_value->execution_unit_count));
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_size(
+      reader, "queue family execution-resource group count",
+      &out_value->execution_resource_group_count));
+  if (IREE_UNLIKELY(*inout_execution_resource_group_offset >
+                        execution_resource_group_capacity ||
+                    out_value->execution_resource_group_count >
+                        execution_resource_group_capacity -
+                            *inout_execution_resource_group_offset)) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "queue family execution-resource groups exceed the declared total");
+  }
+  iree_hal_queue_execution_resource_group_spec_t* family_resource_groups =
+      execution_resource_group_storage &&
+              out_value->execution_resource_group_count
+          ? &execution_resource_group_storage
+                [*inout_execution_resource_group_offset]
+          : NULL;
+  out_value->execution_resource_groups = family_resource_groups;
+  for (iree_host_size_t i = 0; i < out_value->execution_resource_group_count;
+       ++i) {
+    uint32_t temporary = 0;
+    uint32_t* value =
+        family_resource_groups
+            ? &family_resource_groups[i].minimum_selected_resource_count
+            : &temporary;
+    IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_u32(reader, value));
+  }
+  *inout_execution_resource_group_offset +=
+      out_value->execution_resource_group_count;
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_size(
+      reader, "queue family execution-resource count",
+      &out_value->execution_resource_count));
+  if (IREE_UNLIKELY(
+          *inout_execution_resource_offset > execution_resource_capacity ||
+          out_value->execution_resource_count >
+              execution_resource_capacity - *inout_execution_resource_offset)) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "queue family execution resources exceed the declared total");
+  }
+  iree_hal_queue_execution_resource_spec_t* family_resources =
+      execution_resource_storage && out_value->execution_resource_count
+          ? &execution_resource_storage[*inout_execution_resource_offset]
+          : NULL;
+  out_value->execution_resources = family_resources;
+  for (iree_host_size_t i = 0; i < out_value->execution_resource_count; ++i) {
+    iree_hal_queue_execution_resource_spec_t temporary = {0};
+    iree_hal_queue_execution_resource_spec_t* value =
+        family_resources ? &family_resources[i] : &temporary;
+    IREE_RETURN_IF_ERROR(
+        iree_hal_device_spec_reader_read_u32(reader, &value->group_ordinal));
+    IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_u32(
+        reader, &value->first_execution_unit_ordinal));
+    IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_u32(
+        reader, &value->execution_unit_count));
+  }
+  *inout_execution_resource_offset += out_value->execution_resource_count;
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_u64(
+      reader, &out_value->supported_queue_features));
   IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_u32(
       reader, &out_value->timestamp_valid_bits));
   IREE_RETURN_IF_ERROR(iree_hal_device_spec_reader_read_u64(
@@ -1129,6 +1289,13 @@ typedef struct iree_hal_device_spec_parse_storage_t {
   iree_hal_virtual_memory_class_spec_t* virtual_memory_classes;
   // Temporary queue family records.
   iree_hal_queue_family_spec_t* queue_families;
+  // Temporary queue priority records.
+  iree_hal_queue_priority_t* queue_priorities;
+  // Temporary queue execution-resource group records.
+  iree_hal_queue_execution_resource_group_spec_t*
+      queue_execution_resource_groups;
+  // Temporary queue execution-resource records.
+  iree_hal_queue_execution_resource_spec_t* queue_execution_resources;
   // Temporary external timepoint handle records.
   iree_hal_external_timepoint_handle_spec_t* external_timepoint_handles;
   // Temporary executable target records.
@@ -1152,6 +1319,12 @@ typedef struct iree_hal_device_spec_parse_layout_t {
   iree_host_size_t virtual_memory_classes;
   // Byte offset of queue family records.
   iree_host_size_t queue_families;
+  // Byte offset of queue priority records.
+  iree_host_size_t queue_priorities;
+  // Byte offset of queue execution-resource group records.
+  iree_host_size_t queue_execution_resource_groups;
+  // Byte offset of queue execution-resource records.
+  iree_host_size_t queue_execution_resources;
   // Byte offset of external timepoint handle records.
   iree_host_size_t external_timepoint_handles;
   // Byte offset of executable target records.
@@ -1219,6 +1392,20 @@ static iree_status_t iree_hal_device_spec_parse_storage_initialize(
       iree_alignof(iree_hal_queue_family_spec_t), &layout.total_length,
       &layout.queue_families));
   IREE_RETURN_IF_ERROR(iree_hal_device_spec_layout_parse_array(
+      counts->queue_priority_count, sizeof(*out_storage->queue_priorities),
+      iree_alignof(iree_hal_queue_priority_t), &layout.total_length,
+      &layout.queue_priorities));
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_layout_parse_array(
+      counts->queue_execution_resource_group_count,
+      sizeof(*out_storage->queue_execution_resource_groups),
+      iree_alignof(iree_hal_queue_execution_resource_group_spec_t),
+      &layout.total_length, &layout.queue_execution_resource_groups));
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_layout_parse_array(
+      counts->queue_execution_resource_count,
+      sizeof(*out_storage->queue_execution_resources),
+      iree_alignof(iree_hal_queue_execution_resource_spec_t),
+      &layout.total_length, &layout.queue_execution_resources));
+  IREE_RETURN_IF_ERROR(iree_hal_device_spec_layout_parse_array(
       counts->external_timepoint_handle_count,
       sizeof(*out_storage->external_timepoint_handles),
       iree_alignof(iree_hal_external_timepoint_handle_spec_t),
@@ -1262,6 +1449,22 @@ static iree_status_t iree_hal_device_spec_parse_storage_initialize(
   if (counts->queue_family_count) {
     out_storage->queue_families =
         (iree_hal_queue_family_spec_t*)(base + layout.queue_families);
+  }
+  if (counts->queue_priority_count) {
+    out_storage->queue_priorities =
+        (iree_hal_queue_priority_t*)(base + layout.queue_priorities);
+  }
+  if (counts->queue_execution_resource_group_count) {
+    out_storage->queue_execution_resource_groups =
+        (iree_hal_queue_execution_resource_group_spec_t*)(base +
+                                                          layout
+                                                              .queue_execution_resource_groups);
+  }
+  if (counts->queue_execution_resource_count) {
+    out_storage->queue_execution_resources =
+        (iree_hal_queue_execution_resource_spec_t*)(base +
+                                                    layout
+                                                        .queue_execution_resources);
   }
   if (counts->external_timepoint_handle_count) {
     out_storage->external_timepoint_handles =
@@ -1395,12 +1598,30 @@ static iree_status_t iree_hal_device_spec_decode_body(
 
   IREE_RETURN_IF_ERROR(
       iree_hal_device_spec_reader_read_u32(reader, &out_decoded->queues.flags));
+  iree_host_size_t queue_priority_offset = 0;
+  iree_host_size_t queue_execution_resource_group_offset = 0;
+  iree_host_size_t queue_execution_resource_offset = 0;
   for (iree_host_size_t i = 0; i < counts->queue_family_count; ++i) {
     iree_hal_queue_family_spec_t temporary;
     iree_hal_queue_family_spec_t* value =
         storage->queue_families ? &storage->queue_families[i] : &temporary;
-    IREE_RETURN_IF_ERROR(
-        iree_hal_device_spec_decode_queue_family(reader, value));
+    IREE_RETURN_IF_ERROR(iree_hal_device_spec_decode_queue_family(
+        reader, counts->queue_priority_count, storage->queue_priorities,
+        &queue_priority_offset, counts->queue_execution_resource_group_count,
+        storage->queue_execution_resource_groups,
+        &queue_execution_resource_group_offset,
+        counts->queue_execution_resource_count,
+        storage->queue_execution_resources, &queue_execution_resource_offset,
+        value));
+  }
+  if (IREE_UNLIKELY(queue_priority_offset != counts->queue_priority_count ||
+                    queue_execution_resource_group_offset !=
+                        counts->queue_execution_resource_group_count ||
+                    queue_execution_resource_offset !=
+                        counts->queue_execution_resource_count)) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "queue family record counts do not match the declared totals");
   }
   for (iree_host_size_t i = 0; i < counts->external_timepoint_handle_count;
        ++i) {

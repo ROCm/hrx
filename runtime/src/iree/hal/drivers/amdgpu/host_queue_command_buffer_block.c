@@ -283,6 +283,8 @@ static iree_status_t iree_hal_amdgpu_host_queue_write_command_buffer_block(
                 .physical_queue_count =
                     iree_hal_amdgpu_aql_command_buffer_queue_count_per_physical_device(
                         command_buffer),
+                .features = iree_hal_queue_features(&queue->base),
+                .grid_sync_strategy = queue->grid_sync_strategy,
             },
         .packets =
             {

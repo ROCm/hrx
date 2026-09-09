@@ -12,9 +12,11 @@
 #include "iree/hal/drivers/amdgpu/buffer.h"
 #include "iree/hal/drivers/amdgpu/device/atomic_pm4.h"
 #include "iree/hal/drivers/amdgpu/device/blit_pm4.h"
+#include "iree/hal/drivers/amdgpu/dispatch_concurrency.h"
 #include "iree/hal/drivers/amdgpu/host_queue.h"
 #include "iree/hal/drivers/amdgpu/host_queue_staging.h"
 #include "iree/hal/drivers/amdgpu/physical_device_capabilities.h"
+#include "iree/hal/drivers/amdgpu/queue_execution_resources.h"
 #include "iree/hal/drivers/amdgpu/system.h"
 #include "iree/hal/drivers/amdgpu/target/identity.h"
 #include "iree/hal/drivers/amdgpu/transient_buffer.h"
@@ -189,6 +191,18 @@ iree_status_t iree_hal_amdgpu_physical_device_options_verify(
 // iree_hal_amdgpu_physical_device_t
 //===----------------------------------------------------------------------===//
 
+// Cold construction policy shared by every host queue on a physical device
+// while the logical-device frontier is assigned.
+typedef struct iree_hal_amdgpu_host_queue_construction_t {
+  // Queue parameter template copied and completed with an exact identity for
+  // each provisioned or dynamically acquired queue.
+  iree_hal_amdgpu_host_queue_params_t params;
+
+  // Stable single-agent storage referenced by |params.memory.kernarg| when
+  // host kernarg memory requires an explicit device-access grant.
+  hsa_agent_t kernarg_access_agent;
+} iree_hal_amdgpu_host_queue_construction_t;
+
 // A physical device representing an HSA GPU agent.
 // May contain one or more HAL queues that map to HSA queues on the agent.
 typedef struct iree_hal_amdgpu_physical_device_t {
@@ -218,12 +232,13 @@ typedef struct iree_hal_amdgpu_physical_device_t {
   uint32_t has_physical_device_uuid : 1;
   // NUMA node of the CPU agent nearest to |device_agent|.
   uint32_t host_numa_node;
-  // Number of compute units reported by HSA for this GPU agent.
-  uint32_t compute_unit_count;
+  // Queue execution-resource topology derived for this GPU agent.
+  iree_hal_amdgpu_queue_execution_resource_topology_t queue_execution_resources;
+  // Immutable facts used by exact queue dispatch concurrency queries.
+  iree_hal_amdgpu_dispatch_concurrency_capabilities_t
+      dispatch_concurrency_capabilities;
   // Native wavefront size reported by HSA for this GPU agent.
   uint32_t wavefront_size;
-  // Maximum resident wave count per compute unit reported by HSA.
-  uint32_t maximum_waves_per_compute_unit;
   // Maximum group segment byte length used for dispatch and sanitizer sizing.
   uint32_t group_segment_max_size;
   // Device-side timestamp tick rate in hz, from
@@ -326,6 +341,25 @@ typedef struct iree_hal_amdgpu_physical_device_t {
   iree_hal_amdgpu_wait_barrier_strategy_t wait_barrier_strategy;
   // Queue-local PM4 timestamp strategy selected from this GPU agent's ISA.
   iree_hal_amdgpu_pm4_timestamp_strategy_t pm4_timestamp_strategy;
+  // Cooperative grid synchronization strategy selected from this GPU agent's
+  // ISA.
+  iree_hal_amdgpu_grid_sync_strategy_t grid_sync_strategy;
+  // True when HSA exposes an agent cooperative queue and the driver has a grid
+  // synchronization strategy for its ISA.
+  uint32_t supports_cooperative_dispatch : 1;
+
+  // Host queue construction policy valid while frontier assignment is live.
+  iree_hal_amdgpu_host_queue_construction_t host_queue_construction;
+
+  // Lazily realized cooperative queue shared by acquisitions on this physical
+  // device. ROCr exposes one native cooperative queue per agent, so the HAL
+  // must likewise use one host scheduler and one queue identity for it.
+  struct {
+    // Serializes first realization and owner-reference retirement.
+    iree_slim_mutex_t mutex;
+    // Physical-device-owned queue reference, or NULL before first use.
+    iree_hal_amdgpu_host_queue_t* queue;
+  } cooperative_queue;
 
   // Process-wide HSA system event delivery target for |device_agent|, or NULL
   // when the logical device has no registration. Borrowed from the
@@ -378,9 +412,26 @@ iree_status_t iree_hal_amdgpu_physical_device_assign_frontier(
     iree_async_axis_t base_axis,
     iree_hal_amdgpu_epoch_signal_table_t* epoch_signal_table,
     iree_hal_amdgpu_feedback_state_t* feedback_state,
-    const iree_hal_amdgpu_host_memory_pools_t* host_memory_pools,
     iree_hal_amdgpu_system_event_agent_target_t* system_event_target,
     iree_allocator_t host_allocator,
+    iree_hal_amdgpu_physical_device_t* physical_device);
+
+// Allocates an independently releasable host queue with exact |params| and
+// |axis| using the physical device's assigned construction policy.
+//
+// |release_slot| is captured only on success. The caller remains responsible
+// for returning the slot when this call fails. |out_queue| is unchanged on
+// failure.
+iree_status_t iree_hal_amdgpu_physical_device_allocate_host_queue(
+    iree_hal_amdgpu_physical_device_t* physical_device,
+    const iree_hal_queue_params_t* params, iree_async_axis_t axis,
+    iree_hal_amdgpu_host_queue_release_slot_callback_t release_slot,
+    iree_hal_amdgpu_host_queue_t** out_queue);
+
+// Releases the physical device's lazy cooperative queue owner reference.
+// Caller-owned queue references remain live and continue to own their dynamic
+// queue identity slot until released.
+void iree_hal_amdgpu_physical_device_release_cooperative_queue(
     iree_hal_amdgpu_physical_device_t* physical_device);
 
 // Deinitializes any host queues initialized by assign_frontier.

@@ -756,8 +756,7 @@ static iree_status_t iree_hal_amdgpu_executable_initialize_dispatch_descriptor(
   const iree_hal_amdgpu_kernel_descriptor_t* amdhsa_descriptor = NULL;
   IREE_RETURN_IF_ERROR(iree_hal_amdgpu_loaded_code_object_query_host_address(
       libhsa, kernel_object, (const void**)&amdhsa_descriptor));
-  out_descriptor->pm4_group_segment_fixed_size =
-      amdhsa_descriptor->group_segment_fixed_size;
+  out_descriptor->kernel_descriptor = amdhsa_descriptor;
   const bool uses_workgroup_clusters =
       kernel_args->workgroup_cluster_size[0] != 0 ||
       kernel_args->workgroup_cluster_size[1] != 0 ||
@@ -1085,10 +1084,11 @@ static iree_status_t iree_hal_amdgpu_executable_select_load_variant_for_queue(
     iree_hal_queue_ordinal_t queue_ordinal,
     iree_host_size_t* out_variant_ordinal) {
   *out_variant_ordinal = 0;
+  if (!executable->requires_queue_scope) return iree_ok_status();
+
   const iree_hal_amdgpu_queue_scope_t* queue_scope = NULL;
   IREE_RETURN_IF_ERROR(iree_hal_amdgpu_executable_select_queue_scope(
       executable, queue_ordinal, &queue_scope));
-  if (!executable->requires_queue_scope) return iree_ok_status();
 
   const iree_host_size_t variant_ordinal = queue_scope->physical_queue_ordinal;
   if (IREE_UNLIKELY(variant_ordinal >= executable->load_variant_count)) {
@@ -2186,7 +2186,6 @@ iree_status_t iree_hal_amdgpu_executable_lookup_dispatch_descriptor_for_device(
     const iree_hal_amdgpu_executable_dispatch_descriptor_t** out_descriptor) {
   const iree_hal_amdgpu_executable_t* executable =
       iree_hal_amdgpu_executable_const_cast(base_executable);
-  *out_descriptor = NULL;
 
   if (IREE_UNLIKELY(!iree_hal_executable_function_is_index_in_range(
           function, executable->kernel_count))) {
@@ -2231,7 +2230,6 @@ iree_hal_amdgpu_executable_lookup_dispatch_descriptor_for_queue_ordinal(
     const iree_hal_amdgpu_executable_dispatch_descriptor_t** out_descriptor) {
   const iree_hal_amdgpu_executable_t* executable =
       iree_hal_amdgpu_executable_const_cast(base_executable);
-  *out_descriptor = NULL;
 
   if (IREE_UNLIKELY(!iree_hal_executable_function_is_index_in_range(
           function, executable->kernel_count))) {
@@ -2267,7 +2265,6 @@ iree_hal_amdgpu_executable_lookup_pm4_dispatch_launch_state_for_device(
     iree_hal_executable_function_t function, iree_host_size_t device_ordinal,
     const iree_hal_amdgpu_pm4_dispatch_launch_state_t** out_state) {
   IREE_ASSERT_ARGUMENT(out_state);
-  *out_state = NULL;
 
   const iree_hal_amdgpu_executable_dispatch_descriptor_t* dispatch_descriptor =
       NULL;

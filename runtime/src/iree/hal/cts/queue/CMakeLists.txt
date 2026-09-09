@@ -69,6 +69,32 @@ iree_cc_library(
 
 iree_cc_library(
   NAME
+    queue_cooperative_dispatch_test
+  SRCS
+    "queue_cooperative_dispatch_test.cc"
+  DEPS
+    iree::hal
+    iree::hal::cts::util::test_base
+  TESTONLY
+  ALWAYSLINK
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    queue_dispatch_concurrency_test
+  SRCS
+    "queue_dispatch_concurrency_test.cc"
+  DEPS
+    iree::hal
+    iree::hal::cts::util::test_base
+  TESTONLY
+  ALWAYSLINK
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
     queue_host_call_test
   SRCS
     "queue_host_call_test.cc"
@@ -113,11 +139,20 @@ iree_cc_library(
   DEPS
     ::queue_alloca_test
     ::queue_atomic_test
-    ::queue_dispatch_test
     ::queue_host_call_test
     ::queue_test
     ::queue_transfer_test
     ::semaphore_submission_test
+  TESTONLY
+  PUBLIC
+)
+
+iree_cc_library(
+  NAME
+    all_executable_tests
+  DEPS
+    ::queue_dispatch_concurrency_test
+    ::queue_dispatch_test
   TESTONLY
   PUBLIC
 )

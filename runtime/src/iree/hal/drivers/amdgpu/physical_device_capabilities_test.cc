@@ -1115,6 +1115,40 @@ TEST_F(PhysicalDeviceCapabilitiesTest, SelectsPm4TimestampStrategy) {
             IREE_HAL_AMDGPU_PM4_TIMESTAMP_STRATEGY_NONE);
 }
 
+TEST_F(PhysicalDeviceCapabilitiesTest, SelectsGridSyncStrategy) {
+  struct TestCase {
+    // Exact target processor used to derive the architecture version.
+    const char* processor;
+    // Grid synchronization strategy expected for the processor.
+    iree_hal_amdgpu_grid_sync_strategy_t expected_strategy;
+  };
+  const TestCase test_cases[] = {
+      {"gfx908", IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_GWS},
+      {"gfx90a", IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_GWS},
+      {"gfx940", IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_GWS},
+      {"gfx941", IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_GWS},
+      {"gfx942", IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_MEMORY},
+      {"gfx950", IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_MEMORY},
+      {"gfx1010", IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_GWS},
+      {"gfx1036", IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_GWS},
+      {"gfx1100", IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_MEMORY},
+      {"gfx1172", IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_MEMORY},
+      {"gfx1200", IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_MEMORY},
+      {"gfx1251", IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_MEMORY},
+  };
+  for (const auto& test_case : test_cases) {
+    SCOPED_TRACE(test_case.processor);
+    EXPECT_EQ(iree_hal_amdgpu_select_grid_sync_strategy(
+                  GfxIpFromProcessor(test_case.processor)),
+              test_case.expected_strategy);
+  }
+
+  EXPECT_EQ(iree_hal_amdgpu_select_grid_sync_strategy(GfxIp(8, 0, 0)),
+            IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_NONE);
+  EXPECT_EQ(iree_hal_amdgpu_select_grid_sync_strategy(GfxIp(13, 0, 0)),
+            IREE_HAL_AMDGPU_GRID_SYNC_STRATEGY_NONE);
+}
+
 TEST_F(PhysicalDeviceCapabilitiesTest, SelectsWaitBarrierStrategy) {
   EXPECT_EQ(iree_hal_amdgpu_select_wait_barrier_strategy(
                 IREE_HAL_AMDGPU_VENDOR_PACKET_CAPABILITY_AQL_BARRIER_VALUE |

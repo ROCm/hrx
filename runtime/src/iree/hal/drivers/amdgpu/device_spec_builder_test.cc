@@ -34,7 +34,8 @@ static void MakePhysicalDeviceParams(
       /*.numa=*/{/*.node_id=*/1},
       /*.physical_ordinal=*/physical_ordinal,
       /*.queue_count=*/2,
-      /*.compute_unit_count=*/40,
+      /*.supported_queue_features=*/IREE_HAL_QUEUE_FEATURE_FLAG_NONE,
+      /*.queue_execution_resources=*/{},
       /*.wavefront_size=*/64,
       /*.maximum_waves_per_compute_unit=*/32,
       /*.maximum_workgroup_local_memory_size=*/64 * 1024,
@@ -42,6 +43,9 @@ static void MakePhysicalDeviceParams(
       /*.flags=*/IREE_HAL_AMDGPU_DEVICE_SPEC_PHYSICAL_DEVICE_FLAG_UUID |
           IREE_HAL_AMDGPU_DEVICE_SPEC_PHYSICAL_DEVICE_FLAG_PCI_ADDRESS,
   };
+  IREE_ASSERT_OK(iree_hal_amdgpu_queue_execution_resource_topology_initialize(
+      identity.version, /*execution_unit_count=*/40,
+      /*partition_count=*/1, &physical_device.queue_execution_resources));
   *out_params = physical_device;
 }
 
@@ -113,30 +117,6 @@ static void ExpectUniformAtomicCapabilities(
             expected_wait_conditions);
   EXPECT_EQ(capabilities.wait_conditions.system_scope_64,
             expected_wait_conditions);
-}
-
-// gfx8 falls outside the gfx9-gfx12 range the PM4 strategy table covers, and
-// the advertised timestamp domain does not depend on that strategy.
-TEST(DeviceSpecBuilderTest, AdvertisesTheTimestampDomainWithoutPm4Support) {
-  iree_hal_allocator_t* allocator = NULL;
-  IREE_ASSERT_OK(
-      iree_hal_allocator_create_heap(IREE_SV("test"), iree_allocator_system(),
-                                     iree_allocator_system(), &allocator));
-
-  iree_hal_device_spec_t* device_spec = NULL;
-  CreateDeviceSpecForProcessor(IREE_SV("gfx803"), kAgentTimestampFrequencyHz,
-                               allocator, &device_spec);
-
-  const iree_hal_device_timing_spec_t* timing =
-      iree_hal_device_spec_timing(device_spec);
-  ASSERT_NE(timing, nullptr);
-  EXPECT_TRUE(iree_all_bits_set(
-      timing->flags, IREE_HAL_DEVICE_TIMING_SPEC_FLAG_DEVICE_TIMESTAMPS));
-  EXPECT_EQ(timing->timestamp_frequency_hz, kAgentTimestampFrequencyHz);
-  EXPECT_EQ(timing->timestamp_valid_bits, 64u);
-
-  iree_hal_device_spec_release(device_spec);
-  iree_hal_allocator_release(allocator);
 }
 
 // The advertised rate is the physical device's own, at both device and

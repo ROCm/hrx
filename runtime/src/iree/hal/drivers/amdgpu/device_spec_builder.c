@@ -62,6 +62,9 @@ static iree_status_t iree_hal_amdgpu_device_spec_verify_params(
                               "cannot be converted to a duration",
                               i);
     }
+    IREE_RETURN_IF_ERROR(
+        iree_hal_amdgpu_queue_execution_resource_topology_verify(
+            &params->physical_devices[i].queue_execution_resources));
   }
 
   // The device-scope timing spec carries one tick rate for the whole logical
@@ -338,21 +341,75 @@ iree_hal_amdgpu_device_spec_zero_compute_atomic_capabilities(
 static iree_status_t iree_hal_amdgpu_device_spec_populate_queues(
     const iree_hal_amdgpu_device_spec_params_t* params,
     iree_hal_device_spec_builder_t* builder) {
-  iree_hal_queue_family_spec_t* families = NULL;
-  IREE_RETURN_IF_ERROR(iree_allocator_malloc_array(
-      builder->host_allocator, params->physical_device_count, sizeof(*families),
-      (void**)&families));
-  memset(families, 0, params->physical_device_count * sizeof(*families));
+  const iree_hal_queue_priority_t queue_priorities[] = {
+      (iree_hal_queue_priority_t)-1,
+      IREE_HAL_QUEUE_PRIORITY_NORMAL,
+      (iree_hal_queue_priority_t)1,
+  };
 
-  iree_status_t status = iree_ok_status();
+  iree_host_size_t total_group_count = 0;
+  iree_host_size_t total_resource_count = 0;
+  for (iree_host_size_t i = 0; i < params->physical_device_count; ++i) {
+    const iree_hal_amdgpu_queue_execution_resource_topology_t* topology =
+        &params->physical_devices[i].queue_execution_resources;
+    const iree_host_size_t group_count =
+        iree_hal_amdgpu_queue_execution_resource_group_count(topology);
+    const iree_host_size_t resource_count =
+        iree_hal_amdgpu_queue_execution_resource_count(topology);
+    if (IREE_UNLIKELY(IREE_HOST_SIZE_MAX - total_group_count < group_count ||
+                      IREE_HOST_SIZE_MAX - total_resource_count <
+                          resource_count)) {
+      return iree_make_status(IREE_STATUS_OUT_OF_RANGE,
+                              "AMDGPU queue resource spec count overflow");
+    }
+    total_group_count += group_count;
+    total_resource_count += resource_count;
+  }
+
+  iree_hal_queue_family_spec_t* families = NULL;
+  iree_hal_queue_execution_resource_group_spec_t* groups = NULL;
+  iree_hal_queue_execution_resource_spec_t* resources = NULL;
+  iree_status_t status = iree_allocator_malloc_array(
+      builder->host_allocator, params->physical_device_count, sizeof(*families),
+      (void**)&families);
+  if (iree_status_is_ok(status)) {
+    status =
+        iree_allocator_malloc_array(builder->host_allocator, total_group_count,
+                                    sizeof(*groups), (void**)&groups);
+  }
+  if (iree_status_is_ok(status)) {
+    status = iree_allocator_malloc_array(
+        builder->host_allocator, total_resource_count, sizeof(*resources),
+        (void**)&resources);
+  }
+
+  iree_host_size_t group_offset = 0;
+  iree_host_size_t resource_offset = 0;
   for (iree_host_size_t i = 0;
        i < params->physical_device_count && iree_status_is_ok(status); ++i) {
     const iree_hal_amdgpu_device_spec_physical_device_params_t*
         physical_device = &params->physical_devices[i];
+    const iree_hal_amdgpu_queue_execution_resource_topology_t* topology =
+        &physical_device->queue_execution_resources;
+    const iree_host_size_t group_count =
+        iree_hal_amdgpu_queue_execution_resource_group_count(topology);
+    const iree_host_size_t resource_count =
+        iree_hal_amdgpu_queue_execution_resource_count(topology);
+    iree_hal_amdgpu_queue_execution_resource_populate_groups(
+        topology, &groups[group_offset]);
+    iree_hal_amdgpu_queue_execution_resource_populate_resources(
+        topology, &resources[resource_offset]);
     families[i] = (iree_hal_queue_family_spec_t){
         .name = physical_device->identity.processor,
         .provisioned_queue_count = physical_device->queue_count,
-        .priority_count = 1,
+        .priority_count = IREE_ARRAYSIZE(queue_priorities),
+        .priorities = queue_priorities,
+        .execution_unit_count = topology->execution_unit_count,
+        .execution_resource_group_count = group_count,
+        .execution_resource_groups = &groups[group_offset],
+        .execution_resource_count = resource_count,
+        .execution_resources = &resources[resource_offset],
+        .supported_queue_features = physical_device->supported_queue_features,
         .timestamp_valid_bits = 64,
         .timestamp_frequency_hz = physical_device->timestamp_frequency_hz,
         .physical_device_affinity = 1ull << i,
@@ -366,8 +423,15 @@ static iree_status_t iree_hal_amdgpu_device_spec_populate_queues(
         .zero_compute_atomic_capabilities =
             iree_hal_amdgpu_device_spec_zero_compute_atomic_capabilities(
                 physical_device->vendor_packet_capabilities),
-        .flags = IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_NONE,
+        .flags =
+            iree_any_bit_set(
+                params->flags,
+                IREE_HAL_AMDGPU_DEVICE_SPEC_PARAM_FLAG_DYNAMIC_QUEUE_ACQUISITION)
+                ? IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_DYNAMIC_ACQUISITION
+                : IREE_HAL_QUEUE_FAMILY_SPEC_FLAG_NONE,
     };
+    group_offset += group_count;
+    resource_offset += resource_count;
   }
   if (iree_status_is_ok(status)) {
     iree_hal_device_queue_spec_t queues = {
@@ -378,6 +442,8 @@ static iree_status_t iree_hal_amdgpu_device_spec_populate_queues(
     status = iree_hal_device_spec_builder_set_queues(builder, &queues);
   }
 
+  iree_allocator_free(builder->host_allocator, resources);
+  iree_allocator_free(builder->host_allocator, groups);
   iree_allocator_free(builder->host_allocator, families);
   return status;
 }
@@ -470,12 +536,14 @@ static iree_status_t iree_hal_amdgpu_device_spec_populate_dispatch(
         iree_min(maximum_resident_invocation_count,
                  physical_device->maximum_waves_per_compute_unit *
                      physical_device->wavefront_size);
-    if (IREE_UNLIKELY(UINT32_MAX - compute_unit_count <
-                      physical_device->compute_unit_count)) {
+    if (IREE_UNLIKELY(
+            UINT32_MAX - compute_unit_count <
+            physical_device->queue_execution_resources.execution_unit_count)) {
       return iree_make_status(IREE_STATUS_OUT_OF_RANGE,
                               "AMDGPU compute unit count overflow");
     }
-    compute_unit_count += physical_device->compute_unit_count;
+    compute_unit_count +=
+        physical_device->queue_execution_resources.execution_unit_count;
   }
 
   if (IREE_UNLIKELY(supported_wavefront_sizes ==

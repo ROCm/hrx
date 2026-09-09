@@ -356,6 +356,9 @@ static iree_status_t iree_hal_vulkan_device_spec_populate_queues(
   const iree_hal_atomic_capabilities_t atomic_capabilities =
       iree_hal_vulkan_atomic_capabilities(
           params->device_plan->enabled_features);
+  const iree_hal_queue_priority_t queue_priorities[] = {
+      IREE_HAL_QUEUE_PRIORITY_NORMAL,
+  };
   char queue_family_names[IREE_HAL_MAX_QUEUE_FAMILIES][32];
   iree_hal_queue_family_spec_t queue_families[IREE_HAL_MAX_QUEUE_FAMILIES];
   const uint64_t timestamp_frequency_hz =
@@ -392,7 +395,8 @@ static iree_status_t iree_hal_vulkan_device_spec_populate_queues(
         .name = iree_make_string_view(queue_family_names[i],
                                       (iree_host_size_t)name_length),
         .provisioned_queue_count = queue_family->queue_count,
-        .priority_count = 1,
+        .priority_count = IREE_ARRAYSIZE(queue_priorities),
+        .priorities = queue_priorities,
         .timestamp_valid_bits = queue_family->timestamp_valid_bits,
         .timestamp_frequency_hz = timestamp_frequency_hz,
         .physical_device_affinity = 1ull,

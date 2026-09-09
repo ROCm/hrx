@@ -46,6 +46,7 @@ iree_cc_test(
   SRCS
     "queue_test.cc"
   DEPS
+    ::queue
     iree::async
     iree::async::util::proactor_pool
     iree::base

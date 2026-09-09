@@ -6,6 +6,7 @@
 
 #include "iree/hal/drivers/amdgpu/host_queue_command_buffer.h"
 
+#include <inttypes.h>
 #include <string.h>
 
 #include "iree/hal/drivers/amdgpu/aql_command_buffer.h"
@@ -693,6 +694,17 @@ iree_status_t iree_hal_amdgpu_host_queue_submit_command_buffer(
     return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
                             "command buffer is not an AMDGPU AQL command "
                             "buffer");
+  }
+  const iree_hal_queue_feature_flags_t required_queue_features =
+      iree_hal_amdgpu_aql_command_buffer_required_queue_features(
+          command_buffer);
+  if (IREE_UNLIKELY(iree_any_bit_set(required_queue_features,
+                                     ~iree_hal_queue_features(&queue->base)))) {
+    return iree_make_status(
+        IREE_STATUS_FAILED_PRECONDITION,
+        "command buffer requires queue features 0x%016" PRIx64
+        " but the execution queue provides 0x%016" PRIx64,
+        required_queue_features, iree_hal_queue_features(&queue->base));
   }
   const iree_host_size_t command_buffer_device_ordinal =
       iree_hal_amdgpu_aql_command_buffer_device_ordinal(command_buffer);

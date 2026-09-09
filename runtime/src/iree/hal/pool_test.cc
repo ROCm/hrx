@@ -60,7 +60,7 @@ static iree_status_t iree_hal_needs_wait_test_pool_acquire_reservations(
   (void)requester_frontier;
   (void)flags;
   iree_async_single_frontier_initialize(
-      &pool->wait_frontier, iree_async_axis_make_queue(1, 2, 3, 4), 42);
+      &pool->wait_frontier, iree_async_axis_make_queue(1, 2, 3, 4, 0), 42);
   memset(out_reservations, 0, sizeof(*out_reservations));
   out_reservations[0].offset = 128;
   out_reservations[0].byte_length = requests[0].allocation_size;
@@ -145,7 +145,7 @@ static iree_hal_needs_wait_test_pool_t* CreateNeedsWaitTestPool() {
   IREE_CHECK_OK(iree_async_notification_create(
       test_proactor(), IREE_ASYNC_NOTIFICATION_FLAG_NONE, &pool->notification));
   iree_async_single_frontier_initialize(
-      &pool->wait_frontier, iree_async_axis_make_queue(1, 2, 3, 4), 42);
+      &pool->wait_frontier, iree_async_axis_make_queue(1, 2, 3, 4, 0), 42);
   pool->released_frontier = nullptr;
   memset(&pool->released_reservation, 0, sizeof(pool->released_reservation));
   pool->wrap_called = false;
